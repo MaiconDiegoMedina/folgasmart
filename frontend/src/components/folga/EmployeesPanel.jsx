@@ -18,7 +18,7 @@ const EmployeeForm = ({ sectors, onSaved }) => {
     setBusy(true);
     try {
       await http.post("/employees", { name: form.name.trim(), role: form.role.trim(), sector: form.sector.trim() });
-      toast.success("Funcionário adicionado");
+      toast.success("Funcionário adicionado — clique em Gerar escala para recalcular as folgas");
       setForm(EMPTY);
       onSaved();
     } catch (err) {

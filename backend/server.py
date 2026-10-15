@@ -7,8 +7,9 @@ import csv
 import io
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field
-from typing import List, Dict, Literal
+import re
+from pydantic import BaseModel, Field, StringConstraints
+from typing import List, Dict, Literal, Annotated
 import uuid
 from datetime import datetime, timezone
 
@@ -29,10 +30,13 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
 class EmployeeIn(BaseModel):
-    name: str = Field(min_length=1)
-    role: str = Field(min_length=1)
-    sector: str = Field(min_length=1)
+    name: Text
+    role: Text
+    sector: Text
 
 
 class Employee(EmployeeIn):
@@ -96,8 +100,11 @@ def parse_date(raw: str):
 
 
 def parse_number(raw: str):
+    raw = raw.strip()
+    if "," in raw or re.fullmatch(r"\d{1,3}(\.\d{3})+", raw):
+        raw = raw.replace(".", "").replace(",", ".")
     try:
-        return float(raw.strip().replace(".", "").replace(",", ".")) if "," in raw else float(raw.strip())
+        return float(raw)
     except ValueError:
         return None
 
@@ -227,6 +234,8 @@ async def generate(data: GenerateIn):
 
 @api.put("/schedule/cell", response_model=Schedule)
 async def toggle_cell(data: CellToggle):
+    if not await db.employees.find_one({"id": data.employee_id}):
+        raise HTTPException(404, "Funcionário não encontrado")
     sched = await get_schedule()
     days = set(sched.off_days.get(data.employee_id, []))
     days.symmetric_difference_update({data.day})

@@ -22,7 +22,7 @@ const Row = ({ emp, offs, peaks, required, onToggle, idx }) => {
   const wrong = offs.length !== required;
   return (
     <tr data-testid="employee-row" className="rise border-t border-[#EFEBE3]" style={{ animationDelay: `${idx * 30}ms` }}>
-      <td className="py-2 pr-4 sticky left-0 bg-white z-10 min-w-[200px]">
+      <td className="py-2 pr-4 sticky left-0 bg-white z-10 min-w-[110px] md:min-w-[200px]">
         <p className="font-semibold text-sm leading-tight">{emp.name}</p>
         <p className="text-xs text-[#8A929B]">{emp.role} · {emp.sector}</p>
       </td>

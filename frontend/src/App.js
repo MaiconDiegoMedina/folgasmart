@@ -6,7 +6,7 @@ function App() {
   return (
     <div className="App">
       <Dashboard />
-      <Toaster position="top-right" richColors />
+      <Toaster position="bottom-right" richColors />
     </div>
   );
 }

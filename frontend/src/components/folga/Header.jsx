@@ -24,7 +24,7 @@ const ModeToggle = ({ mode, onChange, disabled }) => (
 export const Header = ({ employees, movement, schedule, generating, onGenerate, onModeChange }) => {
   const peaks = movement?.peak_days || [];
   return (
-    <header data-testid="app-header" className="no-print sticky top-0 z-30 border-b border-[#E5E1D8] bg-[#F9F8F5]/85 backdrop-blur-xl">
+    <header data-testid="app-header" className="no-print md:sticky top-0 z-30 border-b border-[#E5E1D8] bg-[#F9F8F5]/85 backdrop-blur-xl">
       <div className="mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8 py-4 flex flex-wrap items-center gap-4 justify-between">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-xl bg-[#0F172A] text-white grid place-items-center">

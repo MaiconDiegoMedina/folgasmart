@@ -1,0 +1,41 @@
+{
+  "summary": "First test round of FolgaSmart. Backend: 20 pytest cases (18 passed, 2 xfail = minor validation gaps). Covered: employees CRUD and validation, movement CSV import (comma/semicolon delimiters, ISO/BR dates, decimal comma, BOM, invalid -> 400), peaks PUT (deduplicated and range-filtered), schedule generate 6x1/5x2 (correct number of offs, no offs on peak days, offs spread within sectors), cell toggle with persistence, delete employee removes their schedule key. Frontend (desktop 1920 + mobile 390): grid renders, mode toggle regenerates (1/1 and 2/2), Gerar escala shows toast, clicking a cell switches FOLGA/TRAB. and updates the row summary alert (1/2) and the coverage footer, add employee (empty-form toast, form clears, new row shows 0/2 until regenerated), delete employee, peak toggle updates the header, CSV export (correct file name escala-5x2.csv, ; delimiter, BOM, 'Em operação' row), print calls window.print once, sample CSV download, CSV upload valid/invalid toasts. Mobile: no horizontal page overflow (scrollWidth=390). No console errors except the expected 400 from the invalid-CSV test.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/movement/import", "issue": "parse_number: BR thousands separator without a comma is misparsed. '1.234' becomes 1.234, not 1234 (reproduced: avg[0]=1.2). Common for stores with >999 clients/day."},
+      {"endpoint": "PUT /api/schedule/cell", "issue": "Accepts an employee_id that does not exist and stores an orphan key in off_days. Should return 404."},
+      {"endpoint": "POST/PUT /api/employees", "issue": "A whitespace-only name/role/sector ('   ') passes min_length=1. Backend does not strip (the frontend does)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Add employee after generating", "issue": "A new employee appears with 0/N offs (red alert) until the user clicks Gerar escala again. There is no auto-regenerate or hint. Acceptable, but consider a toast or hint.", "affected_selectors": ["row-summary-{id}"]}
+    ],
+    "design_issues": [
+      {"screen": "Mobile 390px", "issues": ["Sticky header wraps to 3 rows (~183px, 22% of the viewport) and stays pinned while scrolling. Consider making it non-sticky or compact on mobile.", "The sticky employee name column min-w-[200px] leaves only ~2 day columns visible in the grid on mobile. Reduce to ~110-120px on small screens."]},
+      {"screen": "Desktop header", "issues": ["The Sonner toast (top-right) covers the 'Gerar escala' button for a few seconds after each action. Consider position bottom-right or offset."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_folgasmart_api.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Fix parse_number to handle the BR thousands format '1.234' (e.g., when there is no comma and the text matches \\d{1,3}(\\.\\d{3})+, strip the dots)",
+    "Validate employee_id exists in PUT /api/schedule/cell (404 otherwise)",
+    "Strip and reject whitespace-only fields in EmployeeIn (pydantic validator or constr(strip_whitespace=True, min_length=1))",
+    "Mobile: make the header non-sticky or compact and reduce the sticky name column width",
+    "Optional: move the toaster so it does not cover the header CTA"
+  ],
+  "critical_code_review_comments": [
+    "SAMPLE_CSV uses new Date(2026,3,6) local time + toISOString() (UTC). For users in UTC+ timezones the dates shift back one day, so weekdays become misaligned and peaks shift. Build the date strings from local getFullYear/getMonth/getDate instead.",
+    "Peak auto-detection limits peaks to the top 3 days with avg >= 1.15*mean. Days with no data (avg 0) lower the mean. Fine, but document it.",
+    "The CSV delimiter heuristic counts ';' vs ',' over the whole text. A comma-delimited file with decimal commas in quotes could flip it. Edge case.",
+    "Uses deprecated @app.on_event('shutdown'). Consider lifespan."
+  ],
+  "updated_files": ["/app/backend/tests/test_folgasmart_api.py"],
+  "success_rate": {"backend": "100% core (18/18 pass, 2 xfail minor validation)", "frontend": "100% of requested flows"},
+  "seed_data_creation": "None persisted. TEST_ employees were created and deleted. Movement was re-imported to the original 28-record dataset (peaks Sex/Sáb/Dom). The schedule is left as a 5x2 generation.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest backend/tests/test_folgasmart_api.py. The session fixture snapshots and restores movement/schedule via pymongo. Note: in Playwright page.evaluate('window.print=()=>{}') invokes the returned function once, so it double-counts stubs. Wrap it in a block or append ';0'. The Radix export dropdown failed to open once after a CSV download (flaky, not reproducible on retry)."
+}

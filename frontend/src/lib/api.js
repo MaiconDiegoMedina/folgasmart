@@ -28,7 +28,8 @@ export const SAMPLE_CSV = (() => {
     const d = new Date(start);
     d.setDate(start.getDate() + i);
     const v = base[i % 7] + Math.round((Math.sin(i) * 15));
-    rows.push(`${d.toISOString().slice(0, 10)},${v}`);
+    const p = (n) => String(n).padStart(2, "0");
+    rows.push(`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())},${v}`);
   }
   return rows.join("\n");
 })();
