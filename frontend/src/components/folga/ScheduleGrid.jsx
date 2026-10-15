@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Flame, AlertTriangle, Users } from "lucide-react";
-import { DAYS_SHORT, OFFS_PER_MODE } from "@/lib/api";
+import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate } from "@/lib/api";
+import { WeekNav } from "@/components/folga/WeekNav";
 
 const Cell = ({ off, peak, onClick, testId }) => (
   <button
@@ -78,7 +79,9 @@ const SectorHeader = ({ name, members, offsOf, peaks }) => (
   </tr>
 );
 
-export const ScheduleGrid = ({ employees, movement, schedule, onToggle }) => {
+export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange, onToggle }) => {
+  const dates = weekDates(week);
+  const today = isoDate(new Date());
   const [sector, setSector] = useState("all");
   const peaks = movement?.peak_days || [];
   const required = OFFS_PER_MODE[schedule.mode];
@@ -95,6 +98,10 @@ export const ScheduleGrid = ({ employees, movement, schedule, onToggle }) => {
         <div>
           <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A929B]">Escala semanal · {schedule.mode}</p>
           <h2 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight mt-1">Quem trabalha, quem folga.</h2>
+          <div className="mt-4"><WeekNav week={week} onChange={onWeekChange} /></div>
+          {!schedule.generated_at && employees.length > 0 && (
+            <p data-testid="week-not-generated" className="no-print text-xs text-[#B45309] mt-3">Escala desta semana ainda não gerada — clique em <b>Gerar escala</b>.</p>
+          )}
         </div>
         <div className="flex gap-4 text-xs text-[#575E65] no-print">
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#DCFCE7] border border-[#BBF7D0]" />Trabalha</span>
@@ -117,8 +124,9 @@ export const ScheduleGrid = ({ employees, movement, schedule, onToggle }) => {
                 <th className="text-left text-xs font-semibold text-[#8A929B] uppercase tracking-wider pb-3 sticky left-0 bg-white z-10">Funcionário</th>
                 {DAYS_SHORT.map((d, i) => (
                   <th key={d} data-testid="calendar-header-day" className="pb-3 px-1">
-                    <div className={`rounded-lg py-1.5 text-xs font-bold uppercase tracking-wider ${peaks.includes(i) ? "bg-[#DC2626] text-white" : "text-[#575E65]"}`}>
+                    <div className={`rounded-lg py-1.5 text-xs font-bold uppercase tracking-wider ${peaks.includes(i) ? "bg-[#DC2626] text-white" : "text-[#575E65]"} ${isoDate(dates[i]) === today ? "ring-2 ring-offset-2 ring-[#0F172A]" : ""}`}>
                       <span className="inline-flex items-center gap-1">{peaks.includes(i) && <Flame className="h-3 w-3" />}{d}</span>
+                      <span data-testid={`header-date-${i}`} className="block font-mono-data text-[10px] font-medium opacity-80 normal-case">{fmtDayMonth(dates[i])}</span>
                     </div>
                   </th>
                 ))}

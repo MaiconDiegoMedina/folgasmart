@@ -1,27 +1,7 @@
-import { CalendarRange, Sparkles, Loader2, LogOut } from "lucide-react";
+import { CalendarRange, Sparkles, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ExportMenu } from "@/components/folga/ExportMenu";
-import { DAYS_SHORT, http } from "@/lib/api";
-
-const UserMenu = ({ user }) => {
-  const logout = async () => {
-    await http.post("/auth/logout").catch(() => {});
-    window.location.href = "/login";
-  };
-  return (
-    <div data-testid="user-menu" className="flex items-center gap-2 pl-3 border-l border-[#E5E1D8]">
-      {user?.picture ? (
-        <img src={user.picture} alt={user.name} referrerPolicy="no-referrer" className="h-8 w-8 rounded-full object-cover" />
-      ) : (
-        <span className="h-8 w-8 rounded-full bg-[#0F172A] text-white grid place-items-center text-xs font-bold">{user?.name?.[0]}</span>
-      )}
-      <span data-testid="user-name" className="hidden lg:block text-sm font-semibold max-w-[140px] truncate">{user?.name}</span>
-      <button data-testid="btn-logout" onClick={logout} title="Sair" className="p-2 rounded-lg text-[#575E65] hover:bg-[#0F172A] hover:text-white transition-colors">
-        <LogOut className="h-4 w-4" />
-      </button>
-    </div>
-  );
-};
+import { DAYS_SHORT } from "@/lib/api";
 
 const ModeToggle = ({ mode, onChange, disabled }) => (
   <div data-testid="scale-mode-toggle" className="inline-flex rounded-full border border-[#D1CBBF] bg-white p-1">
@@ -41,7 +21,7 @@ const ModeToggle = ({ mode, onChange, disabled }) => (
   </div>
 );
 
-export const Header = ({ user, employees, movement, schedule, generating, onGenerate, onModeChange }) => {
+export const Header = ({ employees, movement, schedule, generating, onGenerate, onModeChange }) => {
   const peaks = movement?.peak_days || [];
   return (
     <header data-testid="app-header" className="no-print md:sticky top-0 z-30 border-b border-[#E5E1D8] bg-[#F9F8F5]/85 backdrop-blur-xl">
@@ -70,7 +50,6 @@ export const Header = ({ user, employees, movement, schedule, generating, onGene
             {generating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
             Gerar escala
           </Button>
-          <UserMenu user={user} />
         </div>
       </div>
     </header>

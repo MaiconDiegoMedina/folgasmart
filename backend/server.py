@@ -1,6 +1,5 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
+from fastapi import FastAPI, APIRouter, HTTPException
 from dotenv import load_dotenv
-import httpx
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
@@ -12,7 +11,7 @@ import re
 from pydantic import BaseModel, Field, StringConstraints
 from typing import List, Dict, Literal, Annotated
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -42,53 +41,7 @@ class EmployeeIn(BaseModel):
 
 class Employee(EmployeeIn):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    user_id: str = ""
     created_at: str = Field(default_factory=now_iso)
-
-
-class User(BaseModel):
-    user_id: str
-    email: str
-    name: str
-    picture: str | None = None
-
-
-class SessionIn(BaseModel):
-    session_id: str
-
-
-EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
-SESSION_DAYS = 7
-
-
-async def get_user(request: Request) -> User:
-    token = request.cookies.get("session_token")
-    auth = request.headers.get("Authorization", "")
-    if not token and auth.startswith("Bearer "):
-        token = auth[7:]
-    if not token:
-        raise HTTPException(401, "Não autenticado")
-    session = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
-    if not session:
-        raise HTTPException(401, "Sessão inválida")
-    expires_at = session["expires_at"]
-    if isinstance(expires_at, str):
-        expires_at = datetime.fromisoformat(expires_at)
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-    if expires_at < datetime.now(timezone.utc):
-        raise HTTPException(401, "Sessão expirada")
-    doc = await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0})
-    if not doc:
-        raise HTTPException(401, "Usuário não encontrado")
-    return User(**doc)
-
-
-async def claim_legacy_data(uid: str):
-    await db.employees.update_many({"user_id": {"$exists": False}}, {"$set": {"user_id": uid}})
-    for coll in (db.movement, db.schedule):
-        if not await coll.find_one({"_key": uid}):
-            await coll.update_one({"_key": "main"}, {"$set": {"_key": uid}})
 
 
 class Movement(BaseModel):
@@ -108,6 +61,7 @@ class PeaksIn(BaseModel):
 
 
 class Schedule(BaseModel):
+    week: str
     mode: Mode = "6x1"
     off_days: Dict[str, List[int]] = Field(default_factory=dict)
     generated_at: str | None = None
@@ -115,25 +69,39 @@ class Schedule(BaseModel):
 
 class GenerateIn(BaseModel):
     mode: Mode
+    week: str
 
 
 class CellToggle(BaseModel):
     employee_id: str
     day: int = Field(ge=0, le=6)
+    week: str
 
 
-async def get_movement(uid: str) -> Movement:
-    doc = await db.movement.find_one({"_key": uid}, {"_id": 0, "_key": 0})
+def week_start(raw: str) -> str:
+    try:
+        d = date.fromisoformat(raw)
+    except ValueError:
+        raise HTTPException(400, "Semana inválida. Use AAAA-MM-DD")
+    return (d - timedelta(days=d.weekday())).isoformat()
+
+
+async def get_movement() -> Movement:
+    doc = await db.movement.find_one({"_key": "main"}, {"_id": 0, "_key": 0})
     return Movement(**doc) if doc else Movement()
 
 
-async def get_schedule(uid: str) -> Schedule:
-    doc = await db.schedule.find_one({"_key": uid}, {"_id": 0, "_key": 0})
-    return Schedule(**doc) if doc else Schedule()
+async def save_movement(mov: Movement):
+    await db.movement.replace_one({"_key": "main"}, {"_key": "main", **mov.model_dump()}, upsert=True)
 
 
-async def save(collection, uid: str, model: BaseModel):
-    await collection.replace_one({"_key": uid}, {"_key": uid, **model.model_dump()}, upsert=True)
+async def get_schedule(week: str) -> Schedule:
+    doc = await db.schedule.find_one({"week": week}, {"_id": 0})
+    return Schedule(**doc) if doc else Schedule(week=week)
+
+
+async def save_schedule(sched: Schedule):
+    await db.schedule.replace_one({"week": sched.week}, sched.model_dump(), upsert=True)
 
 
 def parse_date(raw: str):
@@ -156,7 +124,7 @@ def parse_number(raw: str):
         return None
 
 
-def compute_schedule(employees: List[Employee], movement: Movement, mode: str) -> Dict[str, List[int]]:
+def compute_schedule(employees: List[Employee], movement: Movement, mode: str, rotate: int = 0) -> Dict[str, List[int]]:
     offs_needed = OFFS_PER_MODE[mode]
     max_avg = max(movement.avg) or 1
     weight = [1 + 4 * (a / max_avg) for a in movement.avg]
@@ -164,7 +132,12 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str) -
     off_global = [0] * 7
     off_sector: Dict[str, List[int]] = {}
     result: Dict[str, List[int]] = {}
-    for emp in sorted(employees, key=lambda e: (e.sector.lower(), e.created_at)):
+    ordered: List[Employee] = []
+    for sector in sorted({e.sector.lower() for e in employees}):
+        group = sorted([e for e in employees if e.sector.lower() == sector], key=lambda e: e.created_at)
+        k = rotate % len(group)
+        ordered += group[k:] + group[:k]
+    for emp in ordered:
         sec = off_sector.setdefault(emp.sector.lower(), [0] * 7)
         chosen: List[int] = []
         for _ in range(offs_needed):
@@ -181,8 +154,8 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str) -
     return result
 
 
-async def list_employees(uid: str) -> List[Employee]:
-    docs = await db.employees.find({"user_id": uid}, {"_id": 0}).sort("created_at", 1).to_list(2000)
+async def list_employees() -> List[Employee]:
+    docs = await db.employees.find({}, {"_id": 0}).sort("created_at", 1).to_list(2000)
     return [Employee(**d) for d in docs]
 
 
@@ -191,66 +164,22 @@ async def root():
     return {"message": "FolgaSmart API"}
 
 
-@api.post("/auth/session", response_model=User)
-async def create_session(data: SessionIn, response: Response):
-    try:
-        async with httpx.AsyncClient(timeout=15) as http_client:
-            r = await http_client.get(EMERGENT_SESSION_URL, headers={"X-Session-ID": data.session_id})
-    except httpx.HTTPError:
-        raise HTTPException(502, "Serviço de login indisponível")
-    info = r.json() if r.status_code == 200 else {}
-    if not all(info.get(k) for k in ("email", "name", "session_token")):
-        raise HTTPException(401, "Sessão do Google inválida")
-    existing = await db.users.find_one({"email": info["email"]}, {"_id": 0})
-    if existing:
-        uid = existing["user_id"]
-        await db.users.update_one({"user_id": uid}, {"$set": {"name": info["name"], "picture": info.get("picture")}})
-    else:
-        uid = f"user_{uuid.uuid4().hex[:12]}"
-        await db.users.insert_one({"user_id": uid, "email": info["email"], "name": info["name"],
-                                   "picture": info.get("picture"), "created_at": now_iso()})
-        await claim_legacy_data(uid)
-    await db.user_sessions.insert_one({"user_id": uid, "session_token": info["session_token"],
-                                       "expires_at": datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS),
-                                       "created_at": now_iso()})
-    response.set_cookie("session_token", info["session_token"], max_age=SESSION_DAYS * 86400,
-                        path="/", httponly=True, secure=True, samesite="none")
-    return User(**(await db.users.find_one({"user_id": uid}, {"_id": 0})))
-
-
-@api.get("/auth/me", response_model=User)
-async def me(user: User = Depends(get_user)):
-    return user
-
-
-@api.post("/auth/logout")
-async def logout(request: Request, response: Response):
-    token = request.cookies.get("session_token")
-    auth = request.headers.get("Authorization", "")
-    if not token and auth.startswith("Bearer "):
-        token = auth[7:]
-    if token:
-        await db.user_sessions.delete_one({"session_token": token})
-    response.delete_cookie("session_token", path="/", secure=True, samesite="none")
-    return {"ok": True}
-
-
 @api.get("/employees", response_model=List[Employee])
-async def get_employees(user: User = Depends(get_user)):
-    return await list_employees(user.user_id)
+async def get_employees():
+    return await list_employees()
 
 
 @api.post("/employees", response_model=Employee)
-async def create_employee(data: EmployeeIn, user: User = Depends(get_user)):
-    emp = Employee(**data.model_dump(), user_id=user.user_id)
+async def create_employee(data: EmployeeIn):
+    emp = Employee(**data.model_dump())
     await db.employees.insert_one(emp.model_dump())
     return emp
 
 
 @api.put("/employees/{emp_id}", response_model=Employee)
-async def update_employee(emp_id: str, data: EmployeeIn, user: User = Depends(get_user)):
+async def update_employee(emp_id: str, data: EmployeeIn):
     res = await db.employees.find_one_and_update(
-        {"id": emp_id, "user_id": user.user_id}, {"$set": data.model_dump()}, projection={"_id": 0}, return_document=True
+        {"id": emp_id}, {"$set": data.model_dump()}, projection={"_id": 0}, return_document=True
     )
     if not res:
         raise HTTPException(404, "Funcionário não encontrado")
@@ -258,33 +187,31 @@ async def update_employee(emp_id: str, data: EmployeeIn, user: User = Depends(ge
 
 
 @api.delete("/employees/{emp_id}")
-async def delete_employee(emp_id: str, user: User = Depends(get_user)):
-    res = await db.employees.delete_one({"id": emp_id, "user_id": user.user_id})
+async def delete_employee(emp_id: str):
+    res = await db.employees.delete_one({"id": emp_id})
     if res.deleted_count == 0:
         raise HTTPException(404, "Funcionário não encontrado")
-    sched = await get_schedule(user.user_id)
-    sched.off_days.pop(emp_id, None)
-    await save(db.schedule, user.user_id, sched)
+    await db.schedule.update_many({}, {"$unset": {f"off_days.{emp_id}": ""}})
     return {"ok": True}
 
 
 @api.get("/movement", response_model=Movement)
-async def movement(user: User = Depends(get_user)):
-    return await get_movement(user.user_id)
+async def movement():
+    return await get_movement()
 
 
 @api.post("/movement/import", response_model=Movement)
-async def import_movement(data: CsvImport, user: User = Depends(get_user)):
+async def import_movement(data: CsvImport):
     text = data.csv.lstrip("\ufeff")
     delimiter = ";" if text.count(";") > text.count(",") else ","
     totals, counts, records = [0.0] * 7, [0] * 7, 0
     for row in csv.reader(io.StringIO(text), delimiter=delimiter):
         if len(row) < 2:
             continue
-        date, value = parse_date(row[0]), parse_number(row[1])
-        if date is None or value is None:
+        d, value = parse_date(row[0]), parse_number(row[1])
+        if d is None or value is None:
             continue
-        wd = date.weekday()
+        wd = d.weekday()
         totals[wd] += value
         counts[wd] += 1
         records += 1
@@ -296,42 +223,45 @@ async def import_movement(data: CsvImport, user: User = Depends(get_user)):
     if not peaks:
         peaks = [max(range(7), key=lambda i: avg[i])]
     mov = Movement(avg=avg, samples=counts, peak_days=sorted(peaks), total_records=records, updated_at=now_iso())
-    await save(db.movement, user.user_id, mov)
+    await save_movement(mov)
     return mov
 
 
 @api.put("/movement/peaks", response_model=Movement)
-async def set_peaks(data: PeaksIn, user: User = Depends(get_user)):
-    mov = await get_movement(user.user_id)
+async def set_peaks(data: PeaksIn):
+    mov = await get_movement()
     mov.peak_days = sorted({d for d in data.peak_days if 0 <= d <= 6})
     mov.updated_at = now_iso()
-    await save(db.movement, user.user_id, mov)
+    await save_movement(mov)
     return mov
 
 
 @api.get("/schedule", response_model=Schedule)
-async def schedule(user: User = Depends(get_user)):
-    return await get_schedule(user.user_id)
+async def schedule(week: str):
+    return await get_schedule(week_start(week))
 
 
 @api.post("/schedule/generate", response_model=Schedule)
-async def generate(data: GenerateIn, user: User = Depends(get_user)):
-    employees = await list_employees(user.user_id)
-    mov = await get_movement(user.user_id)
-    sched = Schedule(mode=data.mode, off_days=compute_schedule(employees, mov, data.mode), generated_at=now_iso())
-    await save(db.schedule, user.user_id, sched)
+async def generate(data: GenerateIn):
+    week = week_start(data.week)
+    employees = await list_employees()
+    mov = await get_movement()
+    rotate = date.fromisoformat(week).isocalendar()[1]
+    sched = Schedule(week=week, mode=data.mode, generated_at=now_iso(),
+                     off_days=compute_schedule(employees, mov, data.mode, rotate))
+    await save_schedule(sched)
     return sched
 
 
 @api.put("/schedule/cell", response_model=Schedule)
-async def toggle_cell(data: CellToggle, user: User = Depends(get_user)):
-    if not await db.employees.find_one({"id": data.employee_id, "user_id": user.user_id}):
+async def toggle_cell(data: CellToggle):
+    if not await db.employees.find_one({"id": data.employee_id}):
         raise HTTPException(404, "Funcionário não encontrado")
-    sched = await get_schedule(user.user_id)
+    sched = await get_schedule(week_start(data.week))
     days = set(sched.off_days.get(data.employee_id, []))
     days.symmetric_difference_update({data.day})
     sched.off_days[data.employee_id] = sorted(days)
-    await save(db.schedule, user.user_id, sched)
+    await save_schedule(sched)
     return sched
 
 
@@ -349,9 +279,24 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 
 
 @app.on_event("startup")
-async def create_indexes():
-    await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
-    await db.user_sessions.create_index("session_token")
+async def migrate_legacy():
+    await db.employees.update_many({"user_id": {"$exists": True}}, {"$unset": {"user_id": ""}})
+    if not await db.movement.find_one({"_key": "main"}):
+        latest = await db.movement.find_one({}, sort=[("updated_at", -1)])
+        if latest:
+            await db.movement.update_one({"_id": latest["_id"]}, {"$set": {"_key": "main"}})
+    await db.movement.delete_many({"_key": {"$ne": "main"}})
+    legacy = await db.schedule.find_one({"week": {"$exists": False}}, sort=[("generated_at", -1)])
+    if legacy:
+        today = date.today()
+        week = (today - timedelta(days=today.weekday())).isoformat()
+        if not await db.schedule.find_one({"week": week}):
+            await db.schedule.insert_one({"week": week, "mode": legacy.get("mode", "6x1"),
+                                          "off_days": legacy.get("off_days", {}), "generated_at": legacy.get("generated_at")})
+    await db.schedule.delete_many({"week": {"$exists": False}})
+    await db.schedule.create_index("week", unique=True)
+    await db.users.drop()
+    await db.user_sessions.drop()
 
 
 @app.on_event("shutdown")

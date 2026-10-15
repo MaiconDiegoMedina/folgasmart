@@ -1,11 +1,12 @@
 import { Download, FileSpreadsheet, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { DAYS, downloadFile } from "@/lib/api";
+import { DAYS, downloadFile, weekDates, fmtDayMonth } from "@/lib/api";
 import { toast } from "sonner";
 
 const buildCsv = (employees, schedule) => {
-  const header = ["Setor", "Funcionário", "Cargo", ...DAYS].join(";");
+  const dates = weekDates(schedule.week);
+  const header = ["Setor", "Funcionário", "Cargo", ...DAYS.map((d, i) => `${d} ${fmtDayMonth(dates[i])}`)].join(";");
   const sorted = [...employees].sort((a, b) => a.sector.localeCompare(b.sector));
   const rows = sorted.map((e) => {
     const off = schedule.off_days[e.id] || [];
@@ -18,7 +19,7 @@ const buildCsv = (employees, schedule) => {
 export const ExportMenu = ({ employees, schedule }) => {
   const exportCsv = () => {
     if (!employees.length) return toast.error("Nenhum funcionário para exportar.");
-    downloadFile(`escala-${schedule.mode}.csv`, buildCsv(employees, schedule));
+    downloadFile(`escala-${schedule.week}-${schedule.mode}.csv`, buildCsv(employees, schedule));
     toast.success("Escala exportada em CSV");
   };
   return (

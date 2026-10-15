@@ -1,18 +1,20 @@
 import axios from "axios";
 
 export const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-export const http = axios.create({ baseURL: API, withCredentials: true });
+export const http = axios.create({ baseURL: API });
 
-http.interceptors.response.use(
-  (r) => r,
-  (e) => {
-    const onAuthRoute = e.config?.url?.startsWith("/auth/");
-    if (e.response?.status === 401 && !onAuthRoute && window.location.pathname !== "/login") {
-      window.location.href = "/login";
-    }
-    return Promise.reject(e);
-  }
-);
+const pad = (n) => String(n).padStart(2, "0");
+export const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+export const parseIso = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+export const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+export const mondayOf = (d) => addDays(new Date(d.getFullYear(), d.getMonth(), d.getDate()), -((d.getDay() + 6) % 7));
+export const weekDates = (week) => Array.from({ length: 7 }, (_, i) => addDays(parseIso(week), i));
+export const fmtDayMonth = (d) => `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
+export const fmtWeekRange = (week) => {
+  const [a, b] = [parseIso(week), addDays(parseIso(week), 6)];
+  const month = (d) => d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "");
+  return `${a.getDate()} ${month(a)} – ${b.getDate()} ${month(b)} ${b.getFullYear()}`;
+};
 
 export const DAYS = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
 export const DAYS_SHORT = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
