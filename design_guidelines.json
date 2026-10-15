@@ -1,0 +1,172 @@
+{
+  "project_title": "FolgaSmart - Escala Inteligente de Folgas para PMEs",
+  "app_type": "dashboard",
+  "locale": "pt-BR",
+  "design_archetype": "Organic Earthy & Swiss High-Contrast Operational",
+  "theme_strategy": {
+    "primary_mode": "light",
+    "theme_toggle": true,
+    "forbidden_colors": ["#7351B7", "#1B93A4", "purple-violet-gradients"],
+    "forbidden_fonts": ["Space Grotesk"]
+  },
+  "colors": {
+    "light": {
+      "background": "#F9F8F5",
+      "surface": "#FFFFFF",
+      "surface_subtle": "#F2EFF8",
+      "border": "#E5E1D8",
+      "border_accent": "#D1CBBF",
+      "text_primary": "#191C1E",
+      "text_secondary": "#575E65",
+      "text_muted": "#8A929B",
+      "brand_primary": "#0F172A",
+      "brand_primary_hover": "#1E293B",
+      "accent_peak_movement": "#DC2626",
+      "accent_peak_bg": "#FEF2F2",
+      "accent_peak_border": "#FECACA",
+      "accent_dayoff": "#D97706",
+      "accent_dayoff_bg": "#FFFBEB",
+      "accent_working": "#16A34A",
+      "accent_working_bg": "#F0FDF4",
+      "chart_peak": "#E65100",
+      "chart_normal": "#3B82F6"
+    },
+    "dark": {
+      "background": "#0F1215",
+      "surface": "#181C20",
+      "surface_subtle": "#22272E",
+      "border": "#2E343D",
+      "border_accent": "#404854",
+      "text_primary": "#F3F4F6",
+      "text_secondary": "#9CA3AF",
+      "text_muted": "#6B7280",
+      "brand_primary": "#F8FAFC",
+      "brand_primary_hover": "#E2E8F0",
+      "accent_peak_movement": "#EF4444",
+      "accent_peak_bg": "#450A0A",
+      "accent_peak_border": "#7F1D1D",
+      "accent_dayoff": "#F59E0B",
+      "accent_dayoff_bg": "#451A03",
+      "accent_working": "#22C55E",
+      "accent_working_bg": "#052E16",
+      "chart_peak": "#FF6B00",
+      "chart_normal": "#60A5FA"
+    }
+  },
+  "typography": {
+    "font_family_heading": "Cabinet Grotesk, Plus Jakarta Sans, sans-serif",
+    "font_family_body": "Plus Jakarta Sans, DM Sans, sans-serif",
+    "font_family_mono": "JetBrains Mono, monospace",
+    "google_fonts_link": "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap",
+    "hierarchy": {
+      "h1": "text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight",
+      "h3": "text-xl sm:text-2xl font-semibold tracking-tight",
+      "h4": "text-lg font-semibold",
+      "body": "text-sm sm:text-base leading-relaxed",
+      "caption": "text-xs font-medium tracking-wide uppercase text-secondary"
+    }
+  },
+  "spacing_and_layout": {
+    "container_padding": "px-4 sm:px-6 lg:px-8 py-6",
+    "card_padding": "p-5 sm:p-6",
+    "grid_gap": "gap-4 sm:gap-6",
+    "bento_strategy": "High Density Dashboard Mode B with custom Weekly Calendar Grid matrix",
+    "border_radius": "rounded-xl for cards, rounded-lg for status badges and buttons, rounded-full for avatars/pills"
+  },
+  "key_components_structure": [
+    {
+      "name": "Header & Scale Switcher",
+      "description": "Sticky navigation with brand name 'FolgaSmart', quick scale mode selector (6x1 vs 5x2 Preview toggle), stats pill (Funcionários Ativos, Cobertura em Dias de Pico), CTA buttons (Exportar PDF/CSV, Novo Funcionário, Importar CSV).",
+      "data_testids": [
+        "app-header",
+        "scale-mode-toggle",
+        "btn-add-employee",
+        "btn-import-csv",
+        "btn-export-schedule",
+        "btn-generate-roster"
+      ]
+    },
+    {
+      "name": "Customer Movement Peak Bar/Dashboard",
+      "description": "Visual banner showing daily customer traffic intensity (Histórico de Movimento). Shows high-movement days clearly flagged with warning badge & flame icon (ex: Sexta-feira & Sábado - PICO MÁXIMO). Allows quick slider / manual adjustment or file import.",
+      "data_testids": [
+        "movement-dashboard",
+        "peak-day-indicator-domingo",
+        "peak-day-indicator-segunda",
+        "peak-day-indicator-terca",
+        "peak-day-indicator-quarta",
+        "peak-day-indicator-quinta",
+        "peak-day-indicator-sexta",
+        "peak-day-indicator-sabado",
+        "movement-chart-container"
+      ]
+    },
+    {
+      "name": "Weekly Schedule Matrix Grid (Funcionários x Dias)",
+      "description": "Core operational view. Columns = Seg, Ter, Qua, Qui, Sex, Sáb, Dom + Resumo da Semana. Rows = Employees (with Avatar, Nome, Cargo, Setor). Cells = Status (TRABALHA vs FOLGA). Allows click-to-edit override, highlights shift compliance alerts, and displays coverage counters at column bottoms.",
+      "data_testids": [
+        "weekly-calendar-grid",
+        "calendar-header-day",
+        "employee-row",
+        "cell-shift-status",
+        "btn-edit-cell",
+        "coverage-count-footer"
+      ]
+    },
+    {
+      "name": "Employee Management Panel & Modal",
+      "description": "CRUD form and tabular view for employee list (Nome, Cargo, Setor, Preferência de Folga). Includes manual input & CSV drag-and-drop parser.",
+      "data_testids": [
+        "employee-modal",
+        "input-employee-name",
+        "input-employee-role",
+        "select-employee-sector",
+        "btn-save-employee",
+        "csv-upload-dropzone"
+      ]
+    },
+    {
+      "name": "Export & Print Drawer/Modal",
+      "description": "Formato limpo pronto para impressão do mural da empresa ou download CSV/PDF.",
+      "data_testids": [
+        "export-modal",
+        "btn-download-pdf",
+        "btn-download-csv",
+        "btn-print-schedule"
+      ]
+    }
+  ],
+  "image_urls": [
+    {
+      "category": "SMB Manager Profile",
+      "url": "https://images.unsplash.com/photo-1758519289791-ffce8889ca8c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNDR8MHwxfHNlYXJjaHwxfHxyZXN0YXVyYW50JTIwc3RhZmYlMjB0ZWFtJTIwQnJhemlsaWFuJTIwcmV0YWlsJTIwd29ya2VycyUyMHN0b3JlJTIwbWFuYWdlcnxlbnwwfHx8fDE3OTIwNzM3NTZ8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Gerente de restaurante utilizando tablet para gestão da equipe"
+    },
+    {
+      "category": "Store Team Background",
+      "url": "https://images.unsplash.com/photo-1753351052363-53ce102830eb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNDR8MHwxfHNlYXJjaHwzfHxyZXN0YXVyYW50JTIwc3RhZmYlMjB0ZWFtJTIwQnJhemlsaWFuJTIwcmV0YWlsJTIwd29ya2VycyUyMHN0b3JlJTIwbWFuYWdlcnxlbnwwfHx8fDE3OTIwNzM3NTZ8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Proprietária de cafeteria sorrindo em seu estabelecimento"
+    }
+  ],
+  "motion_and_effects": {
+    "libraries": ["framer-motion"],
+    "micro_interactions": "Smooth transition on day-off toggle, staggered entry for calendar rows, subtle pulse glow on high-movement peak day indicators, slide-over drawer for cell edits.",
+    "hover_contrast_rule": "Every hover state must explicitly define text color (e.g., hover:bg-slate-900 hover:text-white)."
+  },
+  "instructions_to_main_agent": [
+    "Ensure the application interface is entirely in Brazilian Portuguese (pt-BR).",
+    "Avoid purple/violet gradients or forbidden colors like #7351B7 or teal #1B93A4. Use rich dark slate/obsidian structural tones, warm sandstone light background, and energetic high-visibility red/amber accents for peak movement alerts.",
+    "Ensure all interactive elements and data fields include 'data-testid' attributes as declared.",
+    "Implement seamless support for both 6x1 scale (1 folga por semana) and 5x2 scale preview.",
+    "Provide CSV movement file upload with sample download option, plus manual peak movement day toggles.",
+    "Provide automatic scale generation algorithm with instant recalculation based on customer traffic peak flags.",
+    "Allow manual cell click overrides with conflict warning badges.",
+    "Use clean Sonner toast notifications for actions (Escala gerada com sucesso, Funcionário adicionado, CSV importado)."
+  ],
+  "UNIVERSAL_GUIDELINES": [
+    "Use precise, non-generic typography paired with high-contrast data indicators.",
+    "Layered shadows and 1px crisp borders for clear grid separation.",
+    "All interactive elements MUST have data-testid attributes in kebab-case."
+  ]
+}
