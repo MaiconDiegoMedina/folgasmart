@@ -6,7 +6,7 @@ import { MovementPanel } from "@/components/folga/MovementPanel";
 import { EmployeesPanel } from "@/components/folga/EmployeesPanel";
 import { ScheduleGrid } from "@/components/folga/ScheduleGrid";
 
-export default function Dashboard() {
+export default function Dashboard({ user }) {
   const [employees, setEmployees] = useState([]);
   const [movement, setMovement] = useState(null);
   const [schedule, setSchedule] = useState({ mode: "6x1", off_days: {} });
@@ -51,6 +51,7 @@ export default function Dashboard() {
   return (
     <div className="grain min-h-screen bg-[#F9F8F5] text-[#191C1E]">
       <Header
+        user={user}
         employees={employees}
         movement={movement}
         schedule={schedule}
