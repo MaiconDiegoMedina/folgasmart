@@ -5,10 +5,11 @@ import { DAYS, downloadFile } from "@/lib/api";
 import { toast } from "sonner";
 
 const buildCsv = (employees, schedule) => {
-  const header = ["Funcionário", "Cargo", "Setor", ...DAYS].join(";");
-  const rows = employees.map((e) => {
+  const header = ["Setor", "Funcionário", "Cargo", ...DAYS].join(";");
+  const sorted = [...employees].sort((a, b) => a.sector.localeCompare(b.sector));
+  const rows = sorted.map((e) => {
     const off = schedule.off_days[e.id] || [];
-    return [e.name, e.role, e.sector, ...DAYS.map((_, i) => (off.includes(i) ? "FOLGA" : "TRABALHA"))].join(";");
+    return [e.sector, e.name, e.role, ...DAYS.map((_, i) => (off.includes(i) ? "FOLGA" : "TRABALHA"))].join(";");
   });
   const coverage = DAYS.map((_, i) => employees.filter((e) => !(schedule.off_days[e.id] || []).includes(i)).length);
   return [header, ...rows, ["Em operação", "", "", ...coverage].join(";")].join("\n");

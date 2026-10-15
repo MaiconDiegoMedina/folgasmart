@@ -5,24 +5,37 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { http, errMsg, DAYS, DAYS_SHORT, DAY_SLUGS, SAMPLE_CSV, downloadFile } from "@/lib/api";
 
-const PeakToggles = ({ peaks, onToggle }) => (
-  <div className="grid grid-cols-7 gap-2">
-    {DAYS_SHORT.map((d, i) => {
-      const on = peaks.includes(i);
-      return (
-        <button
-          key={d}
-          data-testid={`peak-day-indicator-${DAY_SLUGS[i]}`}
-          onClick={() => onToggle(i)}
-          title={`${on ? "Remover" : "Marcar"} ${DAYS[i]} como pico`}
-          className={`rounded-lg border py-2 text-xs font-bold uppercase transition-colors duration-200 flex flex-col items-center gap-1 ${
-            on ? "peak-pulse bg-[#DC2626] border-[#DC2626] text-white" : "bg-white border-[#E5E1D8] text-[#575E65] hover:border-[#DC2626] hover:text-[#DC2626]"
-          }`}
-        >
-          <Flame className="h-3.5 w-3.5" />{d}
-        </button>
-      );
-    })}
+const PeakField = ({ peaks, onToggle }) => (
+  <div data-testid="peak-days-field" className="rounded-xl border border-[#FECACA] bg-[#FEF2F2]/60 p-4 mb-6">
+    <label className="flex items-center gap-2 text-sm font-bold text-[#191C1E]">
+      <Flame className="h-4 w-4 text-[#DC2626]" /> Dias de maior movimento
+    </label>
+    <p className="text-xs text-[#575E65] mt-1 mb-3">Selecione os dias manualmente. O app evita folgas nesses dias.</p>
+    <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+      {DAYS.map((d, i) => {
+        const on = peaks.includes(i);
+        return (
+          <button
+            key={d}
+            type="button"
+            aria-pressed={on}
+            data-testid={`peak-day-indicator-${DAY_SLUGS[i]}`}
+            onClick={() => onToggle(i)}
+            className={`rounded-lg border px-2 py-2.5 text-xs font-bold transition-colors duration-200 flex items-center justify-center gap-1.5 ${
+              on ? "peak-pulse bg-[#DC2626] border-[#DC2626] text-white" : "bg-white border-[#E5E1D8] text-[#575E65] hover:border-[#DC2626] hover:text-[#DC2626]"
+            }`}
+          >
+            <span className={`h-3.5 w-3.5 rounded border grid place-items-center ${on ? "bg-white border-white" : "border-[#D1CBBF]"}`}>
+              {on && <span className="h-1.5 w-1.5 rounded-sm bg-[#DC2626]" />}
+            </span>
+            <span>{DAYS_SHORT[i]}</span>
+          </button>
+        );
+      })}
+    </div>
+    <p data-testid="peak-days-summary" className="text-xs mt-3 text-[#575E65]">
+      {peaks.length ? <>Selecionados: <b className="text-[#DC2626]">{peaks.map((p) => DAYS[p]).join(", ")}</b></> : "Nenhum dia selecionado."}
+    </p>
   </div>
 );
 
@@ -59,10 +72,13 @@ export const MovementPanel = ({ movement, onChange }) => {
 
   return (
     <section data-testid="movement-dashboard" className="rounded-2xl border border-[#E5E1D8] bg-white p-5 sm:p-6 h-full">
+      <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A929B]">Movimento de clientes</p>
+      <h3 className="font-display text-2xl font-bold tracking-tight mt-1 mb-4">Quando a casa enche?</h3>
+      <PeakField peaks={peaks} onToggle={togglePeak} />
       <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
         <div>
-          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A929B]">Histórico de movimento</p>
-          <h3 className="font-display text-2xl font-bold tracking-tight mt-1">Média de clientes por dia</h3>
+          <p className="text-sm font-bold">Ou importe o histórico (opcional)</p>
+          <p className="text-xs text-[#575E65] mt-0.5">O CSV calcula a média por dia e sugere os picos automaticamente.</p>
           <p data-testid="movement-records" className="text-xs text-[#575E65] mt-1">
             {movement?.total_records ? `${movement.total_records} registros importados` : "Nenhum histórico importado ainda"}
           </p>
@@ -89,8 +105,6 @@ export const MovementPanel = ({ movement, onChange }) => {
           </BarChart>
         </ResponsiveContainer>
       </div>
-      <p className="text-xs font-semibold text-[#575E65] mt-4 mb-2">Dias de pico (clique para marcar/desmarcar) — o app evita folgas nesses dias:</p>
-      <PeakToggles peaks={peaks} onToggle={togglePeak} />
     </section>
   );
 };

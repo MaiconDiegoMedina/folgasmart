@@ -15,6 +15,8 @@ Cadastro manual + algoritmo automático; histórico de movimento via CSV; sem lo
 - CRUD de funcionários, importação de CSV (delimitador , ou ;, datas ISO/BR, números no formato BR), picos detectados automaticamente e ajustáveis manualmente
 - Geração da escala 6x1/5x2, edição manual célula a célula, cobertura por dia, alertas
 - Exportação em CSV (Excel) e impressão/PDF, CSV modelo
+- Escala organizada por setor: abas de filtro, linha de cabeçalho por setor com cobertura diária, rodapé que acompanha o filtro, CSV exportado em ordem de setor
+- Campo dedicado "Dias de maior movimento" para escolher os picos à mão, independente do CSV (que agora é opcional)
 
 ## Backlog
 - P1: editar funcionário pela interface; preferência de folga por funcionário; mínimo de pessoas por setor
