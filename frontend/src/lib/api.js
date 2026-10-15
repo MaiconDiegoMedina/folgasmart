@@ -3,6 +3,17 @@ import axios from "axios";
 export const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 export const http = axios.create({ baseURL: API, withCredentials: true });
 
+http.interceptors.response.use(
+  (r) => r,
+  (e) => {
+    const onAuthRoute = e.config?.url?.startsWith("/auth/");
+    if (e.response?.status === 401 && !onAuthRoute && window.location.pathname !== "/login") {
+      window.location.href = "/login";
+    }
+    return Promise.reject(e);
+  }
+);
+
 export const DAYS = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
 export const DAYS_SHORT = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 export const DAY_SLUGS = ["segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"];

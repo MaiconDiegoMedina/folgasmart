@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 2 tested the Emergent Google auth and per-user isolation, plus an authenticated regression. Backend: rewrote test_folgasmart_api.py to use Bearer auth with users created in pymongo. 30/30 pass. Covered: 401 without a session on employees/movement/schedule/auth/me and on mutations; invalid Bearer gives 401; POST /auth/session with an invalid session_id gives 401; expired session gives 401; cookie auth works; logout by cookie invalidates the session; a new user does not see legacy data; A/B isolation for employees (list, delete 404, PUT 404, cell 404), movement peaks and schedule; CRUD; whitespace validation (now 422); CSV import with BR thousands '1.234' (now 1234); peaks; generate 6x1/5x2; toggle; unknown employee toggle (now 404); delete removes the employee's schedule entry; legacy data untouched. Frontend: / without a cookie goes to /login. btn-google-login goes to auth.emergentagent.com/?redirect=<origin>%2F. #session_id=invalid shows the toast 'Não foi possível entrar' and goes to /login. With the cookie: dashboard loads, user-name shows the name, add 3 employees, import CSV (peaks Sex/Sáb/Dom detected), manual peak toggle, 5x2 gives 2/2 and 6x1 gives 1/1, sector tabs filter (Cozinha: 1 row, 1 group), cell toggle TRAB./FOLGA, CSV export escala-6x1.csv, delete employee. Logout returns to /login, /api/auth/me then returns 401, and / redirects again. Mobile 390: scrollWidth=390 (no overflow), user-name is hidden and the avatar and logout button are visible. No console errors.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/logout", "issue": "Only reads the session_token cookie. Logout with only Authorization: Bearer does not delete the session (the frontend uses the cookie, so it works in the UI)."},
+      {"endpoint": "POST /api/auth/session", "issue": "If the Emergent payload lacks email or name, info['email'] raises KeyError and returns 500. There is no error handling for httpx timeouts either (500)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Mobile 390px header", "issues": ["The header still takes ~183px (3 rows). It is no longer sticky on mobile, so this is acceptable."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_folgasmart_api.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Optional: make logout also accept a Bearer token",
+    "Optional: handle a malformed or failed Emergent session-data response in /auth/session (return 401/502 instead of 500)"
+  ],
+  "critical_code_review_comments": [
+    "user_sessions has no TTL index, so expired sessions accumulate. Consider db.user_sessions.create_index('expires_at', expireAfterSeconds=0).",
+    "ProtectedRoute trusts location.state.user and skips /auth/me. Harmless because the APIs return 401, but if a 401 occurs mid-session the Dashboard should redirect to /login (consider an axios 401 interceptor).",
+    "claim_legacy_data runs only for brand-new users created via /auth/session. That is correct, but it is not atomic: two simultaneous first logins could split employees and movement/schedule between users. This is an edge case.",
+    "Deprecated @app.on_event('shutdown') is still used."
+  ],
+  "updated_files": ["/app/backend/tests/test_folgasmart_api.py"],
+  "success_rate": {"backend": "100% (30/30)", "frontend": "100% of requested flows"},
+  "test_credentials": "No fixed credentials (per /app/memory/test_credentials.md). Test users and sessions are created in Mongo: the pytest fixture creates them and cleans them up; the UI user was created via mongosh.",
+  "seed_data_creation": "All test users, sessions, employees, movement and schedule docs were removed at the end. Legacy data was preserved: 6 employees without user_id, plus movement and schedule with _key 'main'.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest backend/tests/test_folgasmart_api.py. It creates its own A/B users in pymongo and cleans up. test_legacy_data_untouched expects 6 legacy employees (update it if a real Google login claims them). In Playwright, add the session_token cookie for domain escala-5x2.preview.emergentagent.com. The peak indicators are peak-day-indicator-{segunda..domingo}."
+}

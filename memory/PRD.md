@@ -17,6 +17,7 @@ Cadastro manual + algoritmo automático; histórico de movimento via CSV; sem lo
 - Exportação em CSV (Excel) e impressão/PDF, CSV modelo
 - Escala organizada por setor: abas de filtro, linha de cabeçalho por setor com cobertura diária, rodapé que acompanha o filtro, CSV exportado em ordem de setor
 - Campo dedicado "Dias de maior movimento" para escolher os picos à mão, independente do CSV (que agora é opcional)
+- Login com Google (Emergent Auth): página /login, cookie httpOnly de 7 dias, /api/auth/me, logout; todos os dados isolados por usuário; dados criados antes do login são atribuídos ao primeiro usuário que entra
 
 ## Backlog
 - P1: editar funcionário pela interface; preferência de folga por funcionário; mínimo de pessoas por setor

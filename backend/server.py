@@ -193,11 +193,14 @@ async def root():
 
 @api.post("/auth/session", response_model=User)
 async def create_session(data: SessionIn, response: Response):
-    async with httpx.AsyncClient(timeout=15) as http_client:
-        r = await http_client.get(EMERGENT_SESSION_URL, headers={"X-Session-ID": data.session_id})
-    if r.status_code != 200:
+    try:
+        async with httpx.AsyncClient(timeout=15) as http_client:
+            r = await http_client.get(EMERGENT_SESSION_URL, headers={"X-Session-ID": data.session_id})
+    except httpx.HTTPError:
+        raise HTTPException(502, "Serviço de login indisponível")
+    info = r.json() if r.status_code == 200 else {}
+    if not all(info.get(k) for k in ("email", "name", "session_token")):
         raise HTTPException(401, "Sessão do Google inválida")
-    info = r.json()
     existing = await db.users.find_one({"email": info["email"]}, {"_id": 0})
     if existing:
         uid = existing["user_id"]
@@ -223,6 +226,9 @@ async def me(user: User = Depends(get_user)):
 @api.post("/auth/logout")
 async def logout(request: Request, response: Response):
     token = request.cookies.get("session_token")
+    auth = request.headers.get("Authorization", "")
+    if not token and auth.startswith("Bearer "):
+        token = auth[7:]
     if token:
         await db.user_sessions.delete_one({"session_token": token})
     response.delete_cookie("session_token", path="/", secure=True, samesite="none")
@@ -340,6 +346,12 @@ app.add_middleware(
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+
+@app.on_event("startup")
+async def create_indexes():
+    await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
+    await db.user_sessions.create_index("session_token")
 
 
 @app.on_event("shutdown")
