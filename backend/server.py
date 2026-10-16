@@ -97,7 +97,10 @@ async def save_movement(mov: Movement):
 
 async def get_schedule(week: str) -> Schedule:
     doc = await db.schedule.find_one({"week": week}, {"_id": 0})
-    return Schedule(**doc) if doc else Schedule(week=week)
+    if doc:
+        return Schedule(**doc)
+    last = await db.schedule.find_one({"generated_at": {"$ne": None}}, {"_id": 0, "mode": 1}, sort=[("generated_at", -1)])
+    return Schedule(week=week, mode=last["mode"] if last else "6x1")
 
 
 async def save_schedule(sched: Schedule):
