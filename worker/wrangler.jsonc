@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "folgasmart-api",
+  "name": "folgasmart",
   "main": "main.py",
   "compatibility_date": "2026-11-06",
   "compatibility_flags": ["python_workers"],
