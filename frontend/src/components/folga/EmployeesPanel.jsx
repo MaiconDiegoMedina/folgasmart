@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { http, errMsg } from "@/lib/api";
 
-const EMPTY = { name: "", role: "", sector: "" };
+const EMPTY = { name: "", role: "", sector: "", status: "ativo" };
 
 const EmployeeForm = ({ sectors, onSaved }) => {
   const [form, setForm] = useState(EMPTY);
@@ -17,7 +17,12 @@ const EmployeeForm = ({ sectors, onSaved }) => {
     if (!form.name.trim() || !form.role.trim() || !form.sector.trim()) return toast.error("Preencha nome, cargo e setor.");
     setBusy(true);
     try {
-      await http.post("/employees", { name: form.name.trim(), role: form.role.trim(), sector: form.sector.trim() });
+      await http.post("/employees", { 
+        name: form.name.trim(), 
+        role: form.role.trim(), 
+        sector: form.sector.trim(),
+        status: "ativo"
+      });
       toast.success("Funcionário adicionado — clique em Gerar escala para recalcular as folgas");
       setForm(EMPTY);
       onSaved();
@@ -43,11 +48,28 @@ const EmployeeForm = ({ sectors, onSaved }) => {
 
 export const EmployeesPanel = ({ employees, onChange }) => {
   const sectors = [...new Set(employees.map((e) => e.sector))];
+
   const remove = async (emp) => {
     try {
       await http.delete(`/employees/${emp.id}`);
       toast.success(`${emp.name} removido`);
       onChange();
+    } catch (err) {
+      toast.error(errMsg(err));
+    }
+  };
+
+  // Nova função para atualizar o status (Ativo / Férias / Suspensão) diretamente na API
+  const updateStatus = async (emp, newStatus) => {
+    try {
+      await http.put(`/employees/${emp.id}`, {
+        name: emp.name,
+        role: emp.role,
+        sector: emp.sector,
+        status: newStatus
+      });
+      toast.success(`Status de ${emp.name} atualizado para ${newStatus}`);
+      onChange(); // Atualiza a escala na tela imediatamente
     } catch (err) {
       toast.error(errMsg(err));
     }
@@ -62,10 +84,22 @@ export const EmployeesPanel = ({ employees, onChange }) => {
         {employees.length === 0 && <li className="py-6 text-sm text-center text-[#8A929B]">Nenhum funcionário cadastrado.</li>}
         {employees.map((e) => (
           <li key={e.id} data-testid={`employee-item-${e.id}`} className="py-2.5 flex items-center justify-between gap-3">
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold truncate">{e.name}</p>
               <p className="text-xs text-[#8A929B] truncate">{e.role} · <span className="text-[#575E65]">{e.sector}</span></p>
             </div>
+            
+            {/* Caixa de seleção adicionada ao lado do nome do funcionário */}
+            <select
+              value={e.status || "ativo"}
+              onChange={(evt) => updateStatus(e, evt.target.value)}
+              className="text-xs bg-[#F8F6F0] border border-[#E5E1D8] rounded-lg px-2 py-1.5 text-[#575E65] font-medium outline-none focus:border-[#0F172A] transition-colors"
+            >
+              <option value="ativo">Ativo</option>
+              <option value="ferias">Férias</option>
+              <option value="suspensao">Suspensão</option>
+            </select>
+
             <button data-testid={`btn-delete-employee-${e.id}`} onClick={() => remove(e)} className="p-2 rounded-lg text-[#8A929B] hover:bg-[#FEF2F2] hover:text-[#DC2626] transition-colors">
               <Trash2 className="h-4 w-4" />
             </button>

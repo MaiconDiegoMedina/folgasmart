@@ -3,39 +3,72 @@ import { Flame, AlertTriangle, Users } from "lucide-react";
 import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate } from "@/lib/api";
 import { WeekNav } from "@/components/folga/WeekNav";
 
-const Cell = ({ off, peak, onClick, testId }) => (
-  <button
-    data-testid={testId}
-    onClick={onClick}
-    title="Clique para alternar"
-    className={`w-full h-11 rounded-lg text-[11px] font-bold tracking-wider font-mono-data border transition-colors duration-200 ${
-      off
-        ? peak
-          ? "bg-[#FEF2F2] border-[#DC2626] text-[#DC2626]"
-          : "bg-[#FFFBEB] border-[#FCD34D] text-[#B45309] hover:bg-[#FEF3C7]"
-        : "bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D] hover:bg-[#DCFCE7]"
-    }`}
-  >
-    {off ? "FOLGA" : "TRAB."}
-  </button>
-);
+const Cell = ({ off, susp, peak, status, onClick, testId }) => {
+  if (status === "ferias") {
+    return (
+      <div
+        data-testid={testId}
+        className="w-full h-11 flex items-center justify-center rounded-lg text-[10px] font-extrabold tracking-wider bg-[#F1F5F9] border border-[#CBD5E1] text-[#64748B] font-mono-data select-none cursor-not-allowed"
+        title="Funcionário em período de férias"
+      >
+        FÉRIAS
+      </div>
+    );
+  }
 
-const Row = ({ emp, offs, peaks, required, onToggle, idx }) => {
-  const wrong = offs.length !== required;
+  let texto = "TRAB.";
+  let classesEstilo = "bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D] hover:bg-[#DCFCE7]"; // Trabalhando
+
+  if (susp) {
+    texto = "SUSP.";
+    classesEstilo = "bg-[#FFF1F2] border-[#FECDD3] text-[#E11D48] hover:bg-[#FFE4E6]"; // Suspensão
+  } else if (off) {
+    texto = "FOLGA";
+    classesEstilo = peak
+      ? "bg-[#FEF2F2] border-[#DC2626] text-[#DC2626]" // Folga em dia de pico
+      : "bg-[#FFFBEB] border-[#FCD34D] text-[#B45309] hover:bg-[#FEF3C7]"; // Folga comum
+  }
+
+  return (
+    <button
+      data-testid={testId}
+      onClick={onClick}
+      className={`w-full h-11 rounded-lg text-[11px] font-bold tracking-wider font-mono-data border transition-colors duration-200 ${classesEstilo}`}
+    >
+      {texto}
+    </button>
+  );
+};
+
+const Row = ({ emp, offs, suspensions, peaks, required, onToggle, idx }) => {
+  const wrong = emp.status !== "ferias" && offs.length !== required;
+  
   return (
     <tr data-testid="employee-row" className="rise border-t border-[#EFEBE3]" style={{ animationDelay: `${idx * 30}ms` }}>
       <td className="py-2 pr-4 sticky left-0 bg-white z-10 min-w-[110px] md:min-w-[200px]">
-        <p className="font-semibold text-sm leading-tight">{emp.name}</p>
+        <p className="font-semibold text-sm leading-tight flex items-center gap-1.5">
+          {emp.name}
+          {emp.status === "ferias" && <span className="text-[9px] bg-[#E2E8F0] text-[#475569] font-bold px-1.5 py-0.5 rounded">FÉRIAS</span>}
+          {emp.status === "suspensao" && <span className="text-[9px] bg-[#FFE4E6] text-[#E11D48] font-bold px-1.5 py-0.5 rounded">SUSP.</span>}
+        </p>
         <p className="text-xs text-[#8A929B]">{emp.role} · {emp.sector}</p>
       </td>
       {DAYS_SHORT.map((_, d) => (
         <td key={d} className="p-1 min-w-[72px]">
-          <Cell off={offs.includes(d)} peak={peaks.includes(d)} onClick={() => onToggle(emp.id, d)} testId={`cell-${emp.id}-${d}`} />
+          <Cell 
+            off={offs.includes(d)} 
+            susp={suspensions.includes(d)} 
+            peak={peaks.includes(d)} 
+            status={emp.status} 
+            onClick={() => onToggle(emp.id, d)} 
+            testId={`cell-${emp.id}-${d}`} 
+          />
         </td>
       ))}
       <td className="pl-3 text-center">
         <span data-testid={`row-summary-${emp.id}`} className={`inline-flex items-center gap-1 text-xs font-mono-data font-semibold ${wrong ? "text-[#DC2626]" : "text-[#575E65]"}`}>
-          {wrong && <AlertTriangle className="h-3.5 w-3.5" />}{offs.length}/{required}
+          {wrong && <AlertTriangle className="h-3.5 w-3.5" />}
+          {emp.status === "ferias" ? "7/7" : `${offs.length}/${required}`}
         </span>
       </td>
     </tr>
@@ -85,7 +118,8 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   const [sector, setSector] = useState("all");
   const peaks = movement?.peak_days || [];
   const required = OFFS_PER_MODE[schedule.mode];
-  const offsOf = (id) => schedule.off_days[id] || [];
+  const offsOf = (id) => schedule.off_days?.[id] || [];
+  const suspensionsOf = (id) => schedule.suspension_days?.[id] || [];
   const sectors = [...new Set(employees.map((e) => e.sector))].sort((a, b) => a.localeCompare(b));
   const activeSector = sectors.includes(sector) ? sector : "all";
   const visible = activeSector === "all" ? employees : employees.filter((e) => e.sector === activeSector);
@@ -107,6 +141,8 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#DCFCE7] border border-[#BBF7D0]" />Trabalha</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FEF3C7] border border-[#FCD34D]" />Folga</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FEF2F2] border border-[#DC2626]" />Folga em pico</span>
+          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FFE4E6] border border-[#FECDD3]" />Suspensão</span>
+          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F1F5F9] border border-[#CBD5E1]" />Férias</span>
         </div>
       </div>
       {employees.length === 0 ? (
@@ -116,47 +152,55 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
         </div>
       ) : (
         <>
-        <SectorTabs sectors={sectors} value={activeSector} onChange={setSector} />
-        <div className="overflow-x-auto p-3 sm:p-5">
-          <table className="w-full border-separate border-spacing-0">
-            <thead>
-              <tr>
-                <th className="text-left text-xs font-semibold text-[#8A929B] uppercase tracking-wider pb-3 sticky left-0 bg-white z-10">Funcionário</th>
-                {DAYS_SHORT.map((d, i) => (
-                  <th key={d} data-testid="calendar-header-day" className="pb-3 px-1">
-                    <div className={`rounded-lg py-1.5 text-xs font-bold uppercase tracking-wider ${peaks.includes(i) ? "bg-[#DC2626] text-white" : "text-[#575E65]"} ${isoDate(dates[i]) === today ? "ring-2 ring-offset-2 ring-[#0F172A]" : ""}`}>
-                      <span className="inline-flex items-center gap-1">{peaks.includes(i) && <Flame className="h-3 w-3" />}{d}</span>
-                      <span data-testid={`header-date-${i}`} className="block font-mono-data text-[10px] font-medium opacity-80 normal-case">{fmtDayMonth(dates[i])}</span>
-                    </div>
-                  </th>
-                ))}
-                <th className="pb-3 text-xs font-semibold text-[#8A929B] uppercase tracking-wider">Folgas</th>
-              </tr>
-            </thead>
-            <tbody>
-              {groups.map((g) => [
-                <SectorHeader key={`h-${g.name}`} name={g.name} members={g.members} offsOf={offsOf} peaks={peaks} />,
-                ...g.members.map((emp, idx) => (
-                  <Row key={emp.id} idx={idx} emp={emp} offs={offsOf(emp.id)} peaks={peaks} required={required} onToggle={onToggle} />
-                )),
-              ])}
-            </tbody>
-            <tfoot>
-              <tr className="border-t-2 border-[#191C1E]">
-                <td className="pt-4 text-xs font-bold uppercase tracking-wider sticky left-0 bg-white">
-                  Em operação{activeSector !== "all" && <span className="block text-[10px] text-[#8A929B] normal-case tracking-normal">{activeSector}</span>}
-                </td>
-                {coverage.map((c, d) => (
-                  <td key={d} className="pt-4 text-center" data-testid={`coverage-count-footer-${d}`}>
-                    <span className={`font-mono-data text-lg font-bold ${peaks.includes(d) && c < visible.length ? "text-[#DC2626]" : "text-[#191C1E]"}`}>{c}</span>
-                    <span className="text-xs text-[#8A929B]">/{visible.length}</span>
+          <SectorTabs sectors={sectors} value={activeSector} onChange={setSector} />
+          <div className="overflow-x-auto p-3 sm:p-5">
+            <table className="w-full border-separate border-spacing-0">
+              <thead>
+                <tr>
+                  <th className="text-left text-xs font-semibold text-[#8A929B] uppercase tracking-wider pb-3 sticky left-0 bg-white z-10">Funcionário</th>
+                  {DAYS_SHORT.map((d, i) => (
+                    <th key={d} data-testid="calendar-header-day" className="pb-3 px-1">
+                      <div className={`rounded-lg py-1.5 text-xs font-bold uppercase tracking-wider ${peaks.includes(i) ? "bg-[#DC2626] text-white" : "text-[#575E65]"} ${isoDate(dates[i]) === today ? "ring-2 ring-offset-2 ring-[#0F172A]" : ""}`}>
+                        <span className="inline-flex items-center gap-1">{peaks.includes(i) && <Flame className="h-3 w-3" />}{d}</span>
+                        <span data-testid={`header-date-${i}`} className="block font-mono-data text-[10px] font-medium opacity-80 normal-case">{fmtDayMonth(dates[i])}</span>
+                      </div>
+                    </th>
+                  ))}
+                  <th className="pb-3 text-xs font-semibold text-[#8A929B] uppercase tracking-wider">Folgas</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map((g) => [
+                  <SectorHeader key={`h-${g.name}`} name={g.name} members={g.members} offsOf={offsOf} peaks={peaks} />,
+                  ...g.members.map((emp, idx) => (
+                    <Row 
+                      key={emp.id} 
+                      idx={idx} 
+                      emp={emp} 
+                      offs={offsOf(emp.id)} 
+                      suspensions={suspensionsOf(emp.id)} 
+                      peaks={peaks} 
+                      required={required} 
+                      onToggle={onToggle} 
+                    />
+                  )),
+                ])}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-[#191C1E]">
+                  <td className="pt-4 text-xs font-bold uppercase tracking-wider sticky left-0 bg-white">
+                    Em operação{activeSector !== "all" && <span className="block text-[10px] text-[#8A929B] normal-case tracking-normal">{activeSector}</span>}
                   </td>
-                ))}
-                <td />
-              </tr>
-            </tfoot>
-          </table>
-        </div>
+                  {coverage.map((c, d) => (
+                    <td key={d} className="pt-4 text-center font-mono-data text-xs font-bold text-[#191C1E]">
+                      {c}/{visible.length}
+                    </td>
+                  ))}
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         </>
       )}
     </section>
