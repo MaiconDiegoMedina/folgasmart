@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "folgasmart-api",
+  "main": "main.py",
+  "compatibility_date": "2026-11-06",
+  "compatibility_flags": ["python_workers"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "folgasmart-db",
+      "database_id": "PREENCHA_COM_O_ID_DO_D1"
+    }
+  ]
+}

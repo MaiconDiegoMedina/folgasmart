@@ -1,0 +1,477 @@
+import csv
+import base64
+import hashlib
+import hmac
+import io
+import json
+import re
+import time
+import uuid
+from datetime import date, datetime, timedelta, timezone
+from typing import Annotated, Dict, List, Literal
+
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from pydantic import BaseModel, Field, StringConstraints
+from starlette.middleware.cors import CORSMiddleware
+from workers import asgi
+
+
+app = FastAPI(title="FolgaSmart API", docs_url=None, redoc_url=None, openapi_url=None)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://folgasmart.pages.dev"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+)
+
+Mode = Literal["6x1", "5x2"]
+OFFS_PER_MODE = {"6x1": 1, "5x2": 2}
+Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+Status = Literal["ativo", "ferias", "suspensao"]
+
+
+def db(request: Request):
+    return request.scope["env"].DB
+
+
+TOKEN_LIFETIME_SECONDS = 8 * 60 * 60
+LOGIN_WINDOW_SECONDS = 15 * 60
+LOGIN_MAX_ATTEMPTS = 5
+
+
+def _b64encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _b64decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def _secrets(request: Request):
+    env = request.scope["env"]
+    password = getattr(env, "FOLGASMART_PASSWORD", None)
+    signing_key = getattr(env, "FOLGASMART_SESSION_SECRET", None)
+    if not password or not signing_key:
+        raise HTTPException(503, "A autenticação ainda não foi configurada no Cloudflare.")
+    if len(str(password)) < 16 or len(str(signing_key)) < 32:
+        raise HTTPException(503, "Configure uma senha com pelo menos 16 caracteres e uma chave forte de sessão.")
+    return str(password), str(signing_key)
+
+
+def _make_token(session_id: str, expiry: int, signing_key: str) -> str:
+    payload = _b64encode(json.dumps({"sid": session_id, "exp": expiry}, separators=(",", ":")).encode())
+    signature = hmac.new(signing_key.encode(), payload.encode(), hashlib.sha256).digest()
+    return f"{payload}.{_b64encode(signature)}"
+
+
+async def require_auth(request: Request) -> str:
+    _, signing_key = _secrets(request)
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Entre para continuar.", headers={"WWW-Authenticate": "Bearer"})
+    try:
+        payload_part, signature_part = authorization[7:].split(".", 1)
+        expected = hmac.new(signing_key.encode(), payload_part.encode(), hashlib.sha256).digest()
+        if not hmac.compare_digest(expected, _b64decode(signature_part)):
+            raise ValueError("assinatura inválida")
+        payload = json.loads(_b64decode(payload_part))
+        session_id = str(payload["sid"])
+        expiry = int(payload["exp"])
+        if expiry <= int(time.time()):
+            raise ValueError("sessão expirada")
+    except Exception:
+        raise HTTPException(401, "Sessão inválida ou expirada.", headers={"WWW-Authenticate": "Bearer"})
+    session = await db(request).prepare(
+        "SELECT id FROM auth_sessions WHERE id = ? AND expires_at > ?"
+    ).bind(session_id, int(time.time())).first()
+    if not session:
+        raise HTTPException(401, "Sessão encerrada. Entre novamente.", headers={"WWW-Authenticate": "Bearer"})
+    return session_id
+
+
+api = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
+auth = APIRouter(prefix="/api/auth")
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class EmployeeIn(BaseModel):
+    name: Text
+    role: Text
+    sector: Text
+    status: Status = "ativo"
+
+
+class Employee(EmployeeIn):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    created_at: str = Field(default_factory=now_iso)
+
+
+class Movement(BaseModel):
+    avg: List[float] = Field(default_factory=lambda: [0.0] * 7)
+    samples: List[int] = Field(default_factory=lambda: [0] * 7)
+    peak_days: List[int] = Field(default_factory=list)
+    total_records: int = 0
+    updated_at: str | None = None
+
+
+class CsvImport(BaseModel):
+    csv: str
+
+
+class PeaksIn(BaseModel):
+    peak_days: List[int]
+
+
+class Schedule(BaseModel):
+    week: str
+    mode: Mode = "6x1"
+    off_days: Dict[str, List[int]] = Field(default_factory=dict)
+    suspension_days: Dict[str, List[int]] = Field(default_factory=dict)
+    generated_at: str | None = None
+
+
+class GenerateIn(BaseModel):
+    mode: Mode
+    week: str
+
+
+class CellToggle(BaseModel):
+    employee_id: str
+    day: int = Field(ge=0, le=6)
+    week: str
+
+
+class LoginIn(BaseModel):
+    password: str
+
+
+def week_start(raw: str) -> str:
+    try:
+        day = date.fromisoformat(raw)
+    except ValueError:
+        raise HTTPException(400, "Semana inválida. Use AAAA-MM-DD")
+    return (day - timedelta(days=day.weekday())).isoformat()
+
+
+async def list_employees(request: Request) -> List[Employee]:
+    result = await db(request).prepare(
+        "SELECT id, name, role, sector, status, created_at FROM employees ORDER BY created_at ASC"
+    ).all()
+    return [Employee(
+        id=row["id"], name=row["name"], role=row["role"], sector=row["sector"],
+        status=row["status"], created_at=row["created_at"],
+    ) for row in result.results]
+
+
+async def get_movement(request: Request) -> Movement:
+    row = await db(request).prepare(
+        "SELECT avg, samples, peak_days, total_records, updated_at FROM movement WHERE key = ?"
+    ).bind("main").first()
+    if not row:
+        return Movement()
+    return Movement(
+        avg=json.loads(row["avg"]), samples=json.loads(row["samples"]),
+        peak_days=json.loads(row["peak_days"]), total_records=row["total_records"],
+        updated_at=row["updated_at"],
+    )
+
+
+async def save_movement(request: Request, movement: Movement) -> None:
+    await db(request).prepare(
+        """INSERT INTO movement (key, avg, samples, peak_days, total_records, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET
+        avg=excluded.avg, samples=excluded.samples, peak_days=excluded.peak_days,
+        total_records=excluded.total_records, updated_at=excluded.updated_at"""
+    ).bind("main", json.dumps(movement.avg), json.dumps(movement.samples),
+           json.dumps(movement.peak_days), movement.total_records, movement.updated_at).run()
+
+
+async def get_schedule(request: Request, week: str) -> Schedule:
+    row = await db(request).prepare(
+        "SELECT week, mode, off_days, suspension_days, generated_at FROM schedule WHERE week = ?"
+    ).bind(week).first()
+    if row:
+        return Schedule(
+            week=row["week"], mode=row["mode"], off_days=json.loads(row["off_days"]),
+            suspension_days=json.loads(row["suspension_days"]), generated_at=row["generated_at"],
+        )
+    last = await db(request).prepare(
+        "SELECT mode FROM schedule WHERE generated_at IS NOT NULL ORDER BY generated_at DESC LIMIT 1"
+    ).first()
+    return Schedule(week=week, mode=last["mode"] if last else "6x1")
+
+
+async def save_schedule(request: Request, schedule: Schedule) -> None:
+    await db(request).prepare(
+        """INSERT INTO schedule (week, mode, off_days, suspension_days, generated_at)
+        VALUES (?, ?, ?, ?, ?) ON CONFLICT(week) DO UPDATE SET mode=excluded.mode,
+        off_days=excluded.off_days, suspension_days=excluded.suspension_days,
+        generated_at=excluded.generated_at"""
+    ).bind(schedule.week, schedule.mode, json.dumps(schedule.off_days),
+           json.dumps(schedule.suspension_days), schedule.generated_at).run()
+
+
+def parse_date(raw: str):
+    raw = raw.strip()
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except ValueError:
+            pass
+    return None
+
+
+def parse_number(raw: str):
+    raw = raw.strip()
+    if "," in raw or re.fullmatch(r"\d{1,3}(\.\d{3})+", raw):
+        raw = raw.replace(".", "").replace(",", ".")
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
+                     rotate: int = 0, previous_days: dict | None = None) -> Dict[str, List[int]]:
+    offs_needed = OFFS_PER_MODE[mode]
+    max_avg = max(movement.avg) or 1
+    weight = [1 + 4 * (value / max_avg) for value in movement.avg]
+    peaks = set(movement.peak_days)
+    off_global = [0] * 7
+    off_sector: Dict[str, List[int]] = {}
+    result: Dict[str, List[int]] = {}
+    holiday = [e for e in employees if e.status == "ferias"]
+    active = [e for e in employees if e.status in ("ativo", "suspensao")]
+    for emp in holiday:
+        result[emp.id] = list(range(7))
+    ordered = []
+    for sector in sorted({e.sector.lower() for e in active}):
+        group = sorted([e for e in active if e.sector.lower() == sector], key=lambda e: e.created_at)
+        k = rotate % len(group) if group else 0
+        ordered.extend(group[k:] + group[:k])
+    for emp in ordered:
+        sec = off_sector.setdefault(emp.sector.lower(), [0] * 7)
+        group = [e for e in active if e.sector.lower() == emp.sector.lower()]
+        idx = group.index(emp) if emp in group else 0
+        last_rotation = (rotate - 1) % len(group) if group else 0
+        last_day = (previous_days or {}).get(emp.id, (idx - last_rotation) % 7)
+        chosen = []
+        for _ in range(offs_needed):
+            def cost(day):
+                value = (off_global[day] + 1) * weight[day] + sec[day] * 6
+                if day in peaks:
+                    value += 1000
+                if mode == "6x1" and day + 7 - last_day > 6:
+                    value += 5000
+                return value
+            day = min((d for d in range(7) if d not in chosen), key=lambda d: (cost(d), d))
+            chosen.append(day)
+            off_global[day] += 1
+            sec[day] += 1
+        result[emp.id] = sorted(chosen)
+    return result
+
+
+@auth.post("/login")
+async def login(data: LoginIn, request: Request):
+    expected_password, signing_key = _secrets(request)
+    database = db(request)
+    now = int(time.time())
+    client_ip = request.headers.get("cf-connecting-ip", "unknown")
+    await database.prepare(
+        "DELETE FROM auth_attempts WHERE window_started <= ?"
+    ).bind(now - LOGIN_WINDOW_SECONDS).run()
+    attempt = await database.prepare(
+        "SELECT window_started, attempts FROM auth_attempts WHERE ip = ?"
+    ).bind(client_ip).first()
+    window_started = int(attempt["window_started"]) if attempt else now
+    attempts = int(attempt["attempts"]) if attempt else 0
+    if now - window_started >= LOGIN_WINDOW_SECONDS:
+        window_started, attempts = now, 0
+    if attempts >= LOGIN_MAX_ATTEMPTS:
+        raise HTTPException(429, "Muitas tentativas. Aguarde 15 minutos e tente novamente.")
+    if not hmac.compare_digest(data.password.encode(), expected_password.encode()):
+        attempts += 1
+        await database.prepare(
+            """INSERT INTO auth_attempts (ip, window_started, attempts) VALUES (?, ?, ?)
+            ON CONFLICT(ip) DO UPDATE SET window_started=excluded.window_started,
+            attempts=excluded.attempts"""
+        ).bind(client_ip, window_started, attempts).run()
+        raise HTTPException(401, "Senha incorreta.")
+
+    await database.prepare("DELETE FROM auth_attempts WHERE ip = ?").bind(client_ip).run()
+    await database.prepare("DELETE FROM auth_sessions WHERE expires_at <= ?").bind(now).run()
+    session_id = str(uuid.uuid4())
+    expires_at = now + TOKEN_LIFETIME_SECONDS
+    await database.prepare(
+        "INSERT INTO auth_sessions (id, expires_at) VALUES (?, ?)"
+    ).bind(session_id, expires_at).run()
+    return {
+        "access_token": _make_token(session_id, expires_at, signing_key),
+        "token_type": "bearer",
+        "expires_in": TOKEN_LIFETIME_SECONDS,
+    }
+
+
+@auth.get("/me")
+async def current_session(session_id: str = Depends(require_auth)):
+    return {"authenticated": True}
+
+
+@auth.post("/logout")
+async def logout(request: Request, session_id: str = Depends(require_auth)):
+    await db(request).prepare("DELETE FROM auth_sessions WHERE id = ?").bind(session_id).run()
+    return {"ok": True}
+
+
+@api.get("/")
+async def root():
+    return {"message": "FolgaSmart API (Cloudflare D1)"}
+
+
+@api.get("/employees", response_model=List[Employee])
+async def employees(request: Request):
+    return await list_employees(request)
+
+
+@api.post("/employees", response_model=Employee)
+async def create_employee(data: EmployeeIn, request: Request):
+    emp = Employee(**data.model_dump())
+    await db(request).prepare(
+        "INSERT INTO employees (id, name, role, sector, status, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).bind(emp.id, emp.name, emp.role, emp.sector, emp.status, emp.created_at).run()
+    return emp
+
+
+@api.put("/employees/{emp_id}", response_model=Employee)
+async def update_employee(emp_id: str, data: EmployeeIn, request: Request):
+    database = db(request)
+    existing = await database.prepare("SELECT id, created_at FROM employees WHERE id = ?").bind(emp_id).first()
+    if not existing:
+        raise HTTPException(404, "Funcionário não encontrado")
+    await database.prepare(
+        "UPDATE employees SET name=?, role=?, sector=?, status=? WHERE id=?"
+    ).bind(data.name, data.role, data.sector, data.status, emp_id).run()
+    return Employee(id=emp_id, created_at=existing["created_at"], **data.model_dump())
+
+
+@api.delete("/employees/{emp_id}")
+async def delete_employee(emp_id: str, request: Request):
+    database = db(request)
+    if not await database.prepare("SELECT id FROM employees WHERE id = ?").bind(emp_id).first():
+        raise HTTPException(404, "Funcionário não encontrado")
+    schedules = (await database.prepare("SELECT week, off_days, suspension_days FROM schedule").all()).results
+    for row in schedules:
+        off = json.loads(row["off_days"])
+        suspension = json.loads(row["suspension_days"])
+        off.pop(emp_id, None)
+        suspension.pop(emp_id, None)
+        await database.prepare(
+            "UPDATE schedule SET off_days=?, suspension_days=? WHERE week=?"
+        ).bind(json.dumps(off), json.dumps(suspension), row["week"]).run()
+    await database.prepare("DELETE FROM employees WHERE id = ?").bind(emp_id).run()
+    return {"ok": True}
+
+
+@api.get("/movement", response_model=Movement)
+async def movement_api(request: Request):
+    return await get_movement(request)
+
+
+@api.post("/movement/import", response_model=Movement)
+async def import_movement(data: CsvImport, request: Request):
+    text = data.csv.lstrip("\ufeff")
+    delimiter = ";" if text.count(";") > text.count(",") else ","
+    totals, counts, records = [0.0] * 7, [0] * 7, 0
+    for row in csv.reader(io.StringIO(text), delimiter=delimiter):
+        if len(row) < 2:
+            continue
+        parsed, value = parse_date(row[0]), parse_number(row[1])
+        if parsed is None or value is None:
+            continue
+        totals[parsed.weekday()] += value
+        counts[parsed.weekday()] += 1
+        records += 1
+    if records == 0:
+        raise HTTPException(400, "Nenhum registro válido encontrado.")
+    averages = [round(totals[i] / counts[i], 1) if counts[i] else 0.0 for i in range(7)]
+    mean = sum(averages) / 7
+    peaks = sorted([i for i in range(7) if averages[i] >= mean * 1.15], key=lambda i: -averages[i])[:3]
+    if not peaks:
+        peaks = [max(range(7), key=lambda i: averages[i])]
+    mov = Movement(avg=averages, samples=counts, peak_days=sorted(peaks),
+                   total_records=records, updated_at=now_iso())
+    await save_movement(request, mov)
+    return mov
+
+
+@api.put("/movement/peaks", response_model=Movement)
+async def set_peaks(data: PeaksIn, request: Request):
+    mov = await get_movement(request)
+    mov.peak_days = sorted({day for day in data.peak_days if 0 <= day <= 6})
+    mov.updated_at = now_iso()
+    await save_movement(request, mov)
+    return mov
+
+
+@api.get("/schedule", response_model=Schedule)
+async def schedule_api(week: str, request: Request):
+    return await get_schedule(request, week_start(week))
+
+
+@api.post("/schedule/generate", response_model=Schedule)
+async def generate(data: GenerateIn, request: Request):
+    week = week_start(data.week)
+    employees = await list_employees(request)
+    mov = await get_movement(request)
+    week_date = date.fromisoformat(week)
+    previous_week = (week_date - timedelta(days=7)).isoformat()
+    old = await db(request).prepare("SELECT off_days FROM schedule WHERE week = ?").bind(previous_week).first()
+    previous_days = {}
+    if old:
+        for emp_id, days in json.loads(old["off_days"]).items():
+            if days:
+                previous_days[emp_id] = days[-1]
+    sched = Schedule(
+        week=week, mode=data.mode, generated_at=now_iso(),
+        off_days=compute_schedule(employees, mov, data.mode, week_date.isocalendar()[1], previous_days),
+    )
+    await save_schedule(request, sched)
+    return sched
+
+
+@api.put("/schedule/cell", response_model=Schedule)
+async def toggle_cell(data: CellToggle, request: Request):
+    employee = await db(request).prepare("SELECT status FROM employees WHERE id = ?").bind(data.employee_id).first()
+    if not employee:
+        raise HTTPException(404, "Funcionário não encontrado")
+    sched = await get_schedule(request, week_start(data.week))
+    off = list(sched.off_days.get(data.employee_id, []))
+    suspension = list(sched.suspension_days.get(data.employee_id, []))
+    if employee["status"] == "suspensao":
+        if data.day not in off and data.day not in suspension:
+            off.append(data.day)
+        elif data.day in off:
+            off.remove(data.day)
+            suspension.append(data.day)
+        else:
+            suspension.remove(data.day)
+    elif data.day in off:
+        off.remove(data.day)
+    else:
+        if data.day in suspension:
+            suspension.remove(data.day)
+        off.append(data.day)
+    sched.off_days[data.employee_id] = sorted(off)
+    sched.suspension_days[data.employee_id] = sorted(suspension)
+    await save_schedule(request, sched)
+    return sched
+
+
+app.include_router(auth)
+app.include_router(api)
+Default = asgi.entrypoint(app)

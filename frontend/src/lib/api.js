@@ -3,6 +3,38 @@ import axios from "axios";
 export const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 export const http = axios.create({ baseURL: API });
 
+const TOKEN_KEY = "folgasmart_access_token";
+export const getAccessToken = () => sessionStorage.getItem(TOKEN_KEY);
+export const clearAccessToken = () => sessionStorage.removeItem(TOKEN_KEY);
+
+http.interceptors.request.use((config) => {
+  const token = getAccessToken();
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+http.interceptors.response.use((response) => response, (error) => {
+  const isLoginRequest = error.config?.url?.endsWith("/auth/login");
+  if (error.response?.status === 401 && !isLoginRequest && getAccessToken()) {
+    clearAccessToken();
+    window.dispatchEvent(new Event("folgasmart:auth-expired"));
+  }
+  return Promise.reject(error);
+});
+
+export const login = async (password) => {
+  const { data } = await axios.post(`${API}/auth/login`, { password });
+  sessionStorage.setItem(TOKEN_KEY, data.access_token);
+};
+
+export const logout = async () => {
+  try {
+    if (getAccessToken()) await http.post("/auth/logout");
+  } finally {
+    clearAccessToken();
+  }
+};
+
 const pad = (n) => String(n).padStart(2, "0");
 export const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 export const parseIso = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };

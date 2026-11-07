@@ -1,4 +1,4 @@
-import { CalendarRange, Sparkles, Loader2 } from "lucide-react";
+import { CalendarRange, Sparkles, Loader2, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ExportMenu } from "@/components/folga/ExportMenu";
 import { DAYS_SHORT } from "@/lib/api";
@@ -21,7 +21,7 @@ const ModeToggle = ({ mode, onChange, disabled }) => (
   </div>
 );
 
-export const Header = ({ employees, movement, schedule, generating, onGenerate, onModeChange }) => {
+export const Header = ({ employees, movement, schedule, generating, onGenerate, onModeChange, onLogout }) => {
   const peaks = movement?.peak_days || [];
   return (
     <header data-testid="app-header" className="no-print md:sticky top-0 z-30 border-b border-[#E5E1D8] bg-[#F9F8F5]/85 backdrop-blur-xl">
@@ -49,6 +49,9 @@ export const Header = ({ employees, movement, schedule, generating, onGenerate, 
           >
             {generating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
             Gerar escala
+          </Button>
+          <Button variant="outline" onClick={onLogout} className="rounded-full">
+            <LogOut className="mr-2 h-4 w-4" /> Sair
           </Button>
         </div>
       </div>

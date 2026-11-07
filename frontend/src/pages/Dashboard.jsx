@@ -5,8 +5,10 @@ import { Header } from "@/components/folga/Header";
 import { MovementPanel } from "@/components/folga/MovementPanel";
 import { EmployeesPanel } from "@/components/folga/EmployeesPanel";
 import { ScheduleGrid } from "@/components/folga/ScheduleGrid";
+import { useAuth } from "@/components/LoginGate";
 
 export default function Dashboard() {
+  const { logout } = useAuth();
   const [employees, setEmployees] = useState([]);
   const [movement, setMovement] = useState(null);
   const [week, setWeek] = useState(() => isoDate(mondayOf(new Date())));
@@ -55,6 +57,7 @@ export default function Dashboard() {
   return (
     <div className="grain min-h-screen bg-[#F9F8F5] text-[#191C1E]">
       <Header
+        onLogout={logout}
         employees={employees}
         movement={movement}
         schedule={schedule}
