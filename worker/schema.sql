@@ -34,3 +34,17 @@ CREATE TABLE IF NOT EXISTS auth_attempts (
     window_started INTEGER NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS hourly_movement (
+    day INTEGER PRIMARY KEY,
+    label TEXT NOT NULL DEFAULT '',
+    hours TEXT NOT NULL,
+    updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS shifts (
+    week TEXT NOT NULL,
+    day INTEGER NOT NULL,
+    data TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (week, day)
+);

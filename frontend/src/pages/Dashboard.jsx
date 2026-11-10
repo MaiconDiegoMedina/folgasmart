@@ -12,7 +12,7 @@ export default function Dashboard() {
   const [employees, setEmployees] = useState([]);
   const [movement, setMovement] = useState(null);
   const [week, setWeek] = useState(() => isoDate(mondayOf(new Date())));
-  const [schedule, setSchedule] = useState({ mode: "6x1", off_days: {} });
+  const [schedule, setSchedule] = useState({ mode: "6x1", off_days: {}, extra_days: {} });
   const [generating, setGenerating] = useState(false);
 
   const load = useCallback(async () => {
@@ -20,13 +20,10 @@ export default function Dashboard() {
       const [e, m] = await Promise.all([http.get("/employees"), http.get("/movement")]);
       setEmployees(e.data);
       setMovement(m.data);
-    } catch (err) {
-      toast.error(errMsg(err));
-    }
+    } catch (err) { toast.error(errMsg(err)); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
-
   useEffect(() => {
     http.get("/schedule", { params: { week } }).then(({ data }) => setSchedule(data)).catch((err) => toast.error(errMsg(err)));
   }, [week, employees]);
@@ -37,43 +34,26 @@ export default function Dashboard() {
     try {
       const { data } = await http.post("/schedule/generate", { mode, week });
       setSchedule(data);
-      toast.success(`Escala ${mode} gerada para a semana`);
-    } catch (err) {
-      toast.error(errMsg(err));
-    } finally {
-      setGenerating(false);
-    }
+      toast.success("Escala " + mode + " gerada para a semana");
+    } catch (err) { toast.error(errMsg(err)); }
+    finally { setGenerating(false); }
   };
 
-  const toggleCell = async (employee_id, day) => {
+  const toggleCell = async (employee_id, day, markExtra = false) => {
     try {
-      const { data } = await http.put("/schedule/cell", { employee_id, day, week });
+      const { data } = await http.put("/schedule/cell", { employee_id, day, week, extra: markExtra });
       setSchedule(data);
-    } catch (err) {
-      toast.error(errMsg(err));
-    }
+    } catch (err) { toast.error(errMsg(err)); }
   };
 
   return (
     <div className="grain min-h-screen bg-[#F9F8F5] text-[#191C1E]">
-      <Header
-        onLogout={logout}
-        employees={employees}
-        movement={movement}
-        schedule={schedule}
-        generating={generating}
-        onGenerate={generate}
-        onModeChange={(mode) => generate(mode)}
-      />
+      <Header onLogout={logout} employees={employees} movement={movement} schedule={schedule} generating={generating} onGenerate={generate} onModeChange={(mode) => generate(mode)} />
       <main className="relative z-10 mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         <ScheduleGrid employees={employees} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} />
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 no-print">
-          <div className="lg:col-span-3">
-            <MovementPanel movement={movement} onChange={setMovement} />
-          </div>
-          <div className="lg:col-span-2">
-            <EmployeesPanel employees={employees} onChange={load} />
-          </div>
+          <div className="lg:col-span-3"><MovementPanel movement={movement} onChange={setMovement} /></div>
+          <div className="lg:col-span-2"><EmployeesPanel employees={employees} onChange={load} /></div>
         </div>
       </main>
     </div>

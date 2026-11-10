@@ -127,6 +127,7 @@ class PeaksIn(BaseModel):
 
 
 class Schedule(BaseModel):
+    extra_days: Dict[str, List[int]] = Field(default_factory=dict)
     week: str
     mode: Mode = "6x1"
     off_days: Dict[str, List[int]] = Field(default_factory=dict)
@@ -143,10 +144,45 @@ class CellToggle(BaseModel):
     employee_id: str
     day: int = Field(ge=0, le=6)
     week: str
+    extra: bool = False
+
 
 
 class LoginIn(BaseModel):
     password: str
+
+
+HHMM = Annotated[str, StringConstraints(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")]
+
+
+class HourPoint(BaseModel):
+    hour: int = Field(ge=0, le=23)
+    clients: float = Field(ge=0)
+    value: float = 0
+
+
+class HourlyIn(BaseModel):
+    day: int = Field(ge=0, le=6)
+    label: str = ""
+    hours: List[HourPoint] = Field(min_length=1, max_length=24)
+
+
+class Hourly(HourlyIn):
+    updated_at: str | None = None
+
+
+class ShiftIn(BaseModel):
+    week: str
+    day: int = Field(ge=0, le=6)
+    employee_id: str
+    start: HHMM | None = None
+    end: HHMM | None = None
+
+
+class DayShifts(BaseModel):
+    week: str
+    day: int
+    shifts: Dict[str, List[str]] = Field(default_factory=dict)
 
 
 def week_start(raw: str) -> str:
@@ -195,9 +231,12 @@ async def get_schedule(request: Request, week: str) -> Schedule:
         "SELECT week, mode, off_days, suspension_days, generated_at FROM schedule WHERE week = ?"
     ).bind(week).first()
     if row:
+        stored_suspensions = json.loads(row["suspension_days"])
+        suspensions = {key: [day for day in days if day >= 0] for key, days in stored_suspensions.items()}
+        extras = {key: [-day - 1 for day in days if day < 0] for key, days in stored_suspensions.items()}
         return Schedule(
             week=row["week"], mode=row["mode"], off_days=json.loads(row["off_days"]),
-            suspension_days=json.loads(row["suspension_days"]), generated_at=row["generated_at"],
+            suspension_days=suspensions, extra_days=extras, generated_at=row["generated_at"],
         )
     last = await db(request).prepare(
         "SELECT mode FROM schedule WHERE generated_at IS NOT NULL ORDER BY generated_at DESC LIMIT 1"
@@ -206,13 +245,18 @@ async def get_schedule(request: Request, week: str) -> Schedule:
 
 
 async def save_schedule(request: Request, schedule: Schedule) -> None:
+    stored_suspensions = {
+        emp_id: schedule.suspension_days.get(emp_id, [])
+        + [-day - 1 for day in schedule.extra_days.get(emp_id, [])]
+        for emp_id in set(schedule.suspension_days) | set(schedule.extra_days)
+    }
     await db(request).prepare(
         """INSERT INTO schedule (week, mode, off_days, suspension_days, generated_at)
         VALUES (?, ?, ?, ?, ?) ON CONFLICT(week) DO UPDATE SET mode=excluded.mode,
         off_days=excluded.off_days, suspension_days=excluded.suspension_days,
         generated_at=excluded.generated_at"""
     ).bind(schedule.week, schedule.mode, json.dumps(schedule.off_days),
-           json.dumps(schedule.suspension_days), schedule.generated_at).run()
+           json.dumps(stored_suspensions), schedule.generated_at).run()
 
 
 def parse_date(raw: str):
@@ -452,7 +496,20 @@ async def toggle_cell(data: CellToggle, request: Request):
     sched = await get_schedule(request, week_start(data.week))
     off = list(sched.off_days.get(data.employee_id, []))
     suspension = list(sched.suspension_days.get(data.employee_id, []))
-    if employee["status"] == "suspensao":
+    extra = list(sched.extra_days.get(data.employee_id, []))
+
+    if data.extra:
+        if employee["status"] != "ativo":
+            raise HTTPException(400, "A marcação EXTRA só pode ser usada para funcionário ativo.")
+        if data.day not in off:
+            raise HTTPException(400, "EXTRA só pode ser marcado em um dia de folga.")
+        if data.day in extra:
+            extra.remove(data.day)
+        else:
+            extra.append(data.day)
+    elif data.day in extra:
+        extra.remove(data.day)
+    elif employee["status"] == "suspensao":
         if data.day not in off and data.day not in suspension:
             off.append(data.day)
         elif data.day in off:
@@ -466,10 +523,71 @@ async def toggle_cell(data: CellToggle, request: Request):
         if data.day in suspension:
             suspension.remove(data.day)
         off.append(data.day)
+
     sched.off_days[data.employee_id] = sorted(off)
     sched.suspension_days[data.employee_id] = sorted(suspension)
+    sched.extra_days[data.employee_id] = sorted(extra)
     await save_schedule(request, sched)
     return sched
+
+
+
+@api.get("/hourly", response_model=List[Hourly])
+async def hourly_api(request: Request):
+    rows = (await db(request).prepare(
+        "SELECT day, label, hours, updated_at FROM hourly_movement ORDER BY day"
+    ).all()).results
+    return [Hourly(day=row["day"], label=row["label"] or "", hours=json.loads(row["hours"]),
+                   updated_at=row["updated_at"]) for row in rows]
+
+
+@api.put("/hourly", response_model=Hourly)
+async def save_hourly(data: HourlyIn, request: Request):
+    hours = sorted({h.hour: h for h in data.hours}.values(), key=lambda h: h.hour)
+    item = Hourly(day=data.day, label=data.label.strip()[:120], hours=hours, updated_at=now_iso())
+    await db(request).prepare(
+        """INSERT INTO hourly_movement (day, label, hours, updated_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(day) DO UPDATE SET label=excluded.label, hours=excluded.hours,
+        updated_at=excluded.updated_at"""
+    ).bind(item.day, item.label, json.dumps([h.model_dump() for h in item.hours]), item.updated_at).run()
+    return item
+
+
+@api.delete("/hourly/{day}")
+async def delete_hourly(day: int, request: Request):
+    await db(request).prepare("DELETE FROM hourly_movement WHERE day = ?").bind(day).run()
+    return {"ok": True}
+
+
+async def get_shifts(request: Request, week: str, day: int) -> DayShifts:
+    row = await db(request).prepare(
+        "SELECT data FROM shifts WHERE week = ? AND day = ?"
+    ).bind(week, day).first()
+    return DayShifts(week=week, day=day, shifts=json.loads(row["data"]) if row else {})
+
+
+@api.get("/shifts", response_model=DayShifts)
+async def shifts_api(week: str, day: int, request: Request):
+    if not 0 <= day <= 6:
+        raise HTTPException(400, "Dia inválido")
+    return await get_shifts(request, week_start(week), day)
+
+
+@api.put("/shifts", response_model=DayShifts)
+async def set_shift(data: ShiftIn, request: Request):
+    week = week_start(data.week)
+    current = await get_shifts(request, week, data.day)
+    if data.start and data.end:
+        if data.end <= data.start:
+            raise HTTPException(400, "A saída precisa ser depois da entrada.")
+        current.shifts[data.employee_id] = [data.start, data.end]
+    else:
+        current.shifts.pop(data.employee_id, None)
+    await db(request).prepare(
+        """INSERT INTO shifts (week, day, data) VALUES (?, ?, ?)
+        ON CONFLICT(week, day) DO UPDATE SET data=excluded.data"""
+    ).bind(week, data.day, json.dumps(current.shifts)).run()
+    return current
 
 
 app.include_router(auth)
