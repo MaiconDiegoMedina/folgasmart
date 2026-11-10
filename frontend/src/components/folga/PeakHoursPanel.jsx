@@ -229,8 +229,7 @@ export const PeakHoursPanel = ({ day, date, sector, members, schedule, week }) =
         !preview && (
           <div className="rounded-xl border border-dashed border-[#D1CBBF] p-6 text-center text-sm text-[#575E65]">
             <Clock className="h-6 w-6 mx-auto mb-2 text-[#8A929B]" />
-            No CISS, abra o relatório <b>170 – Movimento de Vendas por Faixa do Horário</b>, clique em <b>Exportar</b> e escolha
-            <b> Arquivo CSV</b> ou <b>Texto</b>. Depois clique em <b>Importar relatório</b>.
+            Movimento de Vendas por faixa de Horário
           </div>
         )
       )}
