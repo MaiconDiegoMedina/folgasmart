@@ -8,11 +8,10 @@ const buildCsv = (employees, schedule) => {
   const dates = weekDates(schedule.week);
   const header = ["Setor", "Funcionário", "Cargo", ...DAYS.map((d, i) => `${d} ${fmtDayMonth(dates[i])}`)].join(";");
   const sorted = [...employees].sort((a, b) => a.sector.localeCompare(b.sector));
-  const rows = sorted.map((e) => {
-    const off = schedule.off_days[e.id] || [];
-    return [e.sector, e.name, e.role, ...DAYS.map((_, i) => (off.includes(i) ? "FOLGA" : "TRABALHA"))].join(";");
-  });
-  const coverage = DAYS.map((_, i) => employees.filter((e) => !(schedule.off_days[e.id] || []).includes(i)).length);
+  const off = (e, i) => (schedule.off_days?.[e.id] || []).includes(i);
+  const extra = (e, i) => (schedule.extra_days?.[e.id] || []).includes(i);
+  const rows = sorted.map((e) => [e.sector, e.name, e.role, ...DAYS.map((_, i) => (extra(e, i) ? "EXTRA" : off(e, i) ? "FOLGA" : "TRABALHA"))].join(";"));
+  const coverage = DAYS.map((_, i) => employees.filter((e) => !off(e, i) || extra(e, i)).length);
   return [header, ...rows, ["Em operação", "", "", ...coverage].join(";")].join("\n");
 };
 

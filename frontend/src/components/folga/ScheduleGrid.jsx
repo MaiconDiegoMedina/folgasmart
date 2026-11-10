@@ -1,10 +1,11 @@
 import { useState } from "react";
+import { toast } from "sonner";
 import { Flame, AlertTriangle, Users, CalendarDays } from "lucide-react";
 import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate } from "@/lib/api";
 import { WeekNav } from "@/components/folga/WeekNav";
 import { PeakHoursPanel } from "@/components/folga/PeakHoursPanel";
 
-const Cell = ({ off, susp, peak, status, selected, onClick, testId }) => {
+const Cell = ({ off, susp, extra, peak, status, onClick, testId }) => {
   if (status === "ferias") {
     return (
       <div
@@ -20,7 +21,10 @@ const Cell = ({ off, susp, peak, status, selected, onClick, testId }) => {
   let texto = "TRAB.";
   let classesEstilo = "bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D] hover:bg-[#DCFCE7]"; // Trabalhando
 
-  if (susp) {
+  if (extra) {
+    texto = "EXTRA";
+    classesEstilo = "bg-[#F5F3FF] border-[#C4B5FD] text-[#6D28D9] hover:bg-[#EDE9FE]"; // Trabalha na folga
+  } else if (susp) {
     texto = "SUSP.";
     classesEstilo = "bg-[#FFF1F2] border-[#FECDD3] text-[#E11D48] hover:bg-[#FFE4E6]"; // Suspensão
   } else if (off) {
@@ -28,12 +32,6 @@ const Cell = ({ off, susp, peak, status, selected, onClick, testId }) => {
     classesEstilo = peak
       ? "bg-[#FEF2F2] border-[#DC2626] text-[#DC2626]" // Folga em dia de pico
       : "bg-[#FFFBEB] border-[#FCD34D] text-[#B45309] hover:bg-[#FEF3C7]"; // Folga comum
-  }
-
-  // Selecionada (shift + click): preenche a célula de preto.
-  // Fica por último para sobrescrever as demais cores.
-  if (selected) {
-    classesEstilo = "bg-[#0F172A] border-[#0F172A] text-white hover:bg-[#1E293B]";
   }
 
   return (
@@ -44,7 +42,7 @@ const Cell = ({ off, susp, peak, status, selected, onClick, testId }) => {
       onMouseDown={(e) => {
         if (e.shiftKey) e.preventDefault();
       }}
-      aria-pressed={selected}
+      title={extra ? "Extra: trabalha no dia de folga (clique para voltar a folga)" : off ? "Shift + clique marca como EXTRA" : undefined}
       className={`w-full h-11 rounded-lg text-[11px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[#0F172A] ${classesEstilo}`}
     >
       {texto}
@@ -52,7 +50,7 @@ const Cell = ({ off, susp, peak, status, selected, onClick, testId }) => {
   );
 };
 
-const Row = ({ emp, offs, suspensions, peaks, required, onToggle, selected, onSelect, idx }) => {
+const Row = ({ emp, offs, suspensions, extras, peaks, required, onToggle, onExtra, idx }) => {
   const wrong = emp.status !== "ferias" && offs.length !== required;
 
   return (
@@ -70,11 +68,11 @@ const Row = ({ emp, offs, suspensions, peaks, required, onToggle, selected, onSe
           <Cell
             off={offs.includes(d)}
             susp={suspensions.includes(d)}
+            extra={extras.includes(d)}
             peak={peaks.includes(d)}
             status={emp.status}
-            selected={selected.has(`${emp.id}-${d}`)}
-            // Shift + click seleciona (preto). Clique normal alterna a folga.
-            onClick={(e) => (e.shiftKey ? onSelect(emp.id, d) : onToggle(emp.id, d))}
+            // Shift + clique numa folga marca EXTRA. Clique normal alterna a folga.
+            onClick={(e) => (e.shiftKey ? onExtra(emp, d, offs.includes(d)) : onToggle(emp.id, d))}
             testId={`cell-${emp.id}-${d}`}
           />
         </td>
@@ -133,14 +131,14 @@ const DayTabs = ({ dates, peaks, value, onChange }) => (
   </div>
 );
 
-const SectorHeader = ({ name, members, offsOf, peaks }) => (
+const SectorHeader = ({ name, members, worksOn, peaks }) => (
   <tr data-testid={`sector-group-${name}`}>
     <td className="pt-5 pb-2 sticky left-0 bg-white z-10">
       <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#0F172A]">{name}</span>
       <span className="ml-2 text-[11px] text-[#8A929B]">{members.length} pessoa(s)</span>
     </td>
     {DAYS_SHORT.map((_, d) => {
-      const c = members.filter((e) => !offsOf(e.id).includes(d)).length;
+      const c = members.filter((e) => worksOn(e.id, d)).length;
       return (
         <td key={d} className="pt-5 pb-2 text-center">
           <span data-testid={`sector-coverage-${name}-${d}`} className={`font-mono-data text-[11px] font-semibold ${peaks.includes(d) && c < members.length ? "text-[#DC2626]" : "text-[#8A929B]"}`}>
@@ -157,33 +155,25 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   const dates = weekDates(week);
   const today = isoDate(new Date());
   const [sector, setSector] = useState("all");
-  const [selected, setSelected] = useState(() => new Set());
   const [dayView, setDayView] = useState(null);
   const peaks = movement?.peak_days || [];
   const required = OFFS_PER_MODE[schedule.mode];
   const offsOf = (id) => schedule.off_days?.[id] || [];
   const suspensionsOf = (id) => schedule.suspension_days?.[id] || [];
+  const extrasOf = (id) => schedule.extra_days?.[id] || [];
+  // EXTRA conta como dia trabalhado mesmo sendo folga
+  const worksOn = (id, d) => !offsOf(id).includes(d) || extrasOf(id).includes(d);
   const sectors = [...new Set(employees.map((e) => e.sector))].sort((a, b) => a.localeCompare(b));
   const activeSector = sectors.includes(sector) ? sector : "all";
   const activeDay = activeSector === "all" ? null : dayView;
   const visible = activeSector === "all" ? employees : employees.filter((e) => e.sector === activeSector);
   const groups = sectors.filter((s) => activeSector === "all" || s === activeSector).map((s) => ({ name: s, members: visible.filter((e) => e.sector === s) }));
-  const coverage = DAYS_SHORT.map((_, d) => visible.filter((e) => !offsOf(e.id).includes(d)).length);
+  const coverage = DAYS_SHORT.map((_, d) => visible.filter((e) => worksOn(e.id, d)).length);
 
-  // Alterna a seleção (preto) de uma célula
-  const onSelect = (id, d) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      const key = `${id}-${d}`;
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-
-  // Ao trocar de semana, limpa a seleção
-  const handleWeekChange = (w) => {
-    setSelected(new Set());
-    onWeekChange(w);
+  const onExtra = (emp, d, isOff) => {
+    if (emp.status !== "ativo") return toast.error("EXTRA só pode ser marcado para funcionário ativo.");
+    if (!isOff) return toast.error("EXTRA só pode ser marcado em um dia de folga.");
+    onToggle(emp.id, d, true);
   };
 
   return (
@@ -192,7 +182,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
         <div>
           <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A929B]">Escala semanal · {schedule.mode}</p>
           <h2 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight mt-1">Quem trabalha, quem folga.</h2>
-          <div className="mt-4"><WeekNav week={week} onChange={handleWeekChange} /></div>
+          <div className="mt-4"><WeekNav week={week} onChange={onWeekChange} /></div>
           {!schedule.generated_at && employees.length > 0 && (
             <p data-testid="week-not-generated" className="no-print text-xs text-[#B45309] mt-3">Escala desta semana ainda não gerada — clique em <b>Gerar escala</b>.</p>
           )}
@@ -203,7 +193,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FEF2F2] border border-[#DC2626]" />Folga em pico</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FFE4E6] border border-[#FECDD3]" />Suspensão</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F1F5F9] border border-[#CBD5E1]" />Férias</span>
-          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#0F172A] border border-[#0F172A]" />Selecionada (shift + clique)</span>
+          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F5F3FF] border border-[#C4B5FD]" />Extra (shift + clique na folga)</span>
         </div>
       </div>
       {employees.length === 0 ? (
@@ -246,7 +236,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
               </thead>
               <tbody>
                 {groups.map((g) => [
-                  <SectorHeader key={`h-${g.name}`} name={g.name} members={g.members} offsOf={offsOf} peaks={peaks} />,
+                  <SectorHeader key={`h-${g.name}`} name={g.name} members={g.members} worksOn={worksOn} peaks={peaks} />,
                   ...g.members.map((emp, idx) => (
                     <Row
                       key={emp.id}
@@ -254,11 +244,11 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       emp={emp}
                       offs={offsOf(emp.id)}
                       suspensions={suspensionsOf(emp.id)}
+                      extras={extrasOf(emp.id)}
                       peaks={peaks}
                       required={required}
                       onToggle={onToggle}
-                      selected={selected}
-                      onSelect={onSelect}
+                      onExtra={onExtra}
                     />
                   )),
                 ])}
