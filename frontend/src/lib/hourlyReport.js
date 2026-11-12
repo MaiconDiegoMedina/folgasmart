@@ -172,10 +172,26 @@ export const toMinutes = (hhmm) => {
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 };
 
+// Turno salvo como [entrada, saída] ou [entrada, saída intervalo, volta intervalo, saída]
+const overlap = (a, b, hour) => Math.max(0, Math.min(b, (hour + 1) * 60) - Math.max(a, hour * 60));
+
+export const breakOf = (shift) => (shift?.length === 4 ? [shift[1], shift[2]].map(toMinutes) : null);
+
+// Minutos em que o funcionário está no setor dentro da faixa (desconta o intervalo)
+const presentMinutes = (shift, hour) => {
+  if (!shift) return 0;
+  const s = toMinutes(shift[0]);
+  const e = toMinutes(shift[shift.length - 1]);
+  if (s === null || e === null) return 0;
+  const br = breakOf(shift);
+  return overlap(s, e, hour) - (br && br[0] !== null && br[1] !== null ? overlap(br[0], br[1], hour) : 0);
+};
+
 // Funcionário conta na faixa se estiver presente por pelo menos 30 minutos dela
-export const coversHour = (shift, hour) => {
-  if (!shift) return false;
-  const [s, e] = shift.map(toMinutes);
-  if (s === null || e === null) return false;
-  return Math.min(e, (hour + 1) * 60) - Math.max(s, hour * 60) >= 30;
+export const coversHour = (shift, hour) => presentMinutes(shift, hour) >= 30;
+
+// Faixa em que o funcionário está, na maior parte, no intervalo
+export const onBreak = (shift, hour) => {
+  const br = breakOf(shift);
+  return !!br && br[0] !== null && br[1] !== null && overlap(br[0], br[1], hour) >= 30;
 };

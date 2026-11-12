@@ -4,7 +4,7 @@ import { Clock, FileUp, Flame, Loader2, Trash2, AlertTriangle } from "lucide-rea
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { http, errMsg, DAYS, fmtDayMonth } from "@/lib/api";
-import { parseHourlyReport, singleWeekday, peakHours, coversHour } from "@/lib/hourlyReport";
+import { parseHourlyReport, singleWeekday, peakHours, coversHour, onBreak } from "@/lib/hourlyReport";
 
 const DEFAULT_RANGE = [7, 22];
 const pad = (n) => String(n).padStart(2, "0");
@@ -25,26 +25,42 @@ const worksOn = (schedule, emp, day) => {
   return !off || (schedule.extra_days?.[emp.id] || []).includes(day);
 };
 
-const ShiftInputs = ({ shift, onSave }) => {
-  const [start, setStart] = useState(shift?.[0] || "");
-  const [end, setEnd] = useState(shift?.[1] || "");
-  useEffect(() => { setStart(shift?.[0] || ""); setEnd(shift?.[1] || ""); }, [shift]);
+const FIELDS = ["Entrada", "Saída intervalo", "Volta intervalo", "Saída"];
+// Turno salvo como [entrada, saída] ou [entrada, saída intervalo, volta intervalo, saída]
+const toFields = (shift) => (!shift ? ["", "", "", ""] : shift.length === 4 ? [...shift] : [shift[0], "", "", shift[1]]);
 
-  const commit = () => {
-    const same = start === (shift?.[0] || "") && end === (shift?.[1] || "");
-    if (same) return;
-    if (start && end) {
-      if (end <= start) return toast.error("A saída precisa ser depois da entrada.");
-      onSave(start, end);
-    } else if (!start && !end) onSave(null, null);
+const ShiftInputs = ({ shift, onSave }) => {
+  const [values, setValues] = useState(() => toFields(shift));
+  useEffect(() => { setValues(toFields(shift)); }, [shift]);
+
+  // Salva só quando o foco sai dos quatro campos
+  const onBlur = (e) => {
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    const [start, bs, be, end] = values;
+    if (values.join("|") === toFields(shift).join("|")) return;
+    if (!start && !bs && !be && !end) return onSave(null);
+    if (!start || !end) return toast.error("Informe a entrada e a saída do expediente.");
+    if (end <= start) return toast.error("A saída precisa ser depois da entrada.");
+    if (!!bs !== !!be) return toast.error("Informe a saída e a volta do intervalo.");
+    if (bs && !(start <= bs && bs < be && be <= end)) return toast.error("O intervalo precisa ficar dentro do expediente.");
+    onSave({ start, break_start: bs || null, break_end: be || null, end });
   };
 
-  const cls = "w-[84px] rounded-md border border-[#E5E1D8] bg-white px-1.5 py-1 text-xs font-mono-data focus:outline-none focus:ring-2 focus:ring-[#0F172A]";
+  const cls = "w-[78px] rounded-md border border-[#E5E1D8] bg-white px-1 py-1 text-xs font-mono-data focus:outline-none focus:ring-2 focus:ring-[#0F172A]";
   return (
-    <div className="flex items-center gap-1" onBlur={commit}>
-      <input type="time" step={900} aria-label="Entrada" value={start} onChange={(e) => setStart(e.target.value)} className={cls} />
-      <span className="text-[10px] text-[#8A929B]">às</span>
-      <input type="time" step={900} aria-label="Saída" value={end} onChange={(e) => setEnd(e.target.value)} className={cls} />
+    <div className="flex items-center gap-1" onBlur={onBlur}>
+      {FIELDS.map((label, i) => (
+        <input
+          key={label}
+          type="time"
+          step={300}
+          aria-label={label}
+          title={label}
+          value={values[i]}
+          onChange={(e) => setValues((v) => v.map((x, j) => (j === i ? e.target.value : x)))}
+          className={`${cls} ${i === 1 || i === 2 ? "bg-[#F0F9FF]" : ""}`}
+        />
+      ))}
     </div>
   );
 };
@@ -119,7 +135,8 @@ export const PeakHoursPanel = ({ day, date, sector, members, schedule, week }) =
       hi = Math.max(...report.hours.map((h) => h.hour));
     }
     for (const id of Object.keys(shifts)) {
-      const [s, e] = shifts[id];
+      const s = shifts[id][0];
+      const e = shifts[id][shifts[id].length - 1];
       lo = Math.min(lo, Number(s.slice(0, 2)));
       hi = Math.max(hi, Number(e.slice(0, 2)) - (e.endsWith(":00") ? 1 : 0));
     }
@@ -175,9 +192,9 @@ export const PeakHoursPanel = ({ day, date, sector, members, schedule, week }) =
     }
   };
 
-  const saveShift = async (employee_id, start, end) => {
+  const saveShift = async (employee_id, times) => {
     try {
-      const { data } = await http.put("/shifts", { week, day, employee_id, start, end });
+      const { data } = await http.put("/shifts", { week, day, employee_id, ...(times || {}) });
       setShifts(data.shifts);
     } catch (e) {
       toast.error(errMsg(e));
@@ -242,7 +259,11 @@ export const PeakHoursPanel = ({ day, date, sector, members, schedule, week }) =
             <thead>
               <tr>
                 <th className="text-left text-xs font-semibold text-[#8A929B] uppercase tracking-wider pb-2 sticky left-0 bg-white z-10">Funcionário</th>
-                <th className="text-left text-xs font-semibold text-[#8A929B] uppercase tracking-wider pb-2 px-2">Turno</th>
+                <th className="text-left text-[10px] font-semibold text-[#8A929B] uppercase tracking-wider pb-2 px-2 no-print">
+                  <div className="flex gap-1">
+                    {["Entrada", "Saída int.", "Volta int.", "Saída"].map((t) => <span key={t} className="w-[78px]">{t}</span>)}
+                  </div>
+                </th>
                 {hours.map((h) => (
                   <th key={h} className="pb-2 px-0.5 min-w-[38px]">
                     <div className={`rounded-md py-1 text-[11px] font-bold font-mono-data ${peaks.includes(h) ? "bg-[#DC2626] text-white" : "text-[#575E65]"}`}>
@@ -259,10 +280,15 @@ export const PeakHoursPanel = ({ day, date, sector, members, schedule, week }) =
                     <p className="font-semibold text-sm leading-tight">{emp.name}</p>
                     <p className="text-xs text-[#8A929B]">{emp.role}</p>
                   </td>
-                  <td className="px-2 no-print"><ShiftInputs shift={shifts[emp.id]} onSave={(s, e) => saveShift(emp.id, s, e)} /></td>
+                  <td className="px-2 no-print"><ShiftInputs shift={shifts[emp.id]} onSave={(times) => saveShift(emp.id, times)} /></td>
                   {hours.map((h) => (
                     <td key={h} className="p-0.5">
-                      <div className={`h-8 rounded ${coversHour(shifts[emp.id], h) ? "bg-[#15803D]" : peaks.includes(h) ? "bg-[#FEF2F2]" : "bg-[#F2EFE8]"}`} />
+                      <div
+                        title={onBreak(shifts[emp.id], h) ? "Intervalo" : undefined}
+                        className={`h-8 rounded ${
+                          coversHour(shifts[emp.id], h) ? "bg-[#15803D]" : onBreak(shifts[emp.id], h) ? "bg-[#BAE6FD]" : peaks.includes(h) ? "bg-[#FEF2F2]" : "bg-[#F2EFE8]"
+                        }`}
+                      />
                     </td>
                   ))}
                 </tr>
@@ -290,6 +316,11 @@ export const PeakHoursPanel = ({ day, date, sector, members, schedule, week }) =
               )}
             </tfoot>
           </table>
+          <div className="flex gap-4 text-[11px] text-[#575E65] mt-3">
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#15803D]" />No setor</span>
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#BAE6FD]" />Intervalo</span>
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FEF2F2] border border-[#FECACA]" />Pico sem a pessoa</span>
+          </div>
           {coverage.some((_, i) => understaffed(i)) && (
             <p className="text-xs text-[#DC2626] mt-3 flex items-center gap-1">
               <AlertTriangle className="h-3.5 w-3.5" /> Horários de pico com poucos funcionários para o movimento. Ajuste os turnos.

@@ -163,6 +163,8 @@ class ShiftIn(BaseModel):
     day: int = Field(ge=0, le=6)
     employee_id: str
     start: HHMM | None = None
+    break_start: HHMM | None = None
+    break_end: HHMM | None = None
     end: HHMM | None = None
 
 class DayShifts(BaseModel):
@@ -493,7 +495,14 @@ def set_shift(data: ShiftIn):
     if data.start and data.end:
         if data.end <= data.start:
             raise HTTPException(400, "A saída precisa ser depois da entrada.")
-        current.shifts[data.employee_id] = [data.start, data.end]
+        if bool(data.break_start) != bool(data.break_end):
+            raise HTTPException(400, "Informe a saída e a volta do intervalo.")
+        if data.break_start:
+            if not data.start <= data.break_start < data.break_end <= data.end:
+                raise HTTPException(400, "O intervalo precisa ficar dentro do expediente.")
+            current.shifts[data.employee_id] = [data.start, data.break_start, data.break_end, data.end]
+        else:
+            current.shifts[data.employee_id] = [data.start, data.end]
     else:
         current.shifts.pop(data.employee_id, None)
     with get_db() as conn:
