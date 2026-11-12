@@ -17,6 +17,8 @@ export default function Dashboard() {
   const [generating, setGenerating] = useState(false);
   const [sectorModes, setSectorModes] = useState({});
   const [workloads, setWorkloads] = useState([]);
+  const [sector, setSector] = useState("all");
+  const activeSector = employees.some((e) => e.sector === sector) ? sector : null;
 
   const load = useCallback(async () => {
     try {
@@ -33,13 +35,20 @@ export default function Dashboard() {
     http.get("/schedule", { params: { week } }).then(({ data }) => setSchedule(data)).catch((err) => toast.error(errMsg(err)));
   }, [week, employees]);
 
-  const generate = async (mode = schedule.mode) => {
+  // Com um setor selecionado, gera só ele; os outros setores ficam como estão
+  const generate = async () => {
     if (!employees.length) return toast.error("Cadastre ao menos um funcionário.");
+    if (schedule.generated_at) {
+      const msg = activeSector
+        ? `Gerar de novo a escala do setor ${activeSector}? Os ajustes manuais desse setor nesta semana serão refeitos. Os outros setores não mudam.`
+        : "Gerar de novo a escala de TODOS os setores? Os ajustes manuais da semana serão refeitos.";
+      if (!window.confirm(msg)) return;
+    }
     setGenerating(true);
     try {
-      const { data } = await http.post("/schedule/generate", { mode, week });
+      const { data } = await http.post("/schedule/generate", { mode: "6x1", week, sector: activeSector });
       setSchedule(data);
-      toast.success("Escala gerada para a semana");
+      toast.success(activeSector ? `Escala do setor ${activeSector} gerada` : "Escala de todos os setores gerada");
     } catch (err) { toast.error(errMsg(err)); }
     finally { setGenerating(false); }
   };
@@ -61,9 +70,9 @@ export default function Dashboard() {
 
   return (
     <div className="grain min-h-screen bg-[#F9F8F5] text-[#191C1E]">
-      <Header onLogout={logout} employees={employees} movement={movement} schedule={schedule} generating={generating} onGenerate={generate} />
+      <Header onLogout={logout} employees={employees} movement={movement} schedule={schedule} generating={generating} onGenerate={generate} generateSector={activeSector} />
       <main className="relative z-10 mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        <ScheduleGrid employees={employees} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} workloads={workloads} />
+        <ScheduleGrid employees={employees} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} workloads={workloads} sector={sector} onSectorChange={setSector} />
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 no-print">
           <div className="lg:col-span-3"><MovementPanel movement={movement} onChange={setMovement} /></div>
           <div className="lg:col-span-2"><EmployeesPanel employees={employees} workloads={workloads} onChange={load} /></div>

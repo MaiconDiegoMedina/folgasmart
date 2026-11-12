@@ -182,10 +182,12 @@ const SectorHeader = ({ name, members, worksOn, peaks, mode }) => (
   </tr>
 );
 
-export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange, onToggle, sectorModes = {}, onSectorMode, workloads = [] }) => {
+export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange, onToggle, sectorModes = {}, onSectorMode, workloads = [], sector: sectorProp, onSectorChange }) => {
   const dates = weekDates(week);
   const today = isoDate(new Date());
-  const [sector, setSector] = useState("all");
+  const [sectorLocal, setSectorLocal] = useState("all");
+  const sector = sectorProp ?? sectorLocal;
+  const setSector = onSectorChange ?? setSectorLocal;
   const [dayView, setDayView] = useState(null);
   const peaks = movement?.peak_days || [];
   // Escala de cada setor: a usada na geração desta semana; se não gerada, a configuração atual
@@ -249,7 +251,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
               <div className="no-print px-5 sm:px-6 pt-3">
                 <SectorModeToggle sector={activeSector} mode={configuredMode(activeSector)} onChange={onSectorMode} />
                 {configuredMode(activeSector) !== modeOf(activeSector) && (
-                  <span className="ml-2 text-[11px] text-[#B45309]">Esta semana foi gerada em {modeOf(activeSector)}. Clique em Gerar escala para aplicar.</span>
+                  <span className="ml-2 text-[11px] text-[#B45309]">Esta semana foi gerada em {modeOf(activeSector)}. Clique em Gerar escala · {activeSector} para aplicar.</span>
                 )}
               </div>
               <DayTabs dates={dates} peaks={peaks} value={activeDay} onChange={setDayView} />

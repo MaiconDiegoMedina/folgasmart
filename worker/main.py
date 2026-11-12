@@ -204,6 +204,7 @@ class SectorModeIn(BaseModel):
 class GenerateIn(BaseModel):
     mode: Mode
     week: str
+    sector: str | None = None  # gera só este setor e preserva os demais
 
 
 class CellToggle(BaseModel):
@@ -725,12 +726,16 @@ async def generate(data: GenerateIn, request: Request):
         last = last_real_off(history[0], emp.id)
         if last is not None:
             previous_days[emp.id] = last
+    sector_key = (data.sector or "").strip().lower()
+    target = [e for e in employees if not sector_key or e.sector.lower() == sector_key]
+    if not target:
+        raise HTTPException(400, "Nenhum funcionário nesse setor.")
     sector_modes = await get_sector_modes(request)
     snapshot = {}
-    for emp in employees:
+    for emp in target:
         snapshot[emp.sector] = sector_modes.get(emp.sector.lower(), "6x1")
     sunday_rule = {}
-    for emp in employees:
+    for emp in target:
         if emp.status == "ferias" or not emp.gender:
             continue
         same = sorted([e for e in employees if e.sector.lower() == emp.sector.lower() and e.gender == emp.gender
@@ -738,12 +743,19 @@ async def generate(data: GenerateIn, request: Request):
         plan = sunday_plan(emp.gender, [sunday_of(h, emp.id) for h in history], rotate + same.index(emp))
         if plan:
             sunday_rule[emp.id] = plan
-    sched = Schedule(
-        week=week, mode=data.mode, generated_at=now_iso(),
-        off_days=compute_schedule(employees, mov, data.mode, rotate, previous_days, sunday_rule,
-                                  {k.lower(): v for k, v in snapshot.items()}),
-        sector_modes=snapshot,
-    )
+    off_days = compute_schedule(target, mov, data.mode, rotate, previous_days, sunday_rule,
+                                {k.lower(): v for k, v in snapshot.items()})
+    if sector_key:
+        # Refaz só o setor escolhido: folgas, EXTRA e suspensões dos outros setores ficam como estão
+        sched = await get_schedule(request, week)
+        ids = {e.id for e in target}
+        sched.off_days = {k: v for k, v in sched.off_days.items() if k not in ids} | off_days
+        sched.suspension_days = {k: v for k, v in sched.suspension_days.items() if k not in ids}
+        sched.extra_days = {k: v for k, v in sched.extra_days.items() if k not in ids}
+        sched.sector_modes = {k: v for k, v in sched.sector_modes.items() if k.lower() != sector_key} | snapshot
+        sched.generated_at = now_iso()
+    else:
+        sched = Schedule(week=week, mode=data.mode, generated_at=now_iso(), off_days=off_days, sector_modes=snapshot)
     await save_schedule(request, sched)
     return await with_alerts(request, sched, employees, history[:2])
 
