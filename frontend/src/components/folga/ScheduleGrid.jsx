@@ -22,7 +22,7 @@ const Cell = ({ off, susp, extra, peak, status, onClick, testId }) => {
   let classesEstilo = "bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D] hover:bg-[#DCFCE7]"; // Trabalhando
 
   if (extra) {
-    texto = "EXTRA";
+    texto = "FOLGA"; // A cor lilás indica que é EXTRA
     classesEstilo = "bg-[#F5F3FF] border-[#C4B5FD] text-[#6D28D9] hover:bg-[#EDE9FE]"; // Trabalha na folga
   } else if (susp) {
     texto = "SUSP.";

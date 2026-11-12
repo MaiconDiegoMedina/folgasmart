@@ -287,7 +287,6 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
     max_avg = max(movement.avg) or 1
     weight = [1 + 4 * (value / max_avg) for value in movement.avg]
     peaks = set(movement.peak_days)
-    off_global = [0] * 7
     off_sector: Dict[str, List[int]] = {}
     result: Dict[str, List[int]] = {}
     holiday = [e for e in employees if e.status == "ferias"]
@@ -308,7 +307,8 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
         chosen = []
         for _ in range(offs_needed):
             def cost(day):
-                value = (off_global[day] + 1) * weight[day] + sec[day] * 6
+                # Só as folgas do próprio setor contam: um setor não interfere no outro
+                value = (sec[day] + 1) * weight[day] + sec[day] * 6
                 if day in peaks:
                     value += 1000
                 if mode == "6x1" and day + 7 - last_day > 6:
@@ -316,7 +316,6 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
                 return value
             day = min((d for d in range(7) if d not in chosen), key=lambda d: (cost(d), d))
             chosen.append(day)
-            off_global[day] += 1
             sec[day] += 1
         result[emp.id] = sorted(chosen)
     return result
