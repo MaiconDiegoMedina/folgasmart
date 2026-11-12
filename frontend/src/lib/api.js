@@ -53,7 +53,13 @@ export const DAYS_SHORT = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 export const DAY_SLUGS = ["segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"];
 export const OFFS_PER_MODE = { "6x1": 1, "5x2": 2 };
 
-export const errMsg = (e) => e?.response?.data?.detail?.toString?.() || "Ocorreu um erro. Tente novamente.";
+export const errMsg = (e) => {
+  const detail = e?.response?.data?.detail;
+  if (Array.isArray(detail)) return "Dados inválidos: " + detail.map((d) => d?.msg).filter(Boolean).join("; ");
+  if (detail) return String(detail);
+  if (e?.response?.status >= 500) return "Erro no servidor. Verifique se as tabelas do banco foram criadas.";
+  return "Ocorreu um erro. Tente novamente.";
+};
 
 export const downloadFile = (name, content, type = "text/csv;charset=utf-8") => {
   const blob = new Blob(["\ufeff" + content], { type });

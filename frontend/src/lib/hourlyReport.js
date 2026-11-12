@@ -45,8 +45,73 @@ const cellsOf = (line) => {
 
 const toIso = (m) => `${m[3]}-${m[2]}-${m[1]}`;
 
-export const parseHourlyReport = (text) => {
-  const lines = String(text).replace(/^﻿/, "").split(/\r?\n/);
+// Exportação CSV do CISS: uma linha por hora e período
+//   HORA,TOTALVENDA,QTDCLIENTES,PERIODO,PERIODO_COMPUTE
+//   8,1936,110000,33,Período A = 2026-11-04 à 2026-11-04,A
+// A vírgula decimal do valor quebra a coluna em duas, então as colunas são lidas
+// pelas pontas: hora no início; período, descrição e clientes no fim.
+const parseLongFormat = (lines) => {
+  const header = lines[0];
+  const sep = header.includes(";") ? ";" : header.includes("\t") ? "\t" : ",";
+  const byKey = new Map();
+  for (const line of lines.slice(1)) {
+    const cells = splitBy(line, sep);
+    if (cells.length < 4) continue;
+    const hour = Number(cells[0]);
+    const key = cells[cells.length - 1].toUpperCase();
+    const desc = cells[cells.length - 2];
+    const clients = parseBrNumber(cells[cells.length - 3]);
+    const value = parseBrNumber(cells.slice(1, cells.length - 3).join(",")) ?? 0;
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23 || clients === null || !key) continue;
+    if (!byKey.has(key)) {
+      const dates = desc.match(/\d{4}-\d{2}-\d{2}/g) || [];
+      byKey.set(key, { key, start: dates[0], end: dates[1] || dates[0], hours: new Map() });
+    }
+    const hours = byKey.get(key).hours;
+    const prev = hours.get(hour) || { hour, value: 0, clients: 0 };
+    hours.set(hour, { hour, value: prev.value + value, clients: prev.clients + clients });
+  }
+  return [...byKey.values()]
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .map((p) => ({ ...p, hours: [...p.hours.values()].sort((a, b) => a.hour - b.hour) }));
+};
+
+const periodLabel = ({ key, start, end }) => {
+  const fmt = (iso) => iso.split("-").reverse().join("/");
+  if (start && end && start !== end) return `Período ${key} · ${fmt(start)} a ${fmt(end)}`;
+  if (start || end) return `Período ${key} · ${fmt(start || end)}`;
+  return `Período ${key}`;
+};
+
+// Dois ou mais períodos do mesmo dia da semana: oferece a média por hora
+const withAverage = (periods) => {
+  if (periods.length < 2) return periods;
+  const days = new Set(periods.map(singleWeekday));
+  if (days.size !== 1 || days.has(null)) return periods;
+  const sums = new Map();
+  for (const p of periods) {
+    for (const h of p.hours) {
+      const acc = sums.get(h.hour) || { hour: h.hour, value: 0, clients: 0 };
+      sums.set(h.hour, { hour: h.hour, value: acc.value + h.value, clients: acc.clients + h.clients });
+    }
+  }
+  const n = periods.length;
+  const hours = [...sums.values()]
+    .sort((a, b) => a.hour - b.hour)
+    .map((h) => ({ hour: h.hour, value: Math.round((h.value / n) * 100) / 100, clients: Math.round((h.clients / n) * 10) / 10 }));
+  const fmt = (iso) => iso.split("-").reverse().join("/");
+  const label = `Média · ${periods.map((p) => fmt(p.start)).join(", ")}`;
+  const first = periods[0];
+  return [{ key: "MEDIA", label, start: first.start, end: first.end, hours }, ...periods];
+};
+
+const parseReport = (text) => {
+  const lines = String(text).replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length && /hora/i.test(lines[0]) && /clientes/i.test(lines[0])) {
+    return parseLongFormat(lines)
+      .filter((p) => p.hours.some((h) => h.clients > 0 || h.value > 0))
+      .map((p) => ({ ...p, label: periodLabel(p) }));
+  }
   const rowsA = [];
   const rowsB = [];
   const dates = { A: {}, B: {} };
@@ -75,19 +140,16 @@ export const parseHourlyReport = (text) => {
     }
   }
 
-  const label = (key) => {
-    const { start, end } = dates[key];
-    const fmt = (iso) => iso.split("-").reverse().join("/");
-    if (start && end && start !== end) return `Período ${key} · ${fmt(start)} a ${fmt(end)}`;
-    if (start || end) return `Período ${key} · ${fmt(start || end)}`;
-    return `Período ${key}`;
-  };
+  const label = (key) => periodLabel({ key, ...dates[key] });
+
 
   const periods = [];
   if (rowsA.length) periods.push({ key: "A", label: label("A"), ...dates.A, hours: rowsA });
   if (rowsB.some((r) => r.clients > 0 || r.value > 0)) periods.push({ key: "B", label: label("B"), ...dates.B, hours: rowsB });
   return periods;
 };
+
+export const parseHourlyReport = (text) => withAverage(parseReport(text));
 
 // Dia da semana (0 = segunda) quando o período é um único dia
 export const singleWeekday = (period) => {
