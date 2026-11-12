@@ -4,6 +4,7 @@ import { http, errMsg, isoDate, mondayOf } from "@/lib/api";
 import { Header } from "@/components/folga/Header";
 import { MovementPanel } from "@/components/folga/MovementPanel";
 import { EmployeesPanel } from "@/components/folga/EmployeesPanel";
+import { WorkloadsPanel } from "@/components/folga/WorkloadsPanel";
 import { ScheduleGrid } from "@/components/folga/ScheduleGrid";
 import { useAuth } from "@/components/LoginGate";
 
@@ -15,13 +16,15 @@ export default function Dashboard() {
   const [schedule, setSchedule] = useState({ mode: "6x1", off_days: {}, extra_days: {} });
   const [generating, setGenerating] = useState(false);
   const [sectorModes, setSectorModes] = useState({});
+  const [workloads, setWorkloads] = useState([]);
 
   const load = useCallback(async () => {
     try {
-      const [e, m, sm] = await Promise.all([http.get("/employees"), http.get("/movement"), http.get("/sectors/modes")]);
+      const [e, m, sm, w] = await Promise.all([http.get("/employees"), http.get("/movement"), http.get("/sectors/modes"), http.get("/workloads")]);
       setEmployees(e.data);
       setMovement(m.data);
       setSectorModes(sm.data);
+      setWorkloads(w.data);
     } catch (err) { toast.error(errMsg(err)); }
   }, []);
 
@@ -60,11 +63,12 @@ export default function Dashboard() {
     <div className="grain min-h-screen bg-[#F9F8F5] text-[#191C1E]">
       <Header onLogout={logout} employees={employees} movement={movement} schedule={schedule} generating={generating} onGenerate={generate} />
       <main className="relative z-10 mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        <ScheduleGrid employees={employees} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} />
+        <ScheduleGrid employees={employees} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} workloads={workloads} />
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 no-print">
           <div className="lg:col-span-3"><MovementPanel movement={movement} onChange={setMovement} /></div>
-          <div className="lg:col-span-2"><EmployeesPanel employees={employees} onChange={load} /></div>
+          <div className="lg:col-span-2"><EmployeesPanel employees={employees} workloads={workloads} onChange={load} /></div>
         </div>
+        <div className="no-print"><WorkloadsPanel workloads={workloads} onChange={load} /></div>
       </main>
     </div>
   );

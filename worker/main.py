@@ -30,8 +30,8 @@ OFFS_PER_MODE = {"6x1": 1, "5x2": 2}
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 Status = Literal["ativo", "ferias", "suspensao"]
 Gender = Literal["M", "F"]
-# 8h_4h: 8h seg-sex + 4h sáb · 7h20: 7h20 seg-sáb (no 5x2 ambos fazem 8h48)
-Workload = Literal["8h_4h", "7h20"]
+# Id de uma jornada cadastrada (tabela workloads)
+Workload = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
 
 
 def db(request: Request):
@@ -100,6 +100,13 @@ SCHEMA_STATEMENTS = [
     """CREATE TABLE IF NOT EXISTS shifts (week TEXT NOT NULL, day INTEGER NOT NULL,
     data TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (week, day))""",
     """CREATE TABLE IF NOT EXISTS sector_modes (sector TEXT PRIMARY KEY, mode TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS workloads (id TEXT PRIMARY KEY, name TEXT NOT NULL, minutes TEXT NOT NULL,
+    break_minutes INTEGER NOT NULL DEFAULT 60, minutes_5x2 INTEGER, created_at TEXT NOT NULL)""",
+]
+DEFAULT_WORKLOADS = [
+    ("8h_4h", "8h seg–sex + 4h sáb", [480, 480, 480, 480, 480, 240, 480], 60, 528),
+    ("7h20", "7h20 seg–sáb", [440] * 7, 60, 528),
+    ("8h48", "8h48 (5x2)", [528] * 7, 60, None),
 ]
 NEW_COLUMNS = [("employees", "gender"), ("employees", "workload"), ("schedule", "sector_modes")]
 
@@ -116,6 +123,11 @@ async def ensure_schema(request: Request) -> None:
         existing = (await database.prepare(f"PRAGMA table_info({table})").all()).results
         if column not in {row["name"] for row in existing}:
             await database.prepare(f"ALTER TABLE {table} ADD COLUMN {column} TEXT").run()
+    if not await database.prepare("SELECT id FROM workloads LIMIT 1").first():
+        for index, (wid, name, minutes, break_minutes, minutes_5x2) in enumerate(DEFAULT_WORKLOADS):
+            await database.prepare(
+                "INSERT INTO workloads (id, name, minutes, break_minutes, minutes_5x2, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+            ).bind(wid, name, json.dumps(minutes), break_minutes, minutes_5x2, f"2000-01-0{index + 1}").run()
     _SCHEMA_READY = True
 
 
@@ -167,6 +179,21 @@ class Schedule(BaseModel):
     cct_alerts: Dict[str, str] = Field(default_factory=dict)
     sector_modes: Dict[str, Mode] = Field(default_factory=dict)
     streak_alerts: Dict[str, List[int]] = Field(default_factory=dict)
+
+
+class WorkloadIn(BaseModel):
+    name: Text
+    minutes: List[int] = Field(min_length=7, max_length=7)
+    break_minutes: int = Field(default=60, ge=0, le=240)
+    minutes_5x2: int | None = Field(default=None, ge=0, le=1440)
+
+
+class WorkloadOut(WorkloadIn):
+    id: str
+
+
+class EmployeesImport(BaseModel):
+    employees: List[EmployeeIn] = Field(min_length=1, max_length=2000)
 
 
 class SectorModeIn(BaseModel):
@@ -375,13 +402,13 @@ MAX_STREAK = 6
 def worked_days(schedule: Schedule, emp_id: str) -> List[bool] | None:
     if emp_id not in schedule.off_days:
         return None
-    off = set(schedule.off_days[emp_id]) - set(schedule.extra_days.get(emp_id, []))
-    off |= set(schedule.suspension_days.get(emp_id, []))
+    # EXTRA é computado como folga
+    off = set(schedule.off_days[emp_id]) | set(schedule.suspension_days.get(emp_id, []))
     return [day not in off for day in range(7)]
 
 
 def last_real_off(schedule: Schedule, emp_id: str) -> int | None:
-    """Último dia de folga de fato (EXTRA não conta) na semana; -1 se não folgou."""
+    """Último dia de folga (EXTRA conta como folga) na semana; -1 se não folgou."""
     worked = worked_days(schedule, emp_id)
     if worked is None:
         return None
@@ -614,6 +641,52 @@ async def set_peaks(data: PeaksIn, request: Request):
     return mov
 
 
+@api.get("/workloads", response_model=List[WorkloadOut])
+async def workloads_api(request: Request):
+    rows = (await db(request).prepare(
+        "SELECT id, name, minutes, break_minutes, minutes_5x2 FROM workloads ORDER BY created_at"
+    ).all()).results
+    return [WorkloadOut(id=row["id"], name=row["name"], minutes=json.loads(row["minutes"]),
+                        break_minutes=row["break_minutes"], minutes_5x2=row["minutes_5x2"]) for row in rows]
+
+
+@api.post("/workloads", response_model=WorkloadOut)
+async def create_workload(data: WorkloadIn, request: Request):
+    if any(not 0 <= m <= 1440 for m in data.minutes):
+        raise HTTPException(400, "Horas por dia inválidas.")
+    item = WorkloadOut(id=str(uuid.uuid4()), **data.model_dump())
+    await db(request).prepare(
+        "INSERT INTO workloads (id, name, minutes, break_minutes, minutes_5x2, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).bind(item.id, item.name, json.dumps(item.minutes), item.break_minutes, item.minutes_5x2, now_iso()).run()
+    return item
+
+
+@api.delete("/workloads/{workload_id}")
+async def delete_workload(workload_id: str, request: Request):
+    database = db(request)
+    await database.prepare("DELETE FROM workloads WHERE id = ?").bind(workload_id).run()
+    await database.prepare("UPDATE employees SET workload = NULL WHERE workload = ?").bind(workload_id).run()
+    return {"ok": True}
+
+
+@api.post("/employees/import")
+async def import_employees(data: EmployeesImport, request: Request):
+    """Cadastra em lote; quem já existe com o mesmo nome é ignorado."""
+    existing = {e.name.strip().lower() for e in await list_employees(request)}
+    created = 0
+    for item in data.employees:
+        key = item.name.strip().lower()
+        if key in existing:
+            continue
+        emp = Employee(**item.model_dump())
+        await db(request).prepare(
+            "INSERT INTO employees (id, name, role, sector, status, gender, workload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        ).bind(emp.id, emp.name, emp.role, emp.sector, emp.status, emp.gender, emp.workload, emp.created_at).run()
+        existing.add(key)
+        created += 1
+    return {"created": created, "skipped": len(data.employees) - created}
+
+
 async def get_sector_modes(request: Request) -> Dict[str, str]:
     rows = (await db(request).prepare("SELECT sector, mode FROM sector_modes").all()).results
     return {row["sector"].lower(): row["mode"] for row in rows}
@@ -655,7 +728,7 @@ async def generate(data: GenerateIn, request: Request):
     sector_modes = await get_sector_modes(request)
     snapshot = {}
     for emp in employees:
-        snapshot[emp.sector] = sector_modes.get(emp.sector.lower(), data.mode)
+        snapshot[emp.sector] = sector_modes.get(emp.sector.lower(), "6x1")
     sunday_rule = {}
     for emp in employees:
         if emp.status == "ferias" or not emp.gender:

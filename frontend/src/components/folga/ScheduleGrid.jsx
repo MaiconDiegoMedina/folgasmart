@@ -51,8 +51,8 @@ const Cell = ({ off, susp, extra, peak, status, cct, onClick, testId }) => {
 };
 
 const Row = ({ emp, offs, suspensions, extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx }) => {
-  // Folgas de fato (EXTRA é dia trabalhado). Folga a mais pode ocorrer pelas regras de domingo/6 dias.
-  const realOffs = offs.filter((d) => !extras.includes(d));
+  // EXTRA é computado como folga. Folga a mais pode ocorrer pelas regras de domingo/6 dias.
+  const realOffs = offs;
   const wrong = emp.status !== "ferias" && realOffs.length < required;
 
   return (
@@ -182,7 +182,7 @@ const SectorHeader = ({ name, members, worksOn, peaks, mode }) => (
   </tr>
 );
 
-export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange, onToggle, sectorModes = {}, onSectorMode }) => {
+export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange, onToggle, sectorModes = {}, onSectorMode, workloads = [] }) => {
   const dates = weekDates(week);
   const today = isoDate(new Date());
   const [sector, setSector] = useState("all");
@@ -191,7 +191,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   // Escala de cada setor: a usada na geração desta semana; se não gerada, a configuração atual
   const modeOf = (sectorName) => {
     const used = Object.entries(schedule.sector_modes || {}).find(([k]) => k.toLowerCase() === sectorName.toLowerCase());
-    return used?.[1] || sectorModes[sectorName.toLowerCase()] || schedule.mode || "6x1";
+    return used?.[1] || sectorModes[sectorName.toLowerCase()] || "6x1";
   };
   const configuredMode = (sectorName) => sectorModes[sectorName.toLowerCase()] || "6x1";
   const offsOf = (id) => schedule.off_days?.[id] || [];
@@ -256,7 +256,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
             </>
           )}
           {activeDay !== null ? (
-            <PeakHoursPanel day={activeDay} date={dates[activeDay]} sector={activeSector} sectorMode={modeOf(activeSector)} members={visible} schedule={schedule} week={week} />
+            <PeakHoursPanel day={activeDay} date={dates[activeDay]} sector={activeSector} sectorMode={modeOf(activeSector)} workloads={workloads} members={visible} schedule={schedule} week={week} />
           ) : (
           <div className="overflow-x-auto p-3 sm:p-5">
             <table className="w-full border-separate border-spacing-0">

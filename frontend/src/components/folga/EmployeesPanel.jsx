@@ -4,11 +4,12 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { http, errMsg } from "@/lib/api";
+import { ImportEmployees } from "@/components/folga/ImportEmployees";
 
 const EMPTY = { name: "", role: "", sector: "", status: "ativo", gender: "", workload: "" };
 const selectCls = "text-xs bg-[#F8F6F0] border border-[#E5E1D8] rounded-lg px-2 py-1.5 text-[#575E65] font-medium outline-none focus:border-[#0F172A] transition-colors";
 
-const EmployeeForm = ({ sectors, onSaved }) => {
+const EmployeeForm = ({ sectors, workloads, onSaved }) => {
   const [form, setForm] = useState(EMPTY);
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -50,8 +51,7 @@ const EmployeeForm = ({ sectors, onSaved }) => {
       </select>
       <select data-testid="select-employee-workload" value={form.workload} onChange={set("workload")} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm">
         <option value="">Jornada</option>
-        <option value="8h_4h">8h seg–sex + 4h sáb</option>
-        <option value="7h20">7h20 seg–sáb</option>
+        {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
       </select>
       <datalist id="sectors">{sectors.map((s) => <option key={s} value={s} />)}</datalist>
       <Button data-testid="btn-save-employee" type="submit" disabled={busy} className="bg-[#0F172A] hover:bg-[#1E293B] text-white">
@@ -61,7 +61,7 @@ const EmployeeForm = ({ sectors, onSaved }) => {
   );
 };
 
-export const EmployeesPanel = ({ employees, onChange }) => {
+export const EmployeesPanel = ({ employees, workloads = [], onChange }) => {
   const sectors = [...new Set(employees.map((e) => e.sector))];
 
   const remove = async (emp) => {
@@ -96,8 +96,11 @@ export const EmployeesPanel = ({ employees, onChange }) => {
   return (
     <section data-testid="employees-panel" className="rounded-2xl border border-[#E5E1D8] bg-white p-5 sm:p-6 h-full">
       <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A929B]">Equipe</p>
-      <h3 className="font-display text-2xl font-bold tracking-tight mt-1 mb-4">Funcionários</h3>
-      <EmployeeForm sectors={sectors} onSaved={onChange} />
+      <div className="flex flex-wrap items-center justify-between gap-2 mt-1 mb-4">
+        <h3 className="font-display text-2xl font-bold tracking-tight">Funcionários</h3>
+        <ImportEmployees workloads={workloads} onDone={onChange} />
+      </div>
+      <EmployeeForm sectors={sectors} workloads={workloads} onSaved={onChange} />
       <ul data-testid="employee-list" className="mt-5 divide-y divide-[#EFEBE3] max-h-72 overflow-y-auto">
         {employees.length === 0 && <li className="py-6 text-sm text-center text-[#8A929B]">Nenhum funcionário cadastrado.</li>}
         {employees.map((e) => (
@@ -124,11 +127,10 @@ export const EmployeesPanel = ({ employees, onChange }) => {
               value={e.workload || ""}
               onChange={(evt) => update(e, { workload: evt.target.value || null }, `Jornada de ${e.name} atualizada`)}
               className={`${selectCls} ${!e.workload ? "border-[#FCD34D] bg-[#FFFBEB]" : ""}`}
-              title={e.workload === "8h_4h" ? "8h seg–sex + 4h sáb" : e.workload === "7h20" ? "7h20 seg–sáb" : "Informe a jornada"}
+              title={workloads.find((w) => w.id === e.workload)?.name || "Informe a jornada"}
             >
               <option value="">Jornada?</option>
-              <option value="8h_4h">8h+4h</option>
-              <option value="7h20">7h20</option>
+              {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
 
             <select
