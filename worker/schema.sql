@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS employees (
     role TEXT NOT NULL,
     sector TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'ativo',
+    gender TEXT,
     created_at TEXT NOT NULL
 );
 

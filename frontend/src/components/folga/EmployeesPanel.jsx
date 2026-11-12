@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { http, errMsg } from "@/lib/api";
 
-const EMPTY = { name: "", role: "", sector: "", status: "ativo" };
+const EMPTY = { name: "", role: "", sector: "", status: "ativo", gender: "" };
+const selectCls = "text-xs bg-[#F8F6F0] border border-[#E5E1D8] rounded-lg px-2 py-1.5 text-[#575E65] font-medium outline-none focus:border-[#0F172A] transition-colors";
 
 const EmployeeForm = ({ sectors, onSaved }) => {
   const [form, setForm] = useState(EMPTY);
@@ -15,13 +16,15 @@ const EmployeeForm = ({ sectors, onSaved }) => {
   const submit = async (e) => {
     e.preventDefault();
     if (!form.name.trim() || !form.role.trim() || !form.sector.trim()) return toast.error("Preencha nome, cargo e setor.");
+    if (!form.gender) return toast.error("Informe o sexo (usado na regra de domingos da CCT).");
     setBusy(true);
     try {
       await http.post("/employees", { 
         name: form.name.trim(), 
         role: form.role.trim(), 
         sector: form.sector.trim(),
-        status: "ativo"
+        status: "ativo",
+        gender: form.gender
       });
       toast.success("Funcionário adicionado — clique em Gerar escala para recalcular as folgas");
       setForm(EMPTY);
@@ -34,12 +37,17 @@ const EmployeeForm = ({ sectors, onSaved }) => {
   };
 
   return (
-    <form data-testid="employee-form" onSubmit={submit} className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+    <form data-testid="employee-form" onSubmit={submit} className="grid grid-cols-1 sm:grid-cols-4 gap-2">
       <Input data-testid="input-employee-name" placeholder="Nome" value={form.name} onChange={set("name")} />
       <Input data-testid="input-employee-role" placeholder="Cargo" value={form.role} onChange={set("role")} />
       <Input data-testid="select-employee-sector" placeholder="Setor" list="sectors" value={form.sector} onChange={set("sector")} />
+      <select data-testid="select-employee-gender" value={form.gender} onChange={set("gender")} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm">
+        <option value="">Sexo</option>
+        <option value="M">Masculino</option>
+        <option value="F">Feminino</option>
+      </select>
       <datalist id="sectors">{sectors.map((s) => <option key={s} value={s} />)}</datalist>
-      <Button data-testid="btn-save-employee" type="submit" disabled={busy} className="sm:col-span-3 bg-[#0F172A] hover:bg-[#1E293B] text-white">
+      <Button data-testid="btn-save-employee" type="submit" disabled={busy} className="sm:col-span-4 bg-[#0F172A] hover:bg-[#1E293B] text-white">
         {busy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />} Adicionar funcionário
       </Button>
     </form>
@@ -59,16 +67,18 @@ export const EmployeesPanel = ({ employees, onChange }) => {
     }
   };
 
-  // Nova função para atualizar o status (Ativo / Férias / Suspensão) diretamente na API
-  const updateStatus = async (emp, newStatus) => {
+  // Atualiza status (Ativo / Férias / Suspensão) ou sexo, sempre enviando todos os campos
+  const update = async (emp, patch, message) => {
     try {
       await http.put(`/employees/${emp.id}`, {
         name: emp.name,
         role: emp.role,
         sector: emp.sector,
-        status: newStatus
+        status: emp.status || "ativo",
+        gender: emp.gender || null,
+        ...patch
       });
-      toast.success(`Status de ${emp.name} atualizado para ${newStatus}`);
+      toast.success(message);
       onChange(); // Atualiza a escala na tela imediatamente
     } catch (err) {
       toast.error(errMsg(err));
@@ -89,11 +99,23 @@ export const EmployeesPanel = ({ employees, onChange }) => {
               <p className="text-xs text-[#8A929B] truncate">{e.role} · <span className="text-[#575E65]">{e.sector}</span></p>
             </div>
             
-            {/* Caixa de seleção adicionada ao lado do nome do funcionário */}
             <select
+              aria-label="Sexo"
+              value={e.gender || ""}
+              onChange={(evt) => update(e, { gender: evt.target.value || null }, `Sexo de ${e.name} atualizado`)}
+              className={`${selectCls} ${!e.gender ? "border-[#FCD34D] bg-[#FFFBEB]" : ""}`}
+              title={!e.gender ? "Informe o sexo para aplicar a regra de domingos da CCT" : undefined}
+            >
+              <option value="">Sexo?</option>
+              <option value="M">Masc.</option>
+              <option value="F">Fem.</option>
+            </select>
+
+            <select
+              aria-label="Status"
               value={e.status || "ativo"}
-              onChange={(evt) => updateStatus(e, evt.target.value)}
-              className="text-xs bg-[#F8F6F0] border border-[#E5E1D8] rounded-lg px-2 py-1.5 text-[#575E65] font-medium outline-none focus:border-[#0F172A] transition-colors"
+              onChange={(evt) => update(e, { status: evt.target.value }, `Status de ${e.name} atualizado para ${evt.target.value}`)}
+              className={selectCls}
             >
               <option value="ativo">Ativo</option>
               <option value="ferias">Férias</option>

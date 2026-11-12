@@ -5,7 +5,7 @@ import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate } from "@/li
 import { WeekNav } from "@/components/folga/WeekNav";
 import { PeakHoursPanel } from "@/components/folga/PeakHoursPanel";
 
-const Cell = ({ off, susp, extra, peak, status, onClick, testId }) => {
+const Cell = ({ off, susp, extra, peak, status, cct, onClick, testId }) => {
   if (status === "ferias") {
     return (
       <div
@@ -42,15 +42,15 @@ const Cell = ({ off, susp, extra, peak, status, onClick, testId }) => {
       onMouseDown={(e) => {
         if (e.shiftKey) e.preventDefault();
       }}
-      title={extra ? "Extra: trabalha no dia de folga (clique para voltar a folga)" : off ? "Shift + clique marca como EXTRA" : undefined}
-      className={`w-full h-11 rounded-lg text-[11px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[#0F172A] ${classesEstilo}`}
+      title={cct || (extra ? "Extra: trabalha no dia de folga (clique para voltar a folga)" : off ? "Shift + clique marca como EXTRA" : undefined)}
+      className={`w-full h-11 rounded-lg text-[11px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[#0F172A] ${classesEstilo} ${cct ? "ring-2 ring-[#DC2626] ring-offset-1" : ""}`}
     >
       {texto}
     </button>
   );
 };
 
-const Row = ({ emp, offs, suspensions, extras, peaks, required, onToggle, onExtra, idx }) => {
+const Row = ({ emp, offs, suspensions, extras, peaks, required, onToggle, onExtra, cctAlert, idx }) => {
   const wrong = emp.status !== "ferias" && offs.length !== required;
 
   return (
@@ -60,7 +60,13 @@ const Row = ({ emp, offs, suspensions, extras, peaks, required, onToggle, onExtr
           {emp.name}
           {emp.status === "ferias" && <span className="text-[9px] bg-[#E2E8F0] text-[#475569] font-bold px-1.5 py-0.5 rounded">FÉRIAS</span>}
           {emp.status === "suspensao" && <span className="text-[9px] bg-[#FFE4E6] text-[#E11D48] font-bold px-1.5 py-0.5 rounded">SUSP.</span>}
+          {cctAlert && (
+            <span data-testid={`cct-alert-${emp.id}`} title={cctAlert} className="inline-flex items-center gap-0.5 text-[9px] bg-[#FEF2F2] text-[#DC2626] border border-[#FECACA] font-bold px-1.5 py-0.5 rounded">
+              <AlertTriangle className="h-2.5 w-2.5" /> CCT
+            </span>
+          )}
         </p>
+        {cctAlert && <p className="text-[10px] text-[#DC2626] leading-tight mt-0.5 max-w-[220px]">{cctAlert.replace("CCT: ", "")}</p>}
         <p className="text-xs text-[#8A929B]">{emp.role} · {emp.sector}</p>
       </td>
       {DAYS_SHORT.map((_, d) => (
@@ -69,6 +75,7 @@ const Row = ({ emp, offs, suspensions, extras, peaks, required, onToggle, onExtr
             off={offs.includes(d)}
             susp={suspensions.includes(d)}
             extra={extras.includes(d)}
+            cct={d === 6 ? cctAlert : undefined}
             peak={peaks.includes(d)}
             status={emp.status}
             // Shift + clique numa folga marca EXTRA. Clique normal alterna a folga.
@@ -245,6 +252,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       offs={offsOf(emp.id)}
                       suspensions={suspensionsOf(emp.id)}
                       extras={extrasOf(emp.id)}
+                      cctAlert={schedule.cct_alerts?.[emp.id]}
                       peaks={peaks}
                       required={required}
                       onToggle={onToggle}
