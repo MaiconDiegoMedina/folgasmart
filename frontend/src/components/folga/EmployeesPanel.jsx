@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { http, errMsg } from "@/lib/api";
 
-const EMPTY = { name: "", role: "", sector: "", status: "ativo", gender: "" };
+const EMPTY = { name: "", role: "", sector: "", status: "ativo", gender: "", workload: "" };
 const selectCls = "text-xs bg-[#F8F6F0] border border-[#E5E1D8] rounded-lg px-2 py-1.5 text-[#575E65] font-medium outline-none focus:border-[#0F172A] transition-colors";
 
 const EmployeeForm = ({ sectors, onSaved }) => {
@@ -17,6 +17,7 @@ const EmployeeForm = ({ sectors, onSaved }) => {
     e.preventDefault();
     if (!form.name.trim() || !form.role.trim() || !form.sector.trim()) return toast.error("Preencha nome, cargo e setor.");
     if (!form.gender) return toast.error("Informe o sexo (usado na regra de domingos da CCT).");
+    if (!form.workload) return toast.error("Informe a jornada do funcionário.");
     setBusy(true);
     try {
       await http.post("/employees", { 
@@ -24,7 +25,8 @@ const EmployeeForm = ({ sectors, onSaved }) => {
         role: form.role.trim(), 
         sector: form.sector.trim(),
         status: "ativo",
-        gender: form.gender
+        gender: form.gender,
+        workload: form.workload
       });
       toast.success("Funcionário adicionado — clique em Gerar escala para recalcular as folgas");
       setForm(EMPTY);
@@ -37,7 +39,7 @@ const EmployeeForm = ({ sectors, onSaved }) => {
   };
 
   return (
-    <form data-testid="employee-form" onSubmit={submit} className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+    <form data-testid="employee-form" onSubmit={submit} className="grid grid-cols-1 sm:grid-cols-3 gap-2">
       <Input data-testid="input-employee-name" placeholder="Nome" value={form.name} onChange={set("name")} />
       <Input data-testid="input-employee-role" placeholder="Cargo" value={form.role} onChange={set("role")} />
       <Input data-testid="select-employee-sector" placeholder="Setor" list="sectors" value={form.sector} onChange={set("sector")} />
@@ -46,8 +48,13 @@ const EmployeeForm = ({ sectors, onSaved }) => {
         <option value="M">Masculino</option>
         <option value="F">Feminino</option>
       </select>
+      <select data-testid="select-employee-workload" value={form.workload} onChange={set("workload")} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm">
+        <option value="">Jornada</option>
+        <option value="8h_4h">8h seg–sex + 4h sáb</option>
+        <option value="7h20">7h20 seg–sáb</option>
+      </select>
       <datalist id="sectors">{sectors.map((s) => <option key={s} value={s} />)}</datalist>
-      <Button data-testid="btn-save-employee" type="submit" disabled={busy} className="sm:col-span-4 bg-[#0F172A] hover:bg-[#1E293B] text-white">
+      <Button data-testid="btn-save-employee" type="submit" disabled={busy} className="bg-[#0F172A] hover:bg-[#1E293B] text-white">
         {busy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />} Adicionar funcionário
       </Button>
     </form>
@@ -76,6 +83,7 @@ export const EmployeesPanel = ({ employees, onChange }) => {
         sector: emp.sector,
         status: emp.status || "ativo",
         gender: emp.gender || null,
+        workload: emp.workload || null,
         ...patch
       });
       toast.success(message);
@@ -109,6 +117,18 @@ export const EmployeesPanel = ({ employees, onChange }) => {
               <option value="">Sexo?</option>
               <option value="M">Masc.</option>
               <option value="F">Fem.</option>
+            </select>
+
+            <select
+              aria-label="Jornada"
+              value={e.workload || ""}
+              onChange={(evt) => update(e, { workload: evt.target.value || null }, `Jornada de ${e.name} atualizada`)}
+              className={`${selectCls} ${!e.workload ? "border-[#FCD34D] bg-[#FFFBEB]" : ""}`}
+              title={e.workload === "8h_4h" ? "8h seg–sex + 4h sáb" : e.workload === "7h20" ? "7h20 seg–sáb" : "Informe a jornada"}
+            >
+              <option value="">Jornada?</option>
+              <option value="8h_4h">8h+4h</option>
+              <option value="7h20">7h20</option>
             </select>
 
             <select

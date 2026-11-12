@@ -29,7 +29,27 @@ const FIELDS = ["Entrada", "Saída intervalo", "Volta intervalo", "Saída"];
 // Turno salvo como [entrada, saída] ou [entrada, saída intervalo, volta intervalo, saída]
 const toFields = (shift) => (!shift ? ["", "", "", ""] : shift.length === 4 ? [...shift] : [shift[0], "", "", shift[1]]);
 
-const ShiftInputs = ({ shift, onSave }) => {
+// Minutos de trabalho no dia conforme jornada e escala do setor
+const dailyMinutes = (workload, mode, day) => {
+  if (mode === "5x2") return 528; // 8h48
+  if (workload === "8h_4h") return day === 5 ? 240 : 480; // sábado 4h, demais 8h
+  if (workload === "7h20") return 440;
+  return null;
+};
+const fromMin = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+const toMin = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+
+// Sugere intervalo e saída a partir da entrada (intervalo de 1h após 4h quando passa de 6h)
+const suggestShift = (start, minutes) => {
+  if (!minutes || !/^\d{2}:\d{2}$/.test(start)) return null;
+  const s = toMin(start);
+  const breakLen = minutes > 360 ? 60 : 0;
+  const end = s + minutes + breakLen;
+  if (end >= 24 * 60) return null;
+  return breakLen ? [start, fromMin(s + 240), fromMin(s + 240 + breakLen), fromMin(end)] : [start, "", "", fromMin(end)];
+};
+
+const ShiftInputs = ({ shift, onSave, minutes }) => {
   const [values, setValues] = useState(() => toFields(shift));
   useEffect(() => { setValues(toFields(shift)); }, [shift]);
 
@@ -57,7 +77,14 @@ const ShiftInputs = ({ shift, onSave }) => {
           aria-label={label}
           title={label}
           value={values[i]}
-          onChange={(e) => setValues((v) => v.map((x, j) => (j === i ? e.target.value : x)))}
+          onChange={(e) => {
+            const value = e.target.value;
+            setValues((v) => {
+              // Ao digitar a entrada com os demais vazios, preenche pela jornada
+              if (i === 0 && !v[1] && !v[2] && !v[3]) return suggestShift(value, minutes) || [value, "", "", ""];
+              return v.map((x, j) => (j === i ? value : x));
+            });
+          }}
           className={`${cls} ${i === 1 || i === 2 ? "bg-[#F0F9FF]" : ""}`}
         />
       ))}
@@ -109,7 +136,7 @@ const ImportPreview = ({ preview, setPreview, onSave, saving }) => {
   );
 };
 
-export const PeakHoursPanel = ({ day, date, sector, members, schedule, week }) => {
+export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", members, schedule, week }) => {
   const fileRef = useRef(null);
   const [hourlyAll, setHourlyAll] = useState([]);
   const [shifts, setShifts] = useState({});
@@ -278,9 +305,12 @@ export const PeakHoursPanel = ({ day, date, sector, members, schedule, week }) =
                 <tr key={emp.id} className="border-t border-[#EFEBE3]">
                   <td className="py-1.5 pr-3 sticky left-0 bg-white z-10 min-w-[120px]">
                     <p className="font-semibold text-sm leading-tight">{emp.name}</p>
-                    <p className="text-xs text-[#8A929B]">{emp.role}</p>
+                    <p className="text-xs text-[#8A929B]">
+                      {emp.role}
+                      {dailyMinutes(emp.workload, sectorMode, day) && <> · {fromMin(dailyMinutes(emp.workload, sectorMode, day)).replace(":", "h")}</>}
+                    </p>
                   </td>
-                  <td className="px-2 no-print"><ShiftInputs shift={shifts[emp.id]} onSave={(times) => saveShift(emp.id, times)} /></td>
+                  <td className="px-2 no-print"><ShiftInputs shift={shifts[emp.id]} minutes={dailyMinutes(emp.workload, sectorMode, day)} onSave={(times) => saveShift(emp.id, times)} /></td>
                   {hours.map((h) => (
                     <td key={h} className="p-0.5">
                       <div

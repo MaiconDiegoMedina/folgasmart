@@ -14,12 +14,14 @@ export default function Dashboard() {
   const [week, setWeek] = useState(() => isoDate(mondayOf(new Date())));
   const [schedule, setSchedule] = useState({ mode: "6x1", off_days: {}, extra_days: {} });
   const [generating, setGenerating] = useState(false);
+  const [sectorModes, setSectorModes] = useState({});
 
   const load = useCallback(async () => {
     try {
-      const [e, m] = await Promise.all([http.get("/employees"), http.get("/movement")]);
+      const [e, m, sm] = await Promise.all([http.get("/employees"), http.get("/movement"), http.get("/sectors/modes")]);
       setEmployees(e.data);
       setMovement(m.data);
+      setSectorModes(sm.data);
     } catch (err) { toast.error(errMsg(err)); }
   }, []);
 
@@ -34,9 +36,17 @@ export default function Dashboard() {
     try {
       const { data } = await http.post("/schedule/generate", { mode, week });
       setSchedule(data);
-      toast.success("Escala " + mode + " gerada para a semana");
+      toast.success("Escala gerada para a semana");
     } catch (err) { toast.error(errMsg(err)); }
     finally { setGenerating(false); }
+  };
+
+  const changeSectorMode = async (sector, mode) => {
+    try {
+      const { data } = await http.put("/sectors/mode", { sector, mode });
+      setSectorModes(data);
+      toast.success(`${sector} agora usa a escala ${mode}. Clique em Gerar escala para aplicar nesta semana.`);
+    } catch (err) { toast.error(errMsg(err)); }
   };
 
   const toggleCell = async (employee_id, day, markExtra = false) => {
@@ -48,9 +58,9 @@ export default function Dashboard() {
 
   return (
     <div className="grain min-h-screen bg-[#F9F8F5] text-[#191C1E]">
-      <Header onLogout={logout} employees={employees} movement={movement} schedule={schedule} generating={generating} onGenerate={generate} onModeChange={(mode) => generate(mode)} />
+      <Header onLogout={logout} employees={employees} movement={movement} schedule={schedule} generating={generating} onGenerate={generate} />
       <main className="relative z-10 mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        <ScheduleGrid employees={employees} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} />
+        <ScheduleGrid employees={employees} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} />
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 no-print">
           <div className="lg:col-span-3"><MovementPanel movement={movement} onChange={setMovement} /></div>
           <div className="lg:col-span-2"><EmployeesPanel employees={employees} onChange={load} /></div>

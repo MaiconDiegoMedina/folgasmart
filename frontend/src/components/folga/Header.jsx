@@ -21,7 +21,7 @@ const ModeToggle = ({ mode, onChange, disabled }) => (
   </div>
 );
 
-export const Header = ({ employees, movement, schedule, generating, onGenerate, onModeChange, onLogout }) => {
+export const Header = ({ employees, movement, schedule, generating, onGenerate, onLogout }) => {
   const peaks = movement?.peak_days || [];
   return (
     <header data-testid="app-header" className="no-print md:sticky top-0 z-30 border-b border-[#E5E1D8] bg-[#F9F8F5]/85 backdrop-blur-xl">
@@ -39,7 +39,6 @@ export const Header = ({ employees, movement, schedule, generating, onGenerate, 
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <ModeToggle mode={schedule.mode} onChange={onModeChange} disabled={generating || !employees.length} />
           <ExportMenu employees={employees} schedule={schedule} />
           <Button
             data-testid="btn-generate-roster"

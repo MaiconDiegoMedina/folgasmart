@@ -50,8 +50,10 @@ const Cell = ({ off, susp, extra, peak, status, cct, onClick, testId }) => {
   );
 };
 
-const Row = ({ emp, offs, suspensions, extras, peaks, required, onToggle, onExtra, cctAlert, idx }) => {
-  const wrong = emp.status !== "ferias" && offs.length !== required;
+const Row = ({ emp, offs, suspensions, extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx }) => {
+  // Folgas de fato (EXTRA é dia trabalhado). Folga a mais pode ocorrer pelas regras de domingo/6 dias.
+  const realOffs = offs.filter((d) => !extras.includes(d));
+  const wrong = emp.status !== "ferias" && realOffs.length < required;
 
   return (
     <tr data-testid="employee-row" className="rise border-t border-[#EFEBE3]" style={{ animationDelay: `${idx * 30}ms` }}>
@@ -67,6 +69,11 @@ const Row = ({ emp, offs, suspensions, extras, peaks, required, onToggle, onExtr
           )}
         </p>
         {cctAlert && <p className="text-[10px] text-[#DC2626] leading-tight mt-0.5 max-w-[220px]">{cctAlert.replace("CCT: ", "")}</p>}
+        {streakDays?.length > 0 && (
+          <p data-testid={`streak-alert-${emp.id}`} className="text-[10px] text-[#DC2626] leading-tight mt-0.5 max-w-[220px] flex items-center gap-1">
+            <AlertTriangle className="h-2.5 w-2.5 shrink-0" /> Mais de 6 dias seguidos sem folga
+          </p>
+        )}
         <p className="text-xs text-[#8A929B]">{emp.role} · {emp.sector}</p>
       </td>
       {DAYS_SHORT.map((_, d) => (
@@ -75,7 +82,7 @@ const Row = ({ emp, offs, suspensions, extras, peaks, required, onToggle, onExtr
             off={offs.includes(d)}
             susp={suspensions.includes(d)}
             extra={extras.includes(d)}
-            cct={d === 6 ? cctAlert : undefined}
+            cct={streakDays?.includes(d) ? "Mais de 6 dias seguidos sem folga (máximo 6)" : d === 6 ? cctAlert : undefined}
             peak={peaks.includes(d)}
             status={emp.status}
             // Shift + clique numa folga marca EXTRA. Clique normal alterna a folga.
@@ -87,7 +94,7 @@ const Row = ({ emp, offs, suspensions, extras, peaks, required, onToggle, onExtr
       <td className="pl-3 text-center">
         <span data-testid={`row-summary-${emp.id}`} className={`inline-flex items-center gap-1 text-xs font-mono-data font-semibold ${wrong ? "text-[#DC2626]" : "text-[#575E65]"}`}>
           {wrong && <AlertTriangle className="h-3.5 w-3.5" />}
-          {emp.status === "ferias" ? "7/7" : `${offs.length}/${required}`}
+          {emp.status === "ferias" ? "7/7" : `${realOffs.length}/${required}`}
         </span>
       </td>
     </tr>
@@ -138,11 +145,28 @@ const DayTabs = ({ dates, peaks, value, onChange }) => (
   </div>
 );
 
-const SectorHeader = ({ name, members, worksOn, peaks }) => (
+const SectorModeToggle = ({ sector, mode, onChange }) => (
+  <div className="inline-flex items-center gap-1.5">
+    <span className="text-[11px] text-[#8A929B]">Escala do setor:</span>
+    <div data-testid="sector-mode-toggle" className="inline-flex rounded-md border border-[#E5E1D8] bg-white p-0.5">
+      {["6x1", "5x2"].map((m) => (
+        <button
+          key={m}
+          onClick={() => m !== mode && onChange(sector, m)}
+          className={`px-2.5 py-0.5 rounded text-xs font-semibold font-mono-data transition-colors ${m === mode ? "bg-[#0F172A] text-white" : "text-[#575E65] hover:bg-[#F2EFE8]"}`}
+        >
+          {m}
+        </button>
+      ))}
+    </div>
+  </div>
+);
+
+const SectorHeader = ({ name, members, worksOn, peaks, mode }) => (
   <tr data-testid={`sector-group-${name}`}>
     <td className="pt-5 pb-2 sticky left-0 bg-white z-10">
       <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#0F172A]">{name}</span>
-      <span className="ml-2 text-[11px] text-[#8A929B]">{members.length} pessoa(s)</span>
+      <span className="ml-2 text-[11px] text-[#8A929B]">{members.length} pessoa(s) · {mode}</span>
     </td>
     {DAYS_SHORT.map((_, d) => {
       const c = members.filter((e) => worksOn(e.id, d)).length;
@@ -158,13 +182,18 @@ const SectorHeader = ({ name, members, worksOn, peaks }) => (
   </tr>
 );
 
-export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange, onToggle }) => {
+export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange, onToggle, sectorModes = {}, onSectorMode }) => {
   const dates = weekDates(week);
   const today = isoDate(new Date());
   const [sector, setSector] = useState("all");
   const [dayView, setDayView] = useState(null);
   const peaks = movement?.peak_days || [];
-  const required = OFFS_PER_MODE[schedule.mode];
+  // Escala de cada setor: a usada na geração desta semana; se não gerada, a configuração atual
+  const modeOf = (sectorName) => {
+    const used = Object.entries(schedule.sector_modes || {}).find(([k]) => k.toLowerCase() === sectorName.toLowerCase());
+    return used?.[1] || sectorModes[sectorName.toLowerCase()] || schedule.mode || "6x1";
+  };
+  const configuredMode = (sectorName) => sectorModes[sectorName.toLowerCase()] || "6x1";
   const offsOf = (id) => schedule.off_days?.[id] || [];
   const suspensionsOf = (id) => schedule.suspension_days?.[id] || [];
   const extrasOf = (id) => schedule.extra_days?.[id] || [];
@@ -187,7 +216,9 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
     <section data-testid="weekly-calendar-grid" className="print-area rounded-2xl border border-[#E5E1D8] bg-white shadow-[0_1px_0_#E5E1D8,0_12px_32px_-16px_rgba(15,23,42,0.12)]">
       <div className="flex flex-wrap items-end justify-between gap-4 p-5 sm:p-6 border-b border-[#EFEBE3]">
         <div>
-          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A929B]">Escala semanal · {schedule.mode}</p>
+          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A929B]">
+            Escala semanal · {[...new Set(sectors.map(modeOf))].join(" + ") || schedule.mode}
+          </p>
           <h2 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight mt-1">Quem trabalha, quem folga.</h2>
           <div className="mt-4"><WeekNav week={week} onChange={onWeekChange} /></div>
           {!schedule.generated_at && employees.length > 0 && (
@@ -214,10 +245,18 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
           {activeSector === "all" ? (
             <p className="no-print px-5 sm:px-6 pt-2 text-[11px] text-[#8A929B]">Selecione um setor para escalar os horários de pico de cada dia.</p>
           ) : (
-            <DayTabs dates={dates} peaks={peaks} value={activeDay} onChange={setDayView} />
+            <>
+              <div className="no-print px-5 sm:px-6 pt-3">
+                <SectorModeToggle sector={activeSector} mode={configuredMode(activeSector)} onChange={onSectorMode} />
+                {configuredMode(activeSector) !== modeOf(activeSector) && (
+                  <span className="ml-2 text-[11px] text-[#B45309]">Esta semana foi gerada em {modeOf(activeSector)}. Clique em Gerar escala para aplicar.</span>
+                )}
+              </div>
+              <DayTabs dates={dates} peaks={peaks} value={activeDay} onChange={setDayView} />
+            </>
           )}
           {activeDay !== null ? (
-            <PeakHoursPanel day={activeDay} date={dates[activeDay]} sector={activeSector} members={visible} schedule={schedule} week={week} />
+            <PeakHoursPanel day={activeDay} date={dates[activeDay]} sector={activeSector} sectorMode={modeOf(activeSector)} members={visible} schedule={schedule} week={week} />
           ) : (
           <div className="overflow-x-auto p-3 sm:p-5">
             <table className="w-full border-separate border-spacing-0">
@@ -243,7 +282,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
               </thead>
               <tbody>
                 {groups.map((g) => [
-                  <SectorHeader key={`h-${g.name}`} name={g.name} members={g.members} worksOn={worksOn} peaks={peaks} />,
+                  <SectorHeader key={`h-${g.name}`} name={g.name} members={g.members} worksOn={worksOn} peaks={peaks} mode={modeOf(g.name)} />,
                   ...g.members.map((emp, idx) => (
                     <Row
                       key={emp.id}
@@ -253,8 +292,9 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       suspensions={suspensionsOf(emp.id)}
                       extras={extrasOf(emp.id)}
                       cctAlert={schedule.cct_alerts?.[emp.id]}
+                      streakDays={schedule.streak_alerts?.[emp.id]}
                       peaks={peaks}
-                      required={required}
+                      required={OFFS_PER_MODE[modeOf(emp.sector)]}
                       onToggle={onToggle}
                       onExtra={onExtra}
                     />

@@ -30,6 +30,8 @@ OFFS_PER_MODE = {"6x1": 1, "5x2": 2}
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 Status = Literal["ativo", "ferias", "suspensao"]
 Gender = Literal["M", "F"]
+# 8h_4h: 8h seg-sex + 4h sáb · 7h20: 7h20 seg-sáb (no 5x2 ambos fazem 8h48)
+Workload = Literal["8h_4h", "7h20"]
 
 
 def db(request: Request):
@@ -97,7 +99,9 @@ SCHEMA_STATEMENTS = [
     hours TEXT NOT NULL, updated_at TEXT)""",
     """CREATE TABLE IF NOT EXISTS shifts (week TEXT NOT NULL, day INTEGER NOT NULL,
     data TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (week, day))""",
+    """CREATE TABLE IF NOT EXISTS sector_modes (sector TEXT PRIMARY KEY, mode TEXT NOT NULL)""",
 ]
+NEW_COLUMNS = [("employees", "gender"), ("employees", "workload"), ("schedule", "sector_modes")]
 
 
 async def ensure_schema(request: Request) -> None:
@@ -108,9 +112,10 @@ async def ensure_schema(request: Request) -> None:
     database = db(request)
     for statement in SCHEMA_STATEMENTS:
         await database.prepare(statement).run()
-    columns = (await database.prepare("PRAGMA table_info(employees)").all()).results
-    if "gender" not in {row["name"] for row in columns}:
-        await database.prepare("ALTER TABLE employees ADD COLUMN gender TEXT").run()
+    for table, column in NEW_COLUMNS:
+        existing = (await database.prepare(f"PRAGMA table_info({table})").all()).results
+        if column not in {row["name"] for row in existing}:
+            await database.prepare(f"ALTER TABLE {table} ADD COLUMN {column} TEXT").run()
     _SCHEMA_READY = True
 
 
@@ -128,6 +133,7 @@ class EmployeeIn(BaseModel):
     sector: Text
     status: Status = "ativo"
     gender: Gender | None = None
+    workload: Workload | None = None
 
 
 class Employee(EmployeeIn):
@@ -159,6 +165,13 @@ class Schedule(BaseModel):
     suspension_days: Dict[str, List[int]] = Field(default_factory=dict)
     generated_at: str | None = None
     cct_alerts: Dict[str, str] = Field(default_factory=dict)
+    sector_modes: Dict[str, Mode] = Field(default_factory=dict)
+    streak_alerts: Dict[str, List[int]] = Field(default_factory=dict)
+
+
+class SectorModeIn(BaseModel):
+    sector: Text
+    mode: Mode
 
 
 class GenerateIn(BaseModel):
@@ -223,11 +236,12 @@ def week_start(raw: str) -> str:
 
 async def list_employees(request: Request) -> List[Employee]:
     result = await db(request).prepare(
-        "SELECT id, name, role, sector, status, gender, created_at FROM employees ORDER BY created_at ASC"
+        "SELECT id, name, role, sector, status, gender, workload, created_at FROM employees ORDER BY created_at ASC"
     ).all()
     return [Employee(
         id=row["id"], name=row["name"], role=row["role"], sector=row["sector"],
-        status=row["status"], gender=row["gender"] or None, created_at=row["created_at"],
+        status=row["status"], gender=row["gender"] or None, workload=row["workload"] or None,
+        created_at=row["created_at"],
     ) for row in result.results]
 
 
@@ -256,7 +270,7 @@ async def save_movement(request: Request, movement: Movement) -> None:
 
 async def get_schedule(request: Request, week: str) -> Schedule:
     row = await db(request).prepare(
-        "SELECT week, mode, off_days, suspension_days, generated_at FROM schedule WHERE week = ?"
+        "SELECT week, mode, off_days, suspension_days, generated_at, sector_modes FROM schedule WHERE week = ?"
     ).bind(week).first()
     if row:
         stored_suspensions = json.loads(row["suspension_days"])
@@ -265,6 +279,7 @@ async def get_schedule(request: Request, week: str) -> Schedule:
         return Schedule(
             week=row["week"], mode=row["mode"], off_days=json.loads(row["off_days"]),
             suspension_days=suspensions, extra_days=extras, generated_at=row["generated_at"],
+            sector_modes=json.loads(row["sector_modes"] or "{}"),
         )
     last = await db(request).prepare(
         "SELECT mode FROM schedule WHERE generated_at IS NOT NULL ORDER BY generated_at DESC LIMIT 1"
@@ -279,12 +294,12 @@ async def save_schedule(request: Request, schedule: Schedule) -> None:
         for emp_id in set(schedule.suspension_days) | set(schedule.extra_days)
     }
     await db(request).prepare(
-        """INSERT INTO schedule (week, mode, off_days, suspension_days, generated_at)
-        VALUES (?, ?, ?, ?, ?) ON CONFLICT(week) DO UPDATE SET mode=excluded.mode,
+        """INSERT INTO schedule (week, mode, off_days, suspension_days, generated_at, sector_modes)
+        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(week) DO UPDATE SET mode=excluded.mode,
         off_days=excluded.off_days, suspension_days=excluded.suspension_days,
-        generated_at=excluded.generated_at"""
+        generated_at=excluded.generated_at, sector_modes=excluded.sector_modes"""
     ).bind(schedule.week, schedule.mode, json.dumps(schedule.off_days),
-           json.dumps(stored_suspensions), schedule.generated_at).run()
+           json.dumps(stored_suspensions), schedule.generated_at, json.dumps(schedule.sector_modes)).run()
 
 
 def parse_date(raw: str):
@@ -354,24 +369,62 @@ def sunday_alert(gender: str | None, current: str | None, history: List[str | No
     return None
 
 
+MAX_STREAK = 6
+
+
+def worked_days(schedule: Schedule, emp_id: str) -> List[bool] | None:
+    if emp_id not in schedule.off_days:
+        return None
+    off = set(schedule.off_days[emp_id]) - set(schedule.extra_days.get(emp_id, []))
+    off |= set(schedule.suspension_days.get(emp_id, []))
+    return [day not in off for day in range(7)]
+
+
+def last_real_off(schedule: Schedule, emp_id: str) -> int | None:
+    """Último dia de folga de fato (EXTRA não conta) na semana; -1 se não folgou."""
+    worked = worked_days(schedule, emp_id)
+    if worked is None:
+        return None
+    offs = [day for day in range(7) if not worked[day]]
+    return offs[-1] if offs else -1
+
+
+def streak_violations(previous: Schedule | None, current: Schedule, emp_id: str) -> List[int]:
+    """Dias desta semana que passam do 6º dia seguido de trabalho."""
+    now = worked_days(current, emp_id)
+    if now is None:
+        return []
+    before = (worked_days(previous, emp_id) if previous else None) or [False] * 7
+    run, days = 0, []
+    for index, worked in enumerate(before + now):
+        run = run + 1 if worked else 0
+        if index >= 7 and run > MAX_STREAK:
+            days.append(index - 7)
+    return days
+
+
 async def with_alerts(request: Request, schedule: Schedule, employees: List[Employee] | None = None,
                       history: List[Schedule] | None = None) -> Schedule:
     employees = employees if employees is not None else await list_employees(request)
     history = history if history is not None else await sunday_history(request, schedule.week, 2)
     schedule.cct_alerts = {}
+    schedule.streak_alerts = {}
     for emp in employees:
         if emp.status == "ferias":
             continue
         alert = sunday_alert(emp.gender, sunday_of(schedule, emp.id), [sunday_of(h, emp.id) for h in history])
         if alert:
             schedule.cct_alerts[emp.id] = alert
+        streak = streak_violations(history[0] if history else None, schedule, emp.id)
+        if streak:
+            schedule.streak_alerts[emp.id] = streak
     return schedule
 
 
 def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
                      rotate: int = 0, previous_days: dict | None = None,
-                     sunday_rule: Dict[str, str] | None = None) -> Dict[str, List[int]]:
-    offs_needed = OFFS_PER_MODE[mode]
+                     sunday_rule: Dict[str, str] | None = None,
+                     sector_modes: Dict[str, str] | None = None) -> Dict[str, List[int]]:
     max_avg = max(movement.avg) or 1
     weight = [1 + 4 * (value / max_avg) for value in movement.avg]
     peaks = set(movement.peak_days)
@@ -388,20 +441,24 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
         ordered.extend(group[k:] + group[:k])
     for emp in ordered:
         sec = off_sector.setdefault(emp.sector.lower(), [0] * 7)
-        group = [e for e in active if e.sector.lower() == emp.sector.lower()]
-        idx = group.index(emp) if emp in group else 0
-        last_rotation = (rotate - 1) % len(group) if group else 0
-        last_day = (previous_days or {}).get(emp.id, (idx - last_rotation) % 7)
+        offs_needed = OFFS_PER_MODE[(sector_modes or {}).get(emp.sector.lower(), mode)]
+        # Último dia de folga da semana anterior (6 = domingo, sem restrição se não houver histórico)
+        last_day = (previous_days or {}).get(emp.id, SUNDAY)
         rule = (sunday_rule or {}).get(emp.id)
+        # Folga de domingo pela CCT e a semana anterior terminou cedo: no 6x1 só um dia de folga
+        # não cumpre as duas regras, então ganha uma folga a mais
+        if rule == "F" and last_day < SUNDAY and offs_needed == 1:
+            offs_needed = 2
         chosen = []
-        for _ in range(offs_needed):
+        for pick in range(offs_needed):
             def cost(day):
                 # Só as folgas do próprio setor contam: um setor não interfere no outro
                 value = (sec[day] + 1) * weight[day] + sec[day] * 6
                 if day in peaks:
                     value += 1000
-                if mode == "6x1" and day + 7 - last_day > 6:
-                    value += 5000
+                # No máximo 6 dias seguidos: a primeira folga precisa vir até o dia last_day
+                if pick == offs_needed - 1 and not any(d <= last_day for d in chosen) and day > last_day:
+                    value += 1000000 + 1000 * (day - last_day)
                 # Regra de domingos da CCT tem prioridade sobre as demais
                 if rule == "F" and SUNDAY not in chosen and day != SUNDAY:
                     value += 100000
@@ -481,8 +538,8 @@ async def employees(request: Request):
 async def create_employee(data: EmployeeIn, request: Request):
     emp = Employee(**data.model_dump())
     await db(request).prepare(
-        "INSERT INTO employees (id, name, role, sector, status, gender, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    ).bind(emp.id, emp.name, emp.role, emp.sector, emp.status, emp.gender, emp.created_at).run()
+        "INSERT INTO employees (id, name, role, sector, status, gender, workload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(emp.id, emp.name, emp.role, emp.sector, emp.status, emp.gender, emp.workload, emp.created_at).run()
     return emp
 
 
@@ -493,8 +550,8 @@ async def update_employee(emp_id: str, data: EmployeeIn, request: Request):
     if not existing:
         raise HTTPException(404, "Funcionário não encontrado")
     await database.prepare(
-        "UPDATE employees SET name=?, role=?, sector=?, status=?, gender=? WHERE id=?"
-    ).bind(data.name, data.role, data.sector, data.status, data.gender, emp_id).run()
+        "UPDATE employees SET name=?, role=?, sector=?, status=?, gender=?, workload=? WHERE id=?"
+    ).bind(data.name, data.role, data.sector, data.status, data.gender, data.workload, emp_id).run()
     return Employee(id=emp_id, created_at=existing["created_at"], **data.model_dump())
 
 
@@ -557,6 +614,25 @@ async def set_peaks(data: PeaksIn, request: Request):
     return mov
 
 
+async def get_sector_modes(request: Request) -> Dict[str, str]:
+    rows = (await db(request).prepare("SELECT sector, mode FROM sector_modes").all()).results
+    return {row["sector"].lower(): row["mode"] for row in rows}
+
+
+@api.get("/sectors/modes")
+async def sector_modes_api(request: Request):
+    return await get_sector_modes(request)
+
+
+@api.put("/sectors/mode")
+async def set_sector_mode(data: SectorModeIn, request: Request):
+    await db(request).prepare(
+        """INSERT INTO sector_modes (sector, mode) VALUES (?, ?)
+        ON CONFLICT(sector) DO UPDATE SET mode=excluded.mode"""
+    ).bind(data.sector.lower(), data.mode).run()
+    return await get_sector_modes(request)
+
+
 @api.get("/schedule", response_model=Schedule)
 async def schedule_api(week: str, request: Request):
     return await with_alerts(request, await get_schedule(request, week_start(week)))
@@ -569,14 +645,17 @@ async def generate(data: GenerateIn, request: Request):
     mov = await get_movement(request)
     week_date = date.fromisoformat(week)
     previous_week = (week_date - timedelta(days=7)).isoformat()
-    old = await db(request).prepare("SELECT off_days FROM schedule WHERE week = ?").bind(previous_week).first()
-    previous_days = {}
-    if old:
-        for emp_id, days in json.loads(old["off_days"]).items():
-            if days:
-                previous_days[emp_id] = days[-1]
     rotate = week_date.isocalendar()[1]
     history = await sunday_history(request, week, 3)
+    previous_days = {}
+    for emp in employees:
+        last = last_real_off(history[0], emp.id)
+        if last is not None:
+            previous_days[emp.id] = last
+    sector_modes = await get_sector_modes(request)
+    snapshot = {}
+    for emp in employees:
+        snapshot[emp.sector] = sector_modes.get(emp.sector.lower(), data.mode)
     sunday_rule = {}
     for emp in employees:
         if emp.status == "ferias" or not emp.gender:
@@ -588,7 +667,9 @@ async def generate(data: GenerateIn, request: Request):
             sunday_rule[emp.id] = plan
     sched = Schedule(
         week=week, mode=data.mode, generated_at=now_iso(),
-        off_days=compute_schedule(employees, mov, data.mode, rotate, previous_days, sunday_rule),
+        off_days=compute_schedule(employees, mov, data.mode, rotate, previous_days, sunday_rule,
+                                  {k.lower(): v for k, v in snapshot.items()}),
+        sector_modes=snapshot,
     )
     await save_schedule(request, sched)
     return await with_alerts(request, sched, employees, history[:2])
