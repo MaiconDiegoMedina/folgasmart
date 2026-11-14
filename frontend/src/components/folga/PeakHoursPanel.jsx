@@ -104,6 +104,30 @@ const ShiftInputs = ({ shift, fallback, onSave, minutes, breakLen }) => {
   );
 };
 
+// Estado de cada 15 minutos da hora: "work" | "break" | null
+const inRange = (shift, a, b, m) => !!shift && toMin(shift[a]) <= m && m < toMin(shift[b]);
+const quarterState = (shift, h, q) => {
+  if (!shift) return null;
+  const m = h * 60 + q * 15 + 7; // meio do bloco de 15 min
+  if (!inRange(shift, 0, shift.length - 1, m)) return null;
+  if (shift.length === 4 && inRange(shift, 1, 2, m)) return "break";
+  return "work";
+};
+const fmtQuarter = (h, q) => `${pad(h)}:${pad(q * 15)}`;
+
+// Uma hora da grade, dividida em 4 blocos de 15 min
+const HourCell = ({ shift, h, peak, workColor = "bg-[#15803D]", lentAt }) => (
+  <div className={`h-8 rounded overflow-hidden flex gap-px ${peak ? "bg-[#FEF2F2]" : "bg-[#F2EFE8]"}`}>
+    {[0, 1, 2, 3].map((q) => {
+      const st = quarterState(shift, h, q);
+      const lent = st === "work" && lentAt?.(h * 60 + q * 15 + 7);
+      const color = lent ? "bg-[#FCD34D]" : st === "work" ? workColor : st === "break" ? "bg-[#BAE6FD]" : "";
+      const label = lent ? `Ajudando em ${lent}` : st === "break" ? "Intervalo" : st === "work" ? "No setor" : "Fora";
+      return <div key={q} title={`${fmtQuarter(h, q)} · ${label}`} className={`flex-1 ${color}`} />;
+    })}
+  </div>
+);
+
 // Janela em que alguém de outro setor ajuda aqui: [de, até]
 const LoanInputs = ({ shift, onSave }) => {
   const [values, setValues] = useState(shift);
@@ -392,11 +416,11 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                   <td className="px-2 no-print"><ShiftInputs shift={shifts[emp.id]} fallback={defaultOf(emp)} minutes={minutesOf(emp)} breakLen={breakFor(wlOf(emp), minutesOf(emp))} onSave={(times) => saveShift(emp.id, times)} /></td>
                   {hours.map((h) => (
                     <td key={h} className="p-0.5">
-                      <div
-                        title={lentAt(emp, h) ? `Ajudando em ${lentAt(emp, h).to}` : onBreak(shiftOf(emp), h) ? "Intervalo" : undefined}
-                        className={`h-8 rounded ${
-                          lentAt(emp, h) && coversHour(shiftOf(emp), h) ? "bg-[#FCD34D]" : coversHour(shiftOf(emp), h) ? "bg-[#15803D]" : onBreak(shiftOf(emp), h) ? "bg-[#BAE6FD]" : peaks.includes(h) ? "bg-[#FEF2F2]" : "bg-[#F2EFE8]"
-                        }`}
+                      <HourCell
+                        shift={shiftOf(emp)}
+                        h={h}
+                        peak={peaks.includes(h)}
+                        lentAt={(m) => lentOut(emp).find((l) => inRange(l.shift, 0, 1, m))?.to}
                       />
                     </td>
                   ))}
@@ -416,7 +440,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                   <td className="px-2 no-print"><LoanInputs shift={shift} onSave={(times) => saveShift(key, times)} /></td>
                   {hours.map((h) => (
                     <td key={h} className="p-0.5">
-                      <div className={`h-8 rounded ${coversHour(shift, h) ? "bg-[#8B5CF6]" : peaks.includes(h) ? "bg-[#FEF2F2]" : "bg-[#F2EFE8]"}`} />
+                      <HourCell shift={shift} h={h} peak={peaks.includes(h)} workColor="bg-[#8B5CF6]" />
                     </td>
                   ))}
                 </tr>
