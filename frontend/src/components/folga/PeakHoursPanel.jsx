@@ -401,7 +401,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
               </tr>
             </thead>
             <tbody>
-              {working.map((emp) => (
+              {[...working].sort((a, b) => (shiftOf(a)?.[0] || "99:99").localeCompare(shiftOf(b)?.[0] || "99:99") || a.name.localeCompare(b.name, "pt-BR")).map((emp) => (
                 <tr key={emp.id} className="border-t border-[#EFEBE3]">
                   <td className="py-1.5 pr-3 sticky left-0 bg-white z-10 min-w-[120px]">
                     <p className="font-semibold text-sm leading-tight">{emp.name}</p>

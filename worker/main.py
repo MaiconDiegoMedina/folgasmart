@@ -895,7 +895,7 @@ async def admin_unlock(data: AdminUnlockIn, request: Request):
         window_started, attempts = now, 0
     if attempts >= LOGIN_MAX_ATTEMPTS:
         raise HTTPException(429, "Muitas tentativas. Aguarde 15 minutos e tente novamente.")
-    if not hmac.compare_digest(data.password.encode(), str(admin_password).encode()):
+    if not hmac.compare_digest(data.password.strip().encode(), str(admin_password).strip().encode()):
         await database.prepare(
             """INSERT INTO auth_attempts (ip, window_started, attempts) VALUES (?, ?, ?)
             ON CONFLICT(ip) DO UPDATE SET window_started=excluded.window_started, attempts=excluded.attempts"""
