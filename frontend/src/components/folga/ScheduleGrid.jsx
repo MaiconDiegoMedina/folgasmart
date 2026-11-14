@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Flame, AlertTriangle, Users, CalendarDays } from "lucide-react";
-import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate } from "@/lib/api";
+import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate, http } from "@/lib/api";
+import { defaultShiftOf } from "@/lib/workloadTimes";
 import { WeekNav } from "@/components/folga/WeekNav";
 import { PeakHoursPanel } from "@/components/folga/PeakHoursPanel";
 import { isIntermittent, convocationOf, acceptedOn, shortNotice, CONVOCATION_LABEL, MIN_NOTICE_DAYS } from "@/lib/convocation";
@@ -15,7 +16,7 @@ const CONVOCATION_STYLE = {
 };
 const CONVOCATION_NEXT = { none: "convocar", pending: "marcar aceite", accepted: "marcar recusa", declined: "limpar" };
 
-const ConvocationCell = ({ conv, date, vacation, onClick, testId }) => {
+const ConvocationCell = ({ conv, date, vacation, shift, onClick, testId }) => {
   if (vacation) return <Cell status="ferias" testId={testId} />;
   const state = conv?.status || "none";
   const late = shortNotice(conv, date);
@@ -28,12 +29,20 @@ const ConvocationCell = ({ conv, date, vacation, onClick, testId }) => {
       }`}
       className={`w-full h-11 rounded-lg text-[10px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none ${CONVOCATION_STYLE[state]} ${late ? "ring-2 ring-[#F59E0B] ring-offset-1" : ""}`}
     >
-      {state === "none" ? "—" : state === "accepted" ? "TRAB." : CONVOCATION_LABEL[state]}
+      {state === "none" ? "—" : state === "accepted" ? (shift ? <ShiftText shift={shift} /> : "TRAB.") : CONVOCATION_LABEL[state]}
     </button>
   );
 };
 
-const Cell = ({ off, susp, absent, extra, peak, status, cct, onClick, testId }) => {
+// Horário do dia: entrada–saída e, embaixo, o intervalo
+const ShiftText = ({ shift }) => (
+  <span className="flex flex-col items-center leading-tight">
+    <span className="text-[11px] tracking-normal">{shift[0]}–{shift[shift.length - 1]}</span>
+    {shift.length === 4 && <span className="text-[9px] font-medium tracking-normal opacity-70">int. {shift[1]}–{shift[2]}</span>}
+  </span>
+);
+
+const Cell = ({ off, susp, absent, extra, peak, status, cct, shift, onClick, testId }) => {
   if (status === "ferias") {
     return (
       <div
@@ -46,7 +55,7 @@ const Cell = ({ off, susp, absent, extra, peak, status, cct, onClick, testId }) 
     );
   }
 
-  let texto = "TRAB.";
+  let texto = shift ? <ShiftText shift={shift} /> : "TRAB.";
   let classesEstilo = "bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D] hover:bg-[#DCFCE7]"; // Trabalhando
 
   if (extra) {
@@ -92,7 +101,7 @@ const Cell = ({ off, susp, absent, extra, peak, status, cct, onClick, testId }) 
   );
 };
 
-const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx, schedule, dates }) => {
+const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx, schedule, dates, shiftOn }) => {
   const intermittent = isIntermittent(emp);
   // EXTRA é computado como folga. Folga a mais pode ocorrer pelas regras de domingo/6 dias.
   const realOffs = offs;
@@ -130,6 +139,7 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
               conv={convocationOf(schedule, emp.id, d)}
               date={dates[d]}
               vacation={vacationDays.includes(d)}
+              shift={shiftOn(d)}
               onClick={() => onToggle(emp.id, d)}
               testId={`cell-${emp.id}-${d}`}
             />
@@ -141,6 +151,7 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
             extra={extras.includes(d)}
             cct={streakDays?.includes(d) ? "Mais de 6 dias seguidos sem folga (máximo 6)" : d === 6 ? cctAlert : undefined}
             peak={peaks.includes(d)}
+            shift={shiftOn(d)}
             status={vacationDays.includes(d) ? "ferias" : emp.status}
             // Clique: TRAB. -> FOLGA -> SUSP. -> FALTA -> TRAB. Shift + clique numa folga marca EXTRA.
             onClick={(e) => (e.shiftKey ? onExtra(emp, d, offs.includes(d)) : onToggle(emp.id, d))}
@@ -226,13 +237,14 @@ const SectorModeToggle = ({ sector, mode, onChange }) => (
   </div>
 );
 
-const SectorHeader = ({ name, members, worksOn, peaks, mode }) => (
+const SectorHeader = ({ name, members, worksOn, peaks, mode, showCount }) => (
   <tr data-testid={`sector-group-${name}`}>
     <td className="pt-5 pb-2 sticky left-0 bg-white z-10">
       <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#0F172A]">{name}</span>
       <span className="ml-2 text-[11px] text-[#8A929B]">{members.length} pessoa(s) · {mode}</span>
     </td>
     {DAYS_SHORT.map((_, d) => {
+      if (!showCount) return <td key={d} />;
       const c = members.filter((e) => worksOn(e.id, d)).length;
       return (
         <td key={d} className="pt-5 pb-2 text-center">
@@ -277,6 +289,15 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   const visible = activeSector === "all" ? employees : employees.filter((e) => e.sector === activeSector);
   const groups = sectors.filter((s) => activeSector === "all" || s === activeSector).map((s) => ({ name: s, members: visible.filter((e) => e.sector === s) }));
   const coverage = DAYS_SHORT.map((_, d) => visible.filter((e) => worksOn(e.id, d)).length);
+
+  const [weekShifts, setWeekShifts] = useState({});
+  useEffect(() => {
+    if (activeDay !== null) return; // recarrega ao voltar da sub-aba, onde os turnos podem ter mudado
+    http.get("/shifts/week", { params: { week } }).then(({ data }) => setWeekShifts(data)).catch(() => setWeekShifts({}));
+  }, [week, activeDay]);
+  const shiftOf = (emp, d) =>
+    weekShifts[String(d)]?.[emp.id] ||
+    (isIntermittent(emp) ? null : defaultShiftOf(workloads.find((w) => w.id === emp.workload), modeOf(emp.sector), d));
 
   const onExtra = (emp, d, isOff) => {
     if (emp.status === "ferias") return toast.error("EXTRA não pode ser marcado para funcionário de férias.");
@@ -356,7 +377,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
               </thead>
               <tbody>
                 {groups.map((g) => [
-                  <SectorHeader key={`h-${g.name}`} name={g.name} members={g.members} worksOn={worksOn} peaks={peaks} mode={modeOf(g.name)} />,
+                  <SectorHeader key={`h-${g.name}`} name={g.name} members={g.members} worksOn={worksOn} peaks={peaks} mode={modeOf(g.name)} showCount={groups.length > 1} />,
                   ...g.members.map((emp, idx) => (
                     <Row
                       key={emp.id}
@@ -375,6 +396,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       required={OFFS_PER_MODE[modeOf(emp.sector)]}
                       onToggle={onToggle}
                       onExtra={onExtra}
+                      shiftOn={(d) => shiftOf(emp, d)}
                     />
                   )),
                 ])}

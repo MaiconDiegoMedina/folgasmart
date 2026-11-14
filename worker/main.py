@@ -1059,6 +1059,15 @@ async def shifts_api(week: str, day: int, request: Request):
     return await get_shifts(request, week_start(week), day)
 
 
+@api.get("/shifts/week")
+async def week_shifts_api(week: str, request: Request) -> Dict[str, Dict[str, List[str]]]:
+    """Turnos ajustados de todos os dias da semana: {"dia": {funcionário: horários}}."""
+    rows = (await db(request).prepare(
+        "SELECT day, data FROM shifts WHERE week = ?"
+    ).bind(week_start(week)).all()).results
+    return {str(row["day"]): json.loads(row["data"]) for row in rows}
+
+
 @api.put("/shifts", response_model=DayShifts)
 async def set_shift(data: ShiftIn, request: Request):
     week = week_start(data.week)
