@@ -11,7 +11,7 @@ const PeakField = ({ peaks, onToggle }) => (
       <Flame className="h-4 w-4 text-[#DC2626]" /> Dias de maior movimento
     </label>
     <p className="text-xs text-[#575E65] mt-1 mb-3">Selecione os dias manualmente. O app evita folgas nesses dias.</p>
-    <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+    <div className="grid grid-cols-4 sm:grid-cols-7 lg:grid-cols-4 2xl:grid-cols-7 gap-2">
       {DAYS.map((d, i) => {
         const on = peaks.includes(i);
         return (

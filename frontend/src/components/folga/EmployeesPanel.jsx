@@ -1,11 +1,14 @@
 import { useState } from "react";
-import { Plus, Trash2, Loader2 } from "lucide-react";
+import { Plus, Trash2, Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { http, errMsg, isoDate } from "@/lib/api";
 import { ImportEmployees } from "@/components/folga/ImportEmployees";
 import { VacationDialog, fmtDate } from "@/components/folga/VacationDialog";
+
+// Comparação sem acento e sem diferenciar maiúsculas
+const fold = (t) => (t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 const EMPTY = { name: "", role: "", sector: "", status: "ativo", gender: "", workload: "", contract: "efetivo" };
 const selectCls = "text-xs bg-[#F8F6F0] border border-[#E5E1D8] rounded-lg px-2 py-1.5 text-[#575E65] font-medium outline-none focus:border-[#0F172A] transition-colors";
@@ -70,6 +73,11 @@ const EmployeeForm = ({ sectors, workloads, onSaved }) => {
 export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onChange }) => {
   const sectors = [...new Set(employees.map((e) => e.sector))];
   const [vacationFor, setVacationFor] = useState(null);
+  const [query, setQuery] = useState("");
+  const q = fold(query.trim());
+  const list = employees
+    .filter((e) => !q || fold(`${e.name} ${e.role} ${e.sector}`).includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" }));
   const today = isoDate(new Date());
   // Férias em andamento ou futuras, para mostrar embaixo do nome
   const upcoming = (emp) => vacations.filter((v) => v.employee_id === emp.id && v.end >= today);
@@ -112,11 +120,24 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
         <ImportEmployees workloads={workloads} onDone={onChange} />
       </div>
       <EmployeeForm sectors={sectors} workloads={workloads} onSaved={onChange} />
-      <ul data-testid="employee-list" className="mt-5 divide-y divide-[#EFEBE3] max-h-72 overflow-y-auto">
+      {employees.length > 0 && (
+        <div className="relative mt-5">
+          <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#8A929B]" />
+          <Input
+            data-testid="input-employee-search"
+            placeholder={`Procurar entre ${employees.length} funcionários (nome, cargo ou setor)`}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+      )}
+      <ul data-testid="employee-list" className="mt-2 divide-y divide-[#EFEBE3] max-h-96 overflow-y-auto">
         {employees.length === 0 && <li className="py-6 text-sm text-center text-[#8A929B]">Nenhum funcionário cadastrado.</li>}
-        {employees.map((e) => (
+        {employees.length > 0 && list.length === 0 && <li className="py-6 text-sm text-center text-[#8A929B]">Nenhum funcionário encontrado para "{query}".</li>}
+        {list.map((e) => (
           <li key={e.id} data-testid={`employee-item-${e.id}`} className={`py-2.5 flex items-center justify-between gap-3 ${e.status === "inativo" ? "opacity-50" : ""}`}>
-            <div className="min-w-0 flex-1">
+            <div className="min-w-[140px] flex-1">
               <p className="text-sm font-semibold truncate">{e.name}</p>
               <p className="text-xs text-[#8A929B] truncate">{e.role} · <span className="text-[#575E65]">{e.sector}</span></p>
               {upcoming(e).map((v) => (

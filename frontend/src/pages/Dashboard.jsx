@@ -86,8 +86,8 @@ export default function Dashboard() {
       <main className="relative z-10 mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         <ScheduleGrid employees={scheduled} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} workloads={workloads} sector={sector} onSectorChange={setSector} />
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 no-print">
-          <div className="lg:col-span-3"><MovementPanel movement={movement} onChange={setMovement} /></div>
-          <div className="lg:col-span-2"><EmployeesPanel employees={employees} workloads={workloads} vacations={vacations} onChange={load} /></div>
+          <div className="lg:col-span-2"><MovementPanel movement={movement} onChange={setMovement} /></div>
+          <div className="lg:col-span-3"><EmployeesPanel employees={employees} workloads={workloads} vacations={vacations} onChange={load} /></div>
         </div>
         <div className="no-print"><WorkloadsPanel workloads={workloads} onChange={load} /></div>
       </main>
