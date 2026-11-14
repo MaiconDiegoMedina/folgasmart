@@ -5,7 +5,9 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { http, errMsg, DAYS, fmtDayMonth } from "@/lib/api";
 import { isIntermittent, acceptedOn } from "@/lib/convocation";
-import { defaultShiftOf, fromMin, toMin } from "@/lib/workloadTimes";
+import { defaultShiftOf, fromMin, toMin, dayMinutes } from "@/lib/workloadTimes";
+
+const fmtHours = (m) => (m ? `${Math.floor(m / 60)}h${pad(m % 60)}` : "–");
 import { parseHourlyReport, singleWeekday, peakHours, coversHour, onBreak } from "@/lib/hourlyReport";
 
 const DEFAULT_RANGE = [7, 22];
@@ -92,11 +94,12 @@ const ShiftInputs = ({ shift, fallback, onSave, minutes, breakLen }) => {
           value={values[i]}
           onChange={(e) => {
             const value = e.target.value;
-            setValues((v) => {
-              // Ao digitar a entrada com os demais vazios, preenche pela jornada
-              if (i === 0 && !v[1] && !v[2] && !v[3]) return suggestShift(value, minutes, breakLen) || [value, "", "", ""];
-              return v.map((x, j) => (j === i ? value : x));
-            });
+            setValues((v) => v.map((x, j) => (j === i ? value : x)));
+          }}
+          onKeyDown={(e) => {
+            // Enter ou Tab na entrada (com os demais vazios): preenche o restante pela jornada
+            if (i !== 0 || (e.key !== "Enter" && e.key !== "Tab")) return;
+            setValues((v) => (!v[1] && !v[2] && !v[3] && v[0] ? suggestShift(v[0], minutes, breakLen) || v : v));
           }}
           className={`${cls} ${i === 1 || i === 2 ? "bg-[#F0F9FF]" : ""} ${usingDefault ? "text-[#8A929B]" : ""}`}
         />
@@ -315,6 +318,10 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
     }
   };
 
+  // Soma das horas do dia (funcionários do setor + ajuda de outros setores)
+  const totalMinutes =
+    working.reduce((sum, e) => sum + dayMinutes(shiftOf(e)), 0) + helpers.reduce((sum, x) => sum + dayMinutes(x.shift), 0);
+
   const addHelper = (id) => {
     if (!id) return;
     const start = peaks.length ? Math.min(...peaks) : 11;
@@ -391,6 +398,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                     {["Entrada", "Saída int.", "Volta int.", "Saída"].map((t) => <span key={t} className="w-[78px]">{t}</span>)}
                   </div>
                 </th>
+                <th className="text-[10px] font-semibold text-[#8A929B] uppercase tracking-wider pb-2 px-2" title="Horas trabalhadas no dia (sem o intervalo)">Total</th>
                 {hours.map((h) => (
                   <th key={h} className="pb-2 px-0.5 min-w-[38px]">
                     <div className={`rounded-md py-1 text-[11px] font-bold font-mono-data ${peaks.includes(h) ? "bg-[#DC2626] text-white" : "text-[#575E65]"}`}>
@@ -421,6 +429,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                     ))}
                   </td>
                   <td className="px-2 no-print"><ShiftInputs shift={shifts[emp.id]} fallback={defaultOf(emp)} minutes={minutesOf(emp)} breakLen={breakFor(wlOf(emp), minutesOf(emp))} onSave={(times) => saveShift(emp.id, times)} /></td>
+                  <td className="px-2 text-center font-mono-data text-xs font-semibold text-[#191C1E] whitespace-nowrap">{fmtHours(dayMinutes(shiftOf(emp)))}</td>
                   {hours.map((h) => (
                     <td key={h} className="p-0.5">
                       <HourCell
@@ -445,6 +454,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                     <p className="text-[10px] font-semibold text-[#6D28D9]">ajuda · vem de {emp.sector}</p>
                   </td>
                   <td className="px-2 no-print"><LoanInputs shift={shift} onSave={(times) => saveShift(key, times)} /></td>
+                  <td className="px-2 text-center font-mono-data text-xs font-semibold text-[#6D28D9] whitespace-nowrap">{fmtHours(dayMinutes(shift))}</td>
                   {hours.map((h) => (
                     <td key={h} className="p-0.5">
                       <HourCell shift={shift} h={h} peak={peaks.includes(h)} workColor="bg-[#8B5CF6]" />
@@ -454,7 +464,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
               ))}
               {candidates.length > 0 && (
                 <tr className="no-print">
-                  <td colSpan={2 + hours.length} className="pt-2">
+                  <td colSpan={3 + hours.length} className="pt-2">
                     <label className="inline-flex items-center gap-1.5 text-xs text-[#6D28D9] font-semibold">
                       <UserPlus className="h-3.5 w-3.5" />
                       <select
@@ -474,6 +484,9 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
             <tfoot>
               <tr>
                 <td colSpan={2} className="pt-3 text-xs font-bold uppercase tracking-wider sticky left-0 bg-white">Na loja</td>
+                <td className="pt-3 px-2 text-center font-mono-data text-xs font-bold text-[#191C1E] whitespace-nowrap" title="Soma das horas do dia">
+                  {fmtHours(totalMinutes)}
+                </td>
                 {coverage.map((c, i) => (
                   <td key={hours[i]} className={`pt-3 text-center font-mono-data text-xs font-bold ${understaffed(i) ? "text-[#DC2626]" : "text-[#191C1E]"}`}>
                     {understaffed(i) && <AlertTriangle className="h-3 w-3 mx-auto" />}
@@ -484,6 +497,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
               {report && (
                 <tr>
                   <td colSpan={2} className="pt-1 text-[10px] text-[#8A929B] sticky left-0 bg-white">Clientes por pessoa</td>
+                  <td />
                   {coverage.map((c, i) => (
                     <td key={hours[i]} className="pt-1 text-center font-mono-data text-[10px] text-[#8A929B]">
                       {c && clientsAt(hours[i]) ? Math.round(clientsAt(hours[i]) / c) : "–"}
