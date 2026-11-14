@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Plus, Trash2, Loader2, Search } from "lucide-react";
+import { Plus, Trash2, Loader2, Search, Pencil, BadgeCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { http, errMsg, isoDate } from "@/lib/api";
 import { ImportEmployees } from "@/components/folga/ImportEmployees";
 import { VacationDialog, fmtDate } from "@/components/folga/VacationDialog";
+import { RoleDialog, isTrial } from "@/components/folga/RoleDialog";
 
 // Comparação sem acento e sem diferenciar maiúsculas
 const fold = (t) => (t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -13,7 +14,7 @@ const fold = (t) => (t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCa
 const EMPTY = { name: "", role: "", sector: "", status: "ativo", gender: "", workload: "", contract: "efetivo" };
 const selectCls = "text-xs bg-[#F8F6F0] border border-[#E5E1D8] rounded-lg px-2 py-1.5 text-[#575E65] font-medium outline-none focus:border-[#0F172A] transition-colors";
 
-const EmployeeForm = ({ sectors, workloads, onSaved }) => {
+const EmployeeForm = ({ sectors, roles, workloads, onSaved }) => {
   const [form, setForm] = useState(EMPTY);
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -47,7 +48,7 @@ const EmployeeForm = ({ sectors, workloads, onSaved }) => {
   return (
     <form data-testid="employee-form" onSubmit={submit} className="grid grid-cols-1 sm:grid-cols-3 gap-2">
       <Input data-testid="input-employee-name" placeholder="Nome" value={form.name} onChange={set("name")} />
-      <Input data-testid="input-employee-role" placeholder="Cargo" value={form.role} onChange={set("role")} />
+      <Input data-testid="input-employee-role" placeholder="Cargo (ex.: Teste)" list="roles" value={form.role} onChange={set("role")} />
       <Input data-testid="select-employee-sector" placeholder="Setor" list="sectors" value={form.sector} onChange={set("sector")} />
       <select data-testid="select-employee-gender" value={form.gender} onChange={set("gender")} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm">
         <option value="">Sexo</option>
@@ -63,6 +64,7 @@ const EmployeeForm = ({ sectors, workloads, onSaved }) => {
         <option value="intermitente">Intermitente</option>
       </select>
       <datalist id="sectors">{sectors.map((s) => <option key={s} value={s} />)}</datalist>
+      <datalist id="roles">{roles.map((r) => <option key={r} value={r} />)}</datalist>
       <Button data-testid="btn-save-employee" type="submit" disabled={busy} className="sm:col-span-2 bg-[#0F172A] hover:bg-[#1E293B] text-white">
         {busy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />} Adicionar funcionário
       </Button>
@@ -72,6 +74,8 @@ const EmployeeForm = ({ sectors, workloads, onSaved }) => {
 
 export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onChange }) => {
   const sectors = [...new Set(employees.map((e) => e.sector))];
+  const roles = [...new Set(employees.map((e) => e.role))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const [roleFor, setRoleFor] = useState(null);
   const [vacationFor, setVacationFor] = useState(null);
   const [leaveKind, setLeaveKind] = useState("ferias");
   const openLeave = (emp, kind) => { setLeaveKind(kind); setVacationFor(emp); };
@@ -121,7 +125,7 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
         <h3 className="font-display text-2xl font-bold tracking-tight">Funcionários</h3>
         <ImportEmployees workloads={workloads} onDone={onChange} />
       </div>
-      <EmployeeForm sectors={sectors} workloads={workloads} onSaved={onChange} />
+      <EmployeeForm sectors={sectors} roles={roles} workloads={workloads} onSaved={onChange} />
       {employees.length > 0 && (
         <div className="relative mt-5">
           <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#8A929B]" />
@@ -140,8 +144,26 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
         {list.map((e) => (
           <li key={e.id} data-testid={`employee-item-${e.id}`} className={`py-2.5 flex items-center justify-between gap-3 ${e.status === "inativo" ? "opacity-50" : ""}`}>
             <div className="min-w-[140px] flex-1">
-              <p className="text-sm font-semibold truncate">{e.name}</p>
-              <p className="text-xs text-[#8A929B] truncate">{e.role} · <span className="text-[#575E65]">{e.sector}</span></p>
+              <p className="text-sm font-semibold truncate flex items-center gap-1.5">
+                {e.name}
+                {isTrial(e) && <span className="text-[9px] bg-[#FEF3C7] text-[#B45309] font-bold px-1.5 py-0.5 rounded">TESTE</span>}
+              </p>
+              <p className="text-xs text-[#8A929B] flex items-center gap-1 min-w-0">
+                <span className="truncate">{e.role} · <span className="text-[#575E65]">{e.sector}</span></span>
+                {isTrial(e) ? (
+                  <button
+                    data-testid={`btn-approve-${e.id}`}
+                    onClick={() => setRoleFor(e)}
+                    className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold text-[#15803D] bg-[#F0FDF4] border border-[#BBF7D0] rounded px-1.5 py-0.5 hover:bg-[#DCFCE7]"
+                  >
+                    <BadgeCheck className="h-3 w-3" /> Aprovar
+                  </button>
+                ) : (
+                  <button onClick={() => setRoleFor(e)} aria-label={`Trocar cargo e setor de ${e.name}`} title="Trocar cargo e setor" className="shrink-0 p-0.5 rounded text-[#B8B2A7] hover:text-[#0F172A]">
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                )}
+              </p>
               {upcoming(e).map((v) => (
                 <button
                   key={v.id}
@@ -213,6 +235,14 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
           </li>
         ))}
       </ul>
+      <RoleDialog
+        employee={roleFor}
+        employees={employees}
+        onClose={() => setRoleFor(null)}
+        onSave={(emp, patch) =>
+          update(emp, patch, isTrial(emp) ? `${emp.name} aprovado: ${patch.role} · ${patch.sector}` : `${emp.name}: ${patch.role} · ${patch.sector}`)
+        }
+      />
       <VacationDialog kind={leaveKind} employee={vacationFor} vacations={vacations} onClose={() => setVacationFor(null)} onSaved={onChange} />
     </section>
   );
