@@ -19,7 +19,9 @@ export default function Dashboard() {
   const [workloads, setWorkloads] = useState([]);
   const [vacations, setVacations] = useState([]);
   const [sector, setSector] = useState("all");
-  const activeSector = employees.some((e) => e.sector === sector) ? sector : null;
+  // Inativos ficam fora da escala, da geração e da exportação
+  const scheduled = employees.filter((e) => e.status !== "inativo");
+  const activeSector = scheduled.some((e) => e.sector === sector) ? sector : null;
 
   const load = useCallback(async () => {
     // Cada pedido é independente: se um falhar (ex.: servidor ainda sem a rota nova), o resto carrega
@@ -47,7 +49,7 @@ export default function Dashboard() {
 
   // Com um setor selecionado, gera só ele; os outros setores ficam como estão
   const generate = async () => {
-    if (!employees.length) return toast.error("Cadastre ao menos um funcionário.");
+    if (!scheduled.length) return toast.error("Cadastre ao menos um funcionário ativo.");
     if (schedule.generated_at) {
       const msg = activeSector
         ? `Gerar de novo a escala do setor ${activeSector}? Os ajustes manuais desse setor nesta semana serão refeitos. Os outros setores não mudam.`
@@ -80,9 +82,9 @@ export default function Dashboard() {
 
   return (
     <div className="grain min-h-screen bg-[#F9F8F5] text-[#191C1E]">
-      <Header onLogout={logout} employees={employees} movement={movement} schedule={schedule} generating={generating} onGenerate={generate} generateSector={activeSector} />
+      <Header onLogout={logout} employees={scheduled} movement={movement} schedule={schedule} generating={generating} onGenerate={generate} generateSector={activeSector} />
       <main className="relative z-10 mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        <ScheduleGrid employees={employees} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} workloads={workloads} sector={sector} onSectorChange={setSector} />
+        <ScheduleGrid employees={scheduled} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} workloads={workloads} sector={sector} onSectorChange={setSector} />
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 no-print">
           <div className="lg:col-span-3"><MovementPanel movement={movement} onChange={setMovement} /></div>
           <div className="lg:col-span-2"><EmployeesPanel employees={employees} workloads={workloads} vacations={vacations} onChange={load} /></div>

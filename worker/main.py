@@ -28,7 +28,7 @@ app.add_middleware(
 Mode = Literal["6x1", "5x2"]
 OFFS_PER_MODE = {"6x1": 1, "5x2": 2}
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-Status = Literal["ativo", "ferias", "suspensao", "falta"]
+Status = Literal["ativo", "ferias", "suspensao", "falta", "inativo"]
 Gender = Literal["M", "F"]
 # Id de uma jornada cadastrada (tabela workloads)
 Workload = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
@@ -483,7 +483,7 @@ async def with_alerts(request: Request, schedule: Schedule, employees: List[Empl
     schedule.cct_alerts = {}
     schedule.streak_alerts = {}
     for emp in employees:
-        if emp.status == "ferias":
+        if emp.status in ("ferias", "inativo"):
             continue
         alert = sunday_alert(emp.gender, sunday_of(schedule, emp.id), [sunday_of(h, emp.id) for h in history])
         if alert:
@@ -827,10 +827,10 @@ async def generate(data: GenerateIn, request: Request):
         snapshot[emp.sector] = sector_modes.get(emp.sector.lower(), "6x1")
     sunday_rule = {}
     for emp in target:
-        if emp.status == "ferias" or not emp.gender:
+        if emp.status in ("ferias", "inativo") or not emp.gender:
             continue
         same = sorted([e for e in employees if e.sector.lower() == emp.sector.lower() and e.gender == emp.gender
-                       and e.status != "ferias"], key=lambda e: e.created_at)
+                       and e.status not in ("ferias", "inativo")], key=lambda e: e.created_at)
         plan = sunday_plan(emp.gender, [sunday_of(h, emp.id) for h in history], rotate + same.index(emp))
         if plan:
             sunday_rule[emp.id] = plan

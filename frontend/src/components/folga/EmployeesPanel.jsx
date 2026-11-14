@@ -109,7 +109,7 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
       <ul data-testid="employee-list" className="mt-5 divide-y divide-[#EFEBE3] max-h-72 overflow-y-auto">
         {employees.length === 0 && <li className="py-6 text-sm text-center text-[#8A929B]">Nenhum funcionário cadastrado.</li>}
         {employees.map((e) => (
-          <li key={e.id} data-testid={`employee-item-${e.id}`} className="py-2.5 flex items-center justify-between gap-3">
+          <li key={e.id} data-testid={`employee-item-${e.id}`} className={`py-2.5 flex items-center justify-between gap-3 ${e.status === "inativo" ? "opacity-50" : ""}`}>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold truncate">{e.name}</p>
               <p className="text-xs text-[#8A929B] truncate">{e.role} · <span className="text-[#575E65]">{e.sector}</span></p>
@@ -158,6 +158,7 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
               {/* Suspensão e falta agora são marcadas direto na escala; opções só para cadastros antigos */}
               {e.status === "suspensao" && <option value="suspensao">Suspensão</option>}
               {e.status === "falta" && <option value="falta">Falta</option>}
+              <option value="inativo">Inativo</option>
             </select>
 
             <button data-testid={`btn-delete-employee-${e.id}`} onClick={() => remove(e)} className="p-2 rounded-lg text-[#8A929B] hover:bg-[#FEF2F2] hover:text-[#DC2626] transition-colors">
