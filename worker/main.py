@@ -28,7 +28,7 @@ app.add_middleware(
 Mode = Literal["6x1", "5x2"]
 OFFS_PER_MODE = {"6x1": 1, "5x2": 2}
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-Status = Literal["ativo", "ferias", "suspensao"]
+Status = Literal["ativo", "ferias", "suspensao", "falta"]
 Gender = Literal["M", "F"]
 # Id de uma jornada cadastrada (tabela workloads)
 Workload = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
@@ -108,7 +108,8 @@ DEFAULT_WORKLOADS = [
     ("7h20", "7h20 seg–sáb", [440] * 7, 60, 528),
     ("8h48", "8h48 (5x2)", [528] * 7, 60, None),
 ]
-NEW_COLUMNS = [("employees", "gender"), ("employees", "workload"), ("schedule", "sector_modes")]
+NEW_COLUMNS = [("employees", "gender"), ("employees", "workload"), ("schedule", "sector_modes"),
+               ("schedule", "absence_days")]
 
 
 async def ensure_schema(request: Request) -> None:
@@ -175,6 +176,7 @@ class Schedule(BaseModel):
     mode: Mode = "6x1"
     off_days: Dict[str, List[int]] = Field(default_factory=dict)
     suspension_days: Dict[str, List[int]] = Field(default_factory=dict)
+    absence_days: Dict[str, List[int]] = Field(default_factory=dict)
     generated_at: str | None = None
     cct_alerts: Dict[str, str] = Field(default_factory=dict)
     sector_modes: Dict[str, Mode] = Field(default_factory=dict)
@@ -298,7 +300,7 @@ async def save_movement(request: Request, movement: Movement) -> None:
 
 async def get_schedule(request: Request, week: str) -> Schedule:
     row = await db(request).prepare(
-        "SELECT week, mode, off_days, suspension_days, generated_at, sector_modes FROM schedule WHERE week = ?"
+        "SELECT week, mode, off_days, suspension_days, generated_at, sector_modes, absence_days FROM schedule WHERE week = ?"
     ).bind(week).first()
     if row:
         stored_suspensions = json.loads(row["suspension_days"])
@@ -308,6 +310,7 @@ async def get_schedule(request: Request, week: str) -> Schedule:
             week=row["week"], mode=row["mode"], off_days=json.loads(row["off_days"]),
             suspension_days=suspensions, extra_days=extras, generated_at=row["generated_at"],
             sector_modes=json.loads(row["sector_modes"] or "{}"),
+            absence_days=json.loads(row["absence_days"] or "{}"),
         )
     last = await db(request).prepare(
         "SELECT mode FROM schedule WHERE generated_at IS NOT NULL ORDER BY generated_at DESC LIMIT 1"
@@ -322,12 +325,14 @@ async def save_schedule(request: Request, schedule: Schedule) -> None:
         for emp_id in set(schedule.suspension_days) | set(schedule.extra_days)
     }
     await db(request).prepare(
-        """INSERT INTO schedule (week, mode, off_days, suspension_days, generated_at, sector_modes)
-        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(week) DO UPDATE SET mode=excluded.mode,
+        """INSERT INTO schedule (week, mode, off_days, suspension_days, generated_at, sector_modes, absence_days)
+        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(week) DO UPDATE SET mode=excluded.mode,
         off_days=excluded.off_days, suspension_days=excluded.suspension_days,
-        generated_at=excluded.generated_at, sector_modes=excluded.sector_modes"""
+        generated_at=excluded.generated_at, sector_modes=excluded.sector_modes,
+        absence_days=excluded.absence_days"""
     ).bind(schedule.week, schedule.mode, json.dumps(schedule.off_days),
-           json.dumps(stored_suspensions), schedule.generated_at, json.dumps(schedule.sector_modes)).run()
+           json.dumps(stored_suspensions), schedule.generated_at, json.dumps(schedule.sector_modes),
+           json.dumps(schedule.absence_days)).run()
 
 
 def parse_date(raw: str):
@@ -405,6 +410,7 @@ def worked_days(schedule: Schedule, emp_id: str) -> List[bool] | None:
         return None
     # EXTRA é computado como folga
     off = set(schedule.off_days[emp_id]) | set(schedule.suspension_days.get(emp_id, []))
+    off |= set(schedule.absence_days.get(emp_id, []))
     return [day not in off for day in range(7)]
 
 
@@ -459,7 +465,7 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
     off_sector: Dict[str, List[int]] = {}
     result: Dict[str, List[int]] = {}
     holiday = [e for e in employees if e.status == "ferias"]
-    active = [e for e in employees if e.status in ("ativo", "suspensao")]
+    active = [e for e in employees if e.status in ("ativo", "suspensao", "falta")]
     for emp in holiday:
         result[emp.id] = list(range(7))
     ordered = []
@@ -751,6 +757,7 @@ async def generate(data: GenerateIn, request: Request):
         ids = {e.id for e in target}
         sched.off_days = {k: v for k, v in sched.off_days.items() if k not in ids} | off_days
         sched.suspension_days = {k: v for k, v in sched.suspension_days.items() if k not in ids}
+        sched.absence_days = {k: v for k, v in sched.absence_days.items() if k not in ids}
         sched.extra_days = {k: v for k, v in sched.extra_days.items() if k not in ids}
         sched.sector_modes = {k: v for k, v in sched.sector_modes.items() if k.lower() != sector_key} | snapshot
         sched.generated_at = now_iso()
@@ -768,6 +775,7 @@ async def toggle_cell(data: CellToggle, request: Request):
     sched = await get_schedule(request, week_start(data.week))
     off = list(sched.off_days.get(data.employee_id, []))
     suspension = list(sched.suspension_days.get(data.employee_id, []))
+    absence = list(sched.absence_days.get(data.employee_id, []))
     extra = list(sched.extra_days.get(data.employee_id, []))
 
     if data.extra:
@@ -781,23 +789,31 @@ async def toggle_cell(data: CellToggle, request: Request):
             extra.append(data.day)
     elif data.day in extra:
         extra.remove(data.day)
-    elif employee["status"] == "suspensao":
-        if data.day not in off and data.day not in suspension:
+    elif employee["status"] in ("suspensao", "falta"):
+        # Ciclo: TRAB. -> FOLGA -> SUSP./FALTA -> TRAB.
+        marks = suspension if employee["status"] == "suspensao" else absence
+        other = absence if marks is suspension else suspension
+        if data.day in other:
+            other.remove(data.day)
+        if data.day not in off and data.day not in marks:
             off.append(data.day)
         elif data.day in off:
             off.remove(data.day)
-            suspension.append(data.day)
+            marks.append(data.day)
         else:
-            suspension.remove(data.day)
+            marks.remove(data.day)
     elif data.day in off:
         off.remove(data.day)
     else:
         if data.day in suspension:
             suspension.remove(data.day)
+        if data.day in absence:
+            absence.remove(data.day)
         off.append(data.day)
 
     sched.off_days[data.employee_id] = sorted(off)
     sched.suspension_days[data.employee_id] = sorted(suspension)
+    sched.absence_days[data.employee_id] = sorted(absence)
     sched.extra_days[data.employee_id] = sorted(extra)
     await save_schedule(request, sched)
     return await with_alerts(request, sched)

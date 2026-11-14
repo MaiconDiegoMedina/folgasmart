@@ -142,6 +142,7 @@ export const EmployeesPanel = ({ employees, workloads = [], onChange }) => {
               <option value="ativo">Ativo</option>
               <option value="ferias">Férias</option>
               <option value="suspensao">Suspensão</option>
+              <option value="falta">Falta</option>
             </select>
 
             <button data-testid={`btn-delete-employee-${e.id}`} onClick={() => remove(e)} className="p-2 rounded-lg text-[#8A929B] hover:bg-[#FEF2F2] hover:text-[#DC2626] transition-colors">

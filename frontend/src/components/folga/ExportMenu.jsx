@@ -10,8 +10,11 @@ const buildCsv = (employees, schedule) => {
   const sorted = [...employees].sort((a, b) => a.sector.localeCompare(b.sector));
   const off = (e, i) => (schedule.off_days?.[e.id] || []).includes(i);
   const extra = (e, i) => (schedule.extra_days?.[e.id] || []).includes(i);
-  const rows = sorted.map((e) => [e.sector, e.name, e.role, ...DAYS.map((_, i) => (extra(e, i) ? "EXTRA" : off(e, i) ? "FOLGA" : "TRABALHA"))].join(";"));
-  const coverage = DAYS.map((_, i) => employees.filter((e) => !off(e, i) || extra(e, i)).length);
+  const susp = (e, i) => (schedule.suspension_days?.[e.id] || []).includes(i);
+  const absent = (e, i) => (schedule.absence_days?.[e.id] || []).includes(i);
+  const label = (e, i) => (absent(e, i) ? "FALTA" : susp(e, i) ? "SUSPENSÃO" : extra(e, i) ? "EXTRA" : off(e, i) ? "FOLGA" : "TRABALHA");
+  const rows = sorted.map((e) => [e.sector, e.name, e.role, ...DAYS.map((_, i) => label(e, i))].join(";"));
+  const coverage = DAYS.map((_, i) => employees.filter((e) => label(e, i) === "TRABALHA" || label(e, i) === "EXTRA").length);
   return [header, ...rows, ["Em operação", "", "", ...coverage].join(";")].join("\n");
 };
 

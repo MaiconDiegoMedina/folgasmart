@@ -21,6 +21,7 @@ const readText = async (file) => {
 const worksOn = (schedule, emp, day) => {
   if (emp.status === "ferias") return false;
   if ((schedule.suspension_days?.[emp.id] || []).includes(day)) return false;
+  if ((schedule.absence_days?.[emp.id] || []).includes(day)) return false;
   const off = (schedule.off_days?.[emp.id] || []).includes(day);
   return !off || (schedule.extra_days?.[emp.id] || []).includes(day);
 };
@@ -364,7 +365,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
       )}
 
       {away.length > 0 && (
-        <p className="text-xs text-[#8A929B]">Fora neste dia (folga, férias ou suspensão): {away.map((e) => e.name).join(", ")}</p>
+        <p className="text-xs text-[#8A929B]">Fora neste dia (folga, férias, suspensão ou falta): {away.map((e) => e.name).join(", ")}</p>
       )}
     </div>
   );

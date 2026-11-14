@@ -5,7 +5,7 @@ import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate } from "@/li
 import { WeekNav } from "@/components/folga/WeekNav";
 import { PeakHoursPanel } from "@/components/folga/PeakHoursPanel";
 
-const Cell = ({ off, susp, extra, peak, status, cct, onClick, testId }) => {
+const Cell = ({ off, susp, absent, extra, peak, status, cct, onClick, testId }) => {
   if (status === "ferias") {
     return (
       <div
@@ -24,6 +24,9 @@ const Cell = ({ off, susp, extra, peak, status, cct, onClick, testId }) => {
   if (extra) {
     texto = "FOLGA"; // A cor lilás indica que é EXTRA
     classesEstilo = "bg-[#F5F3FF] border-[#C4B5FD] text-[#6D28D9] hover:bg-[#EDE9FE]"; // Trabalha na folga
+  } else if (absent) {
+    texto = "FALTA";
+    classesEstilo = "bg-[#FFF7ED] border-[#FDBA74] text-[#C2410C] hover:bg-[#FFEDD5]"; // Falta
   } else if (susp) {
     texto = "SUSP.";
     classesEstilo = "bg-[#FFF1F2] border-[#FECDD3] text-[#E11D48] hover:bg-[#FFE4E6]"; // Suspensão
@@ -50,7 +53,7 @@ const Cell = ({ off, susp, extra, peak, status, cct, onClick, testId }) => {
   );
 };
 
-const Row = ({ emp, offs, suspensions, extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx }) => {
+const Row = ({ emp, offs, suspensions, absences, extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx }) => {
   // EXTRA é computado como folga. Folga a mais pode ocorrer pelas regras de domingo/6 dias.
   const realOffs = offs;
   const wrong = emp.status !== "ferias" && realOffs.length < required;
@@ -62,6 +65,7 @@ const Row = ({ emp, offs, suspensions, extras, peaks, required, onToggle, onExtr
           {emp.name}
           {emp.status === "ferias" && <span className="text-[9px] bg-[#E2E8F0] text-[#475569] font-bold px-1.5 py-0.5 rounded">FÉRIAS</span>}
           {emp.status === "suspensao" && <span className="text-[9px] bg-[#FFE4E6] text-[#E11D48] font-bold px-1.5 py-0.5 rounded">SUSP.</span>}
+          {emp.status === "falta" && <span className="text-[9px] bg-[#FFEDD5] text-[#C2410C] font-bold px-1.5 py-0.5 rounded">FALTA</span>}
           {cctAlert && (
             <span data-testid={`cct-alert-${emp.id}`} title={cctAlert} className="inline-flex items-center gap-0.5 text-[9px] bg-[#FEF2F2] text-[#DC2626] border border-[#FECACA] font-bold px-1.5 py-0.5 rounded">
               <AlertTriangle className="h-2.5 w-2.5" /> CCT
@@ -81,6 +85,7 @@ const Row = ({ emp, offs, suspensions, extras, peaks, required, onToggle, onExtr
           <Cell
             off={offs.includes(d)}
             susp={suspensions.includes(d)}
+            absent={absences.includes(d)}
             extra={extras.includes(d)}
             cct={streakDays?.includes(d) ? "Mais de 6 dias seguidos sem folga (máximo 6)" : d === 6 ? cctAlert : undefined}
             peak={peaks.includes(d)}
@@ -198,9 +203,12 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   const configuredMode = (sectorName) => sectorModes[sectorName.toLowerCase()] || "6x1";
   const offsOf = (id) => schedule.off_days?.[id] || [];
   const suspensionsOf = (id) => schedule.suspension_days?.[id] || [];
+  const absencesOf = (id) => schedule.absence_days?.[id] || [];
   const extrasOf = (id) => schedule.extra_days?.[id] || [];
   // EXTRA conta como dia trabalhado mesmo sendo folga
-  const worksOn = (id, d) => !offsOf(id).includes(d) || extrasOf(id).includes(d);
+  // Suspensão e falta não contam como em operação
+  const worksOn = (id, d) =>
+    (!offsOf(id).includes(d) || extrasOf(id).includes(d)) && !suspensionsOf(id).includes(d) && !absencesOf(id).includes(d);
   const sectors = [...new Set(employees.map((e) => e.sector))].sort((a, b) => a.localeCompare(b));
   const activeSector = sectors.includes(sector) ? sector : "all";
   const activeDay = activeSector === "all" ? null : dayView;
@@ -232,6 +240,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FEF3C7] border border-[#FCD34D]" />Folga</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FEF2F2] border border-[#DC2626]" />Folga em pico</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FFE4E6] border border-[#FECDD3]" />Suspensão</span>
+          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FFEDD5] border border-[#FDBA74]" />Falta</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F1F5F9] border border-[#CBD5E1]" />Férias</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F5F3FF] border border-[#C4B5FD]" />Extra (shift + clique na folga)</span>
         </div>
@@ -292,6 +301,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       emp={emp}
                       offs={offsOf(emp.id)}
                       suspensions={suspensionsOf(emp.id)}
+                      absences={absencesOf(emp.id)}
                       extras={extrasOf(emp.id)}
                       cctAlert={schedule.cct_alerts?.[emp.id]}
                       streakDays={schedule.streak_alerts?.[emp.id]}
