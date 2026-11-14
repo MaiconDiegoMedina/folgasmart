@@ -7,7 +7,7 @@ import { http, errMsg, isoDate } from "@/lib/api";
 import { ImportEmployees } from "@/components/folga/ImportEmployees";
 import { VacationDialog, fmtDate } from "@/components/folga/VacationDialog";
 
-const EMPTY = { name: "", role: "", sector: "", status: "ativo", gender: "", workload: "" };
+const EMPTY = { name: "", role: "", sector: "", status: "ativo", gender: "", workload: "", contract: "efetivo" };
 const selectCls = "text-xs bg-[#F8F6F0] border border-[#E5E1D8] rounded-lg px-2 py-1.5 text-[#575E65] font-medium outline-none focus:border-[#0F172A] transition-colors";
 
 const EmployeeForm = ({ sectors, workloads, onSaved }) => {
@@ -28,7 +28,8 @@ const EmployeeForm = ({ sectors, workloads, onSaved }) => {
         sector: form.sector.trim(),
         status: "ativo",
         gender: form.gender,
-        workload: form.workload
+        workload: form.workload,
+        contract: form.contract
       });
       toast.success("Funcionário adicionado — clique em Gerar escala para recalcular as folgas");
       setForm(EMPTY);
@@ -54,8 +55,12 @@ const EmployeeForm = ({ sectors, workloads, onSaved }) => {
         <option value="">Jornada</option>
         {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
       </select>
+      <select data-testid="select-employee-contract" value={form.contract} onChange={set("contract")} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm">
+        <option value="efetivo">Efetivo</option>
+        <option value="intermitente">Intermitente</option>
+      </select>
       <datalist id="sectors">{sectors.map((s) => <option key={s} value={s} />)}</datalist>
-      <Button data-testid="btn-save-employee" type="submit" disabled={busy} className="bg-[#0F172A] hover:bg-[#1E293B] text-white">
+      <Button data-testid="btn-save-employee" type="submit" disabled={busy} className="sm:col-span-2 bg-[#0F172A] hover:bg-[#1E293B] text-white">
         {busy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />} Adicionar funcionário
       </Button>
     </form>
@@ -89,6 +94,7 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
         status: emp.status || "ativo",
         gender: emp.gender || null,
         workload: emp.workload || null,
+        contract: emp.contract || null,
         ...patch
       });
       toast.success(message);
@@ -141,6 +147,16 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
             >
               <option value="">Jornada?</option>
               {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+
+            <select
+              aria-label="Contrato"
+              value={e.contract || "efetivo"}
+              onChange={(evt) => update(e, { contract: evt.target.value }, `Contrato de ${e.name} atualizado`)}
+              className={selectCls}
+            >
+              <option value="efetivo">Efetivo</option>
+              <option value="intermitente">Interm.</option>
             </select>
 
             <select

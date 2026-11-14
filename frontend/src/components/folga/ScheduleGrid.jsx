@@ -4,6 +4,34 @@ import { Flame, AlertTriangle, Users, CalendarDays } from "lucide-react";
 import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate } from "@/lib/api";
 import { WeekNav } from "@/components/folga/WeekNav";
 import { PeakHoursPanel } from "@/components/folga/PeakHoursPanel";
+import { isIntermittent, convocationOf, acceptedOn, shortNotice, CONVOCATION_LABEL, MIN_NOTICE_DAYS } from "@/lib/convocation";
+
+// Célula do intermitente: — -> CONVOCADO -> ACEITO -> RECUSOU -> —
+const CONVOCATION_STYLE = {
+  none: "bg-white border-dashed border-[#D1CBBF] text-[#B8B2A7] hover:border-[#0EA5E9] hover:text-[#0369A1]",
+  pending: "bg-[#F0F9FF] border-[#7DD3FC] text-[#0369A1] hover:bg-[#E0F2FE]",
+  accepted: "bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D] hover:bg-[#DCFCE7]",
+  declined: "bg-[#F8FAFC] border-[#E2E8F0] text-[#94A3B8] line-through hover:bg-[#F1F5F9]",
+};
+const CONVOCATION_NEXT = { none: "convocar", pending: "marcar aceite", accepted: "marcar recusa", declined: "limpar" };
+
+const ConvocationCell = ({ conv, date, vacation, onClick, testId }) => {
+  if (vacation) return <Cell status="ferias" testId={testId} />;
+  const state = conv?.status || "none";
+  const late = shortNotice(conv, date);
+  return (
+    <button
+      data-testid={testId}
+      onClick={onClick}
+      title={`${state === "none" ? "Não convocado" : CONVOCATION_LABEL[state]}${conv?.at ? ` em ${conv.at.split("-").reverse().join("/")}` : ""} · clique: ${CONVOCATION_NEXT[state]}${
+        late ? ` · convocação com menos de ${MIN_NOTICE_DAYS} dias de antecedência` : ""
+      }`}
+      className={`w-full h-11 rounded-lg text-[10px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none ${CONVOCATION_STYLE[state]} ${late ? "ring-2 ring-[#F59E0B] ring-offset-1" : ""}`}
+    >
+      {state === "none" ? "—" : state === "accepted" ? "TRAB." : CONVOCATION_LABEL[state]}
+    </button>
+  );
+};
 
 const Cell = ({ off, susp, absent, extra, peak, status, cct, onClick, testId }) => {
   if (status === "ferias") {
@@ -64,7 +92,8 @@ const Cell = ({ off, susp, absent, extra, peak, status, cct, onClick, testId }) 
   );
 };
 
-const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx }) => {
+const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx, schedule, dates }) => {
+  const intermittent = isIntermittent(emp);
   // EXTRA é computado como folga. Folga a mais pode ocorrer pelas regras de domingo/6 dias.
   const realOffs = offs;
   // Semana com férias: os dias de férias contam como descanso, sem alerta de folga
@@ -79,6 +108,7 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
           {emp.status === "ferias" && <span className="text-[9px] bg-[#E2E8F0] text-[#475569] font-bold px-1.5 py-0.5 rounded">FÉRIAS</span>}
           {emp.status === "suspensao" && <span className="text-[9px] bg-[#FFE4E6] text-[#E11D48] font-bold px-1.5 py-0.5 rounded">SUSP.</span>}
           {emp.status === "falta" && <span className="text-[9px] bg-[#FFEDD5] text-[#C2410C] font-bold px-1.5 py-0.5 rounded">FALTA</span>}
+          {intermittent && <span className="text-[9px] bg-[#E0F2FE] text-[#0369A1] font-bold px-1.5 py-0.5 rounded">INTERMITENTE</span>}
           {cctAlert && (
             <span data-testid={`cct-alert-${emp.id}`} title={cctAlert} className="inline-flex items-center gap-0.5 text-[9px] bg-[#FEF2F2] text-[#DC2626] border border-[#FECACA] font-bold px-1.5 py-0.5 rounded">
               <AlertTriangle className="h-2.5 w-2.5" /> CCT
@@ -95,6 +125,15 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
       </td>
       {DAYS_SHORT.map((_, d) => (
         <td key={d} className="p-1 min-w-[72px]">
+          {intermittent ? (
+            <ConvocationCell
+              conv={convocationOf(schedule, emp.id, d)}
+              date={dates[d]}
+              vacation={vacationDays.includes(d)}
+              onClick={() => onToggle(emp.id, d)}
+              testId={`cell-${emp.id}-${d}`}
+            />
+          ) : (
           <Cell
             off={offs.includes(d)}
             susp={suspensions.includes(d)}
@@ -107,13 +146,20 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
             onClick={(e) => (e.shiftKey ? onExtra(emp, d, offs.includes(d)) : onToggle(emp.id, d))}
             testId={`cell-${emp.id}-${d}`}
           />
+          )}
         </td>
       ))}
       <td className="pl-3 text-center">
+        {intermittent ? (
+          <span data-testid={`row-summary-${emp.id}`} className="text-xs font-mono-data font-semibold text-[#0369A1]" title="Dias com convocação aceita">
+            {DAYS_SHORT.filter((_, d) => acceptedOn(schedule, emp.id, d)).length} dia(s)
+          </span>
+        ) : (
         <span data-testid={`row-summary-${emp.id}`} className={`inline-flex items-center gap-1 text-xs font-mono-data font-semibold ${wrong ? "text-[#DC2626]" : "text-[#575E65]"}`}>
           {wrong && <AlertTriangle className="h-3.5 w-3.5" />}
           {emp.status === "ferias" || vacationDays.length === 7 ? "Férias" : `${realOffs.length}/${required}`}
         </span>
+        )}
       </td>
     </tr>
   );
@@ -221,7 +267,9 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   const extrasOf = (id) => schedule.extra_days?.[id] || [];
   // EXTRA conta como dia trabalhado mesmo sendo folga
   // Suspensão e falta não contam como em operação
+  const byId = Object.fromEntries(employees.map((e) => [e.id, e]));
   const worksOn = (id, d) =>
+    isIntermittent(byId[id]) ? acceptedOn(schedule, id, d) && !vacationOf(id).includes(d) :
     (!offsOf(id).includes(d) || extrasOf(id).includes(d)) && !suspensionsOf(id).includes(d) && !absencesOf(id).includes(d) && !vacationOf(id).includes(d);
   const sectors = [...new Set(employees.map((e) => e.sector))].sort((a, b) => a.localeCompare(b));
   const activeSector = sectors.includes(sector) ? sector : "all";
@@ -255,6 +303,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FEF2F2] border border-[#DC2626]" />Folga em pico</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FFE4E6] border border-[#FECDD3]" />Suspensão</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FFEDD5] border border-[#FDBA74]" />Falta</span>
+          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F0F9FF] border border-[#7DD3FC]" />Convocado (intermitente)</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F1F5F9] border border-[#CBD5E1]" />Férias</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F5F3FF] border border-[#C4B5FD]" />Extra (shift + clique na folga)</span>
         </div>
@@ -317,6 +366,8 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       suspensions={suspensionsOf(emp.id)}
                       absences={absencesOf(emp.id)}
                       vacationDays={vacationOf(emp.id)}
+                      schedule={schedule}
+                      dates={dates}
                       extras={extrasOf(emp.id)}
                       cctAlert={schedule.cct_alerts?.[emp.id]}
                       streakDays={schedule.streak_alerts?.[emp.id]}

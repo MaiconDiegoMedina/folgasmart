@@ -4,6 +4,7 @@ import { Clock, FileUp, Flame, Loader2, Trash2, AlertTriangle } from "lucide-rea
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { http, errMsg, DAYS, fmtDayMonth } from "@/lib/api";
+import { isIntermittent, acceptedOn } from "@/lib/convocation";
 import { parseHourlyReport, singleWeekday, peakHours, coversHour, onBreak } from "@/lib/hourlyReport";
 
 const DEFAULT_RANGE = [7, 22];
@@ -20,6 +21,8 @@ const readText = async (file) => {
 
 const worksOn = (schedule, emp, day) => {
   if (emp.status === "ferias") return false;
+  if ((schedule.vacation_days?.[emp.id] || []).includes(day)) return false;
+  if (isIntermittent(emp)) return acceptedOn(schedule, emp.id, day);
   if ((schedule.suspension_days?.[emp.id] || []).includes(day)) return false;
   if ((schedule.absence_days?.[emp.id] || []).includes(day)) return false;
   if ((schedule.vacation_days?.[emp.id] || []).includes(day)) return false;

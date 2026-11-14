@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Dict, List, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 from starlette.middleware.cors import CORSMiddleware
 from workers import asgi
 
@@ -111,7 +111,7 @@ DEFAULT_WORKLOADS = [
     ("8h48", "8h48 (5x2)", [528] * 7, 60, None),
 ]
 NEW_COLUMNS = [("employees", "gender"), ("employees", "workload"), ("schedule", "sector_modes"),
-               ("schedule", "absence_days")]
+               ("schedule", "absence_days"), ("employees", "contract"), ("schedule", "convocations")]
 
 
 async def ensure_schema(request: Request) -> None:
@@ -126,6 +126,9 @@ async def ensure_schema(request: Request) -> None:
         existing = (await database.prepare(f"PRAGMA table_info({table})").all()).results
         if column not in {row["name"] for row in existing}:
             await database.prepare(f"ALTER TABLE {table} ADD COLUMN {column} TEXT").run()
+    await database.prepare(
+        "UPDATE employees SET contract = 'intermitente' WHERE contract IS NULL AND lower(role) LIKE '%intermitente%'"
+    ).run()
     if not await database.prepare("SELECT id FROM workloads LIMIT 1").first():
         for index, (wid, name, minutes, break_minutes, minutes_5x2) in enumerate(DEFAULT_WORKLOADS):
             await database.prepare(
@@ -142,6 +145,9 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+Contract = Literal["efetivo", "intermitente"]
+
+
 class EmployeeIn(BaseModel):
     name: Text
     role: Text
@@ -149,6 +155,14 @@ class EmployeeIn(BaseModel):
     status: Status = "ativo"
     gender: Gender | None = None
     workload: Workload | None = None
+    contract: Contract | None = None
+
+    @model_validator(mode="after")
+    def default_contract(self):
+        # Sem contrato informado: intermitente se o cargo disser, senão efetivo
+        if self.contract is None:
+            self.contract = "intermitente" if "intermitente" in self.role.lower() else "efetivo"
+        return self
 
 
 class Employee(EmployeeIn):
@@ -179,6 +193,8 @@ class Schedule(BaseModel):
     off_days: Dict[str, List[int]] = Field(default_factory=dict)
     suspension_days: Dict[str, List[int]] = Field(default_factory=dict)
     absence_days: Dict[str, List[int]] = Field(default_factory=dict)
+    # Intermitente: {funcionário: {"dia": {"status": "pending|accepted|declined", "at": "AAAA-MM-DD"}}}
+    convocations: Dict[str, Dict[str, Dict[str, str]]] = Field(default_factory=dict)
     # Calculado a partir dos períodos de férias (não é gravado na escala)
     vacation_days: Dict[str, List[int]] = Field(default_factory=dict)
     generated_at: str | None = None
@@ -280,11 +296,12 @@ def week_start(raw: str) -> str:
 
 async def list_employees(request: Request) -> List[Employee]:
     result = await db(request).prepare(
-        "SELECT id, name, role, sector, status, gender, workload, created_at FROM employees ORDER BY created_at ASC"
+        "SELECT id, name, role, sector, status, gender, workload, contract, created_at FROM employees ORDER BY created_at ASC"
     ).all()
     return [Employee(
         id=row["id"], name=row["name"], role=row["role"], sector=row["sector"],
         status=row["status"], gender=row["gender"] or None, workload=row["workload"] or None,
+        contract=row["contract"] or None,
         created_at=row["created_at"],
     ) for row in result.results]
 
@@ -336,7 +353,7 @@ async def get_schedule(request: Request, week: str) -> Schedule:
 
 async def load_schedule(request: Request, week: str) -> Schedule:
     row = await db(request).prepare(
-        "SELECT week, mode, off_days, suspension_days, generated_at, sector_modes, absence_days FROM schedule WHERE week = ?"
+        "SELECT week, mode, off_days, suspension_days, generated_at, sector_modes, absence_days, convocations FROM schedule WHERE week = ?"
     ).bind(week).first()
     if row:
         stored_suspensions = json.loads(row["suspension_days"])
@@ -347,6 +364,7 @@ async def load_schedule(request: Request, week: str) -> Schedule:
             suspension_days=suspensions, extra_days=extras, generated_at=row["generated_at"],
             sector_modes=json.loads(row["sector_modes"] or "{}"),
             absence_days=json.loads(row["absence_days"] or "{}"),
+            convocations=json.loads(row["convocations"] or "{}"),
         )
     last = await db(request).prepare(
         "SELECT mode FROM schedule WHERE generated_at IS NOT NULL ORDER BY generated_at DESC LIMIT 1"
@@ -361,14 +379,14 @@ async def save_schedule(request: Request, schedule: Schedule) -> None:
         for emp_id in set(schedule.suspension_days) | set(schedule.extra_days)
     }
     await db(request).prepare(
-        """INSERT INTO schedule (week, mode, off_days, suspension_days, generated_at, sector_modes, absence_days)
-        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(week) DO UPDATE SET mode=excluded.mode,
+        """INSERT INTO schedule (week, mode, off_days, suspension_days, generated_at, sector_modes, absence_days, convocations)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(week) DO UPDATE SET mode=excluded.mode,
         off_days=excluded.off_days, suspension_days=excluded.suspension_days,
         generated_at=excluded.generated_at, sector_modes=excluded.sector_modes,
-        absence_days=excluded.absence_days"""
+        absence_days=excluded.absence_days, convocations=excluded.convocations"""
     ).bind(schedule.week, schedule.mode, json.dumps(schedule.off_days),
            json.dumps(stored_suspensions), schedule.generated_at, json.dumps(schedule.sector_modes),
-           json.dumps(schedule.absence_days)).run()
+           json.dumps(schedule.absence_days), json.dumps(schedule.convocations)).run()
 
 
 def parse_date(raw: str):
@@ -446,7 +464,8 @@ MAX_STREAK = 6
 def worked_days(schedule: Schedule, emp_id: str) -> List[bool] | None:
     vacation = set(schedule.vacation_days.get(emp_id, []))
     if emp_id not in schedule.off_days and not vacation:
-        return None
+        accepted = {int(d) for d, c in schedule.convocations.get(emp_id, {}).items() if c.get("status") == "accepted"}
+        return [day in accepted for day in range(7)] if accepted else None
     # EXTRA é computado como folga
     off = set(schedule.off_days.get(emp_id, [])) | set(schedule.suspension_days.get(emp_id, []))
     off |= set(schedule.absence_days.get(emp_id, [])) | vacation
@@ -485,7 +504,8 @@ async def with_alerts(request: Request, schedule: Schedule, employees: List[Empl
     for emp in employees:
         if emp.status in ("ferias", "inativo"):
             continue
-        alert = sunday_alert(emp.gender, sunday_of(schedule, emp.id), [sunday_of(h, emp.id) for h in history])
+        alert = None if emp.contract == "intermitente" else sunday_alert(
+            emp.gender, sunday_of(schedule, emp.id), [sunday_of(h, emp.id) for h in history])
         if alert:
             schedule.cct_alerts[emp.id] = alert
         streak = streak_violations(history[0] if history else None, schedule, emp.id)
@@ -505,7 +525,7 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
     off_sector: Dict[str, List[int]] = {}
     result: Dict[str, List[int]] = {}
     holiday = [e for e in employees if e.status == "ferias"]
-    active = [e for e in employees if e.status in ("ativo", "suspensao", "falta")]
+    active = [e for e in employees if e.status in ("ativo", "suspensao", "falta") and e.contract != "intermitente"]
     for emp in holiday:
         result[emp.id] = list(range(7))
     ordered = []
@@ -623,8 +643,8 @@ async def employees(request: Request):
 async def create_employee(data: EmployeeIn, request: Request):
     emp = Employee(**data.model_dump())
     await db(request).prepare(
-        "INSERT INTO employees (id, name, role, sector, status, gender, workload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(emp.id, emp.name, emp.role, emp.sector, emp.status, emp.gender, emp.workload, emp.created_at).run()
+        "INSERT INTO employees (id, name, role, sector, status, gender, workload, contract, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(emp.id, emp.name, emp.role, emp.sector, emp.status, emp.gender, emp.workload, emp.contract, emp.created_at).run()
     return emp
 
 
@@ -635,8 +655,8 @@ async def update_employee(emp_id: str, data: EmployeeIn, request: Request):
     if not existing:
         raise HTTPException(404, "Funcionário não encontrado")
     await database.prepare(
-        "UPDATE employees SET name=?, role=?, sector=?, status=?, gender=?, workload=? WHERE id=?"
-    ).bind(data.name, data.role, data.sector, data.status, data.gender, data.workload, emp_id).run()
+        "UPDATE employees SET name=?, role=?, sector=?, status=?, gender=?, workload=?, contract=? WHERE id=?"
+    ).bind(data.name, data.role, data.sector, data.status, data.gender, data.workload, data.contract, emp_id).run()
     return Employee(id=emp_id, created_at=existing["created_at"], **data.model_dump())
 
 
@@ -772,8 +792,8 @@ async def import_employees(data: EmployeesImport, request: Request):
             continue
         emp = Employee(**item.model_dump())
         await db(request).prepare(
-            "INSERT INTO employees (id, name, role, sector, status, gender, workload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-        ).bind(emp.id, emp.name, emp.role, emp.sector, emp.status, emp.gender, emp.workload, emp.created_at).run()
+            "INSERT INTO employees (id, name, role, sector, status, gender, workload, contract, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        ).bind(emp.id, emp.name, emp.role, emp.sector, emp.status, emp.gender, emp.workload, emp.contract, emp.created_at).run()
         existing.add(key)
         created += 1
     return {"created": created, "skipped": len(data.employees) - created}
@@ -827,10 +847,11 @@ async def generate(data: GenerateIn, request: Request):
         snapshot[emp.sector] = sector_modes.get(emp.sector.lower(), "6x1")
     sunday_rule = {}
     for emp in target:
-        if emp.status in ("ferias", "inativo") or not emp.gender:
+        if emp.status in ("ferias", "inativo") or not emp.gender or emp.contract == "intermitente":
             continue
         same = sorted([e for e in employees if e.sector.lower() == emp.sector.lower() and e.gender == emp.gender
-                       and e.status not in ("ferias", "inativo")], key=lambda e: e.created_at)
+                       and e.status not in ("ferias", "inativo") and e.contract != "intermitente"],
+                      key=lambda e: e.created_at)
         plan = sunday_plan(emp.gender, [sunday_of(h, emp.id) for h in history], rotate + same.index(emp))
         if plan:
             sunday_rule[emp.id] = plan
@@ -848,7 +869,9 @@ async def generate(data: GenerateIn, request: Request):
         sched.sector_modes = {k: v for k, v in sched.sector_modes.items() if k.lower() != sector_key} | snapshot
         sched.generated_at = now_iso()
     else:
-        sched = Schedule(week=week, mode=data.mode, generated_at=now_iso(), off_days=off_days, sector_modes=snapshot)
+        previous = await get_schedule(request, week)
+        sched = Schedule(week=week, mode=data.mode, generated_at=now_iso(), off_days=off_days, sector_modes=snapshot,
+                         convocations=previous.convocations)
     sched.vacation_days = vacation
     await save_schedule(request, sched)
     return await with_alerts(request, sched, employees, history[:2])
@@ -856,10 +879,30 @@ async def generate(data: GenerateIn, request: Request):
 
 @api.put("/schedule/cell", response_model=Schedule)
 async def toggle_cell(data: CellToggle, request: Request):
-    employee = await db(request).prepare("SELECT status FROM employees WHERE id = ?").bind(data.employee_id).first()
+    employee = await db(request).prepare(
+        "SELECT status, role, contract FROM employees WHERE id = ?"
+    ).bind(data.employee_id).first()
     if not employee:
         raise HTTPException(404, "Funcionário não encontrado")
     sched = await get_schedule(request, week_start(data.week))
+    contract = employee["contract"] or ("intermitente" if "intermitente" in (employee["role"] or "").lower() else "efetivo")
+    if contract == "intermitente":
+        if data.extra:
+            raise HTTPException(400, "Intermitente não tem folga para marcar EXTRA.")
+        days = dict(sched.convocations.get(data.employee_id, {}))
+        key = str(data.day)
+        current = days.get(key, {}).get("status")
+        if current is None:
+            days[key] = {"status": "pending", "at": datetime.now(timezone.utc).date().isoformat()}
+        elif current == "pending":
+            days[key] = {**days[key], "status": "accepted"}
+        elif current == "accepted":
+            days[key] = {**days[key], "status": "declined"}
+        else:
+            days.pop(key)
+        sched.convocations[data.employee_id] = days
+        await save_schedule(request, sched)
+        return await with_alerts(request, sched)
     off = list(sched.off_days.get(data.employee_id, []))
     suspension = list(sched.suspension_days.get(data.employee_id, []))
     absence = list(sched.absence_days.get(data.employee_id, []))
