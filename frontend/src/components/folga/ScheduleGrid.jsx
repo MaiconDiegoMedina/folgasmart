@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { flushSync } from "react-dom";
 import { toast } from "sonner";
-import { Flame, AlertTriangle, Users, CalendarDays } from "lucide-react";
+import { Flame, AlertTriangle, Users, CalendarDays, Printer } from "lucide-react";
 import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate, http } from "@/lib/api";
 import { defaultShiftOf } from "@/lib/workloadTimes";
 import { WeekNav } from "@/components/folga/WeekNav";
@@ -16,9 +17,17 @@ const CONVOCATION_STYLE = {
 };
 const CONVOCATION_NEXT = { none: "convocar", pending: "marcar aceite", accepted: "marcar recusa", declined: "limpar" };
 
-const ConvocationCell = ({ conv, date, vacation, shift, onClick, testId }) => {
+const ConvocationCell = ({ conv, date, vacation, shift, mural, onClick, testId }) => {
   if (vacation) return <Cell status="ferias" testId={testId} />;
   const state = conv?.status || "none";
+  // Mural: só o dia aceito aparece; convocação pendente ou recusada fica em branco
+  if (mural) {
+    return state === "accepted" ? (
+      <Cell shift={shift} mural testId={testId} />
+    ) : (
+      <div data-testid={testId} className="w-full h-11" />
+    );
+  }
   const late = shortNotice(conv, date);
   return (
     <button
@@ -42,7 +51,10 @@ const ShiftText = ({ shift }) => (
   </span>
 );
 
-const Cell = ({ off, susp, absent, extra, peak, status, cct, shift, onClick, testId }) => {
+const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp, shift, mural, onClick, testId }) => {
+  // Mural: falta acontece depois da impressão (vale o horário escalado) e não mostra alertas
+  const absent = mural ? false : absentProp;
+  const cct = mural ? undefined : cctProp;
   if (status === "ferias") {
     return (
       <div
@@ -74,6 +86,14 @@ const Cell = ({ off, susp, absent, extra, peak, status, cct, shift, onClick, tes
       : "bg-[#FFFBEB] border-[#FCD34D] text-[#B45309] hover:bg-[#FEF3C7]"; // Folga comum
   }
 
+  if (mural) {
+    return (
+      <div data-testid={testId} className={`w-full h-11 flex items-center justify-center rounded-lg text-[11px] font-bold tracking-wider font-mono-data border select-none ${classesEstilo}`}>
+        {texto}
+      </div>
+    );
+  }
+
   return (
     <button
       data-testid={testId}
@@ -101,7 +121,7 @@ const Cell = ({ off, susp, absent, extra, peak, status, cct, shift, onClick, tes
   );
 };
 
-const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx, schedule, dates, shiftOn }) => {
+const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx, schedule, dates, shiftOn, mural }) => {
   const intermittent = isIntermittent(emp);
   // EXTRA é computado como folga. Folga a mais pode ocorrer pelas regras de domingo/6 dias.
   const realOffs = offs;
@@ -117,15 +137,15 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
           {emp.status === "ferias" && <span className="text-[9px] bg-[#E2E8F0] text-[#475569] font-bold px-1.5 py-0.5 rounded">FÉRIAS</span>}
           {emp.status === "suspensao" && <span className="text-[9px] bg-[#FFE4E6] text-[#E11D48] font-bold px-1.5 py-0.5 rounded">SUSP.</span>}
           {emp.status === "falta" && <span className="text-[9px] bg-[#FFEDD5] text-[#C2410C] font-bold px-1.5 py-0.5 rounded">FALTA</span>}
-          {intermittent && <span className="text-[9px] bg-[#E0F2FE] text-[#0369A1] font-bold px-1.5 py-0.5 rounded">INTERMITENTE</span>}
-          {cctAlert && (
+          {intermittent && !mural && <span className="text-[9px] bg-[#E0F2FE] text-[#0369A1] font-bold px-1.5 py-0.5 rounded">INTERMITENTE</span>}
+          {cctAlert && !mural && (
             <span data-testid={`cct-alert-${emp.id}`} title={cctAlert} className="inline-flex items-center gap-0.5 text-[9px] bg-[#FEF2F2] text-[#DC2626] border border-[#FECACA] font-bold px-1.5 py-0.5 rounded">
               <AlertTriangle className="h-2.5 w-2.5" /> CCT
             </span>
           )}
         </p>
-        {cctAlert && <p className="text-[10px] text-[#DC2626] leading-tight mt-0.5 max-w-[220px]">{cctAlert.replace("CCT: ", "")}</p>}
-        {streakDays?.length > 0 && (
+        {cctAlert && !mural && <p className="text-[10px] text-[#DC2626] leading-tight mt-0.5 max-w-[220px]">{cctAlert.replace("CCT: ", "")}</p>}
+        {streakDays?.length > 0 && !mural && (
           <p data-testid={`streak-alert-${emp.id}`} className="text-[10px] text-[#DC2626] leading-tight mt-0.5 max-w-[220px] flex items-center gap-1">
             <AlertTriangle className="h-2.5 w-2.5 shrink-0" /> Mais de 6 dias seguidos sem folga
           </p>
@@ -140,6 +160,7 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
               date={dates[d]}
               vacation={vacationDays.includes(d)}
               shift={shiftOn(d)}
+              mural={mural}
               onClick={() => onToggle(emp.id, d)}
               testId={`cell-${emp.id}-${d}`}
             />
@@ -152,6 +173,7 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
             cct={streakDays?.includes(d) ? "Mais de 6 dias seguidos sem folga (máximo 6)" : d === 6 ? cctAlert : undefined}
             peak={peaks.includes(d)}
             shift={shiftOn(d)}
+            mural={mural}
             status={vacationDays.includes(d) ? "ferias" : emp.status}
             // Clique: TRAB. -> FOLGA -> SUSP. -> FALTA -> TRAB. Shift + clique numa folga marca EXTRA.
             onClick={(e) => (e.shiftKey ? onExtra(emp, d, offs.includes(d)) : onToggle(emp.id, d))}
@@ -160,7 +182,7 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
           )}
         </td>
       ))}
-      <td className="pl-3 text-center">
+      {!mural && <td className="pl-3 text-center">
         {intermittent ? (
           <span data-testid={`row-summary-${emp.id}`} className="text-xs font-mono-data font-semibold text-[#0369A1]" title="Dias com convocação aceita">
             {DAYS_SHORT.filter((_, d) => acceptedOn(schedule, emp.id, d)).length} dia(s)
@@ -171,7 +193,7 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
           {emp.status === "ferias" || vacationDays.length === 7 ? "Férias" : `${realOffs.length}/${required}`}
         </span>
         )}
-      </td>
+      </td>}
     </tr>
   );
 };
@@ -237,11 +259,11 @@ const SectorModeToggle = ({ sector, mode, onChange }) => (
   </div>
 );
 
-const SectorHeader = ({ name, members, worksOn, peaks, mode, showCount }) => (
-  <tr data-testid={`sector-group-${name}`}>
+const SectorHeader = ({ name, members, worksOn, peaks, mode, showCount, mural, newPage }) => (
+  <tr data-testid={`sector-group-${name}`} className={mural && newPage ? "print:break-before-page" : ""}>
     <td className="pt-5 pb-2 sticky left-0 bg-white z-10">
       <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#0F172A]">{name}</span>
-      <span className="ml-2 text-[11px] text-[#8A929B]">{members.length} pessoa(s) · {mode}</span>
+      {!mural && <span className="ml-2 text-[11px] text-[#8A929B]">{members.length} pessoa(s) · {mode}</span>}
     </td>
     {DAYS_SHORT.map((_, d) => {
       if (!showCount) return <td key={d} />;
@@ -254,7 +276,7 @@ const SectorHeader = ({ name, members, worksOn, peaks, mode, showCount }) => (
         </td>
       );
     })}
-    <td />
+    {!mural && <td />}
   </tr>
 );
 
@@ -265,6 +287,20 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   const sector = sectorProp ?? sectorLocal;
   const setSector = onSectorChange ?? setSectorLocal;
   const [dayView, setDayView] = useState(null);
+  // Versão para o mural: ligada pelo botão ou automaticamente ao imprimir
+  const [muralOn, setMuralOn] = useState(false);
+  const [printing, setPrinting] = useState(false);
+  useEffect(() => {
+    const before = () => flushSync(() => setPrinting(true)); // aplica antes de o navegador montar a impressão
+    const after = () => setPrinting(false);
+    window.addEventListener("beforeprint", before);
+    window.addEventListener("afterprint", after);
+    return () => {
+      window.removeEventListener("beforeprint", before);
+      window.removeEventListener("afterprint", after);
+    };
+  }, []);
+  const mural = muralOn || printing;
   const peaks = movement?.peak_days || [];
   // Escala de cada setor: a usada na geração desta semana; se não gerada, a configuração atual
   const modeOf = (sectorName) => {
@@ -287,7 +323,13 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   const activeSector = sectors.includes(sector) ? sector : "all";
   const activeDay = activeSector === "all" ? null : dayView;
   const visible = activeSector === "all" ? employees : employees.filter((e) => e.sector === activeSector);
-  const groups = sectors.filter((s) => activeSector === "all" || s === activeSector).map((s) => ({ name: s, members: visible.filter((e) => e.sector === s) }));
+  // No mural fica de fora o intermitente sem nenhum dia aceito na semana
+  const onBoard = (e) => !isIntermittent(e) || DAYS_SHORT.some((_, d) => acceptedOn(schedule, e.id, d));
+  const groups = sectors
+    .filter((s) => activeSector === "all" || s === activeSector)
+    .map((s) => ({ name: s, members: visible.filter((e) => e.sector === s && (!mural || onBoard(e))) }))
+    .filter((g) => !mural || g.members.length > 0);
+  const fmtLong = (d) => d.toLocaleDateString("pt-BR", { day: "numeric", month: "short" }).replace(".", "");
   const coverage = DAYS_SHORT.map((_, d) => visible.filter((e) => worksOn(e.id, d)).length);
 
   const [weekShifts, setWeekShifts] = useState({});
@@ -309,16 +351,41 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
     <section data-testid="weekly-calendar-grid" className="print-area rounded-2xl border border-[#E5E1D8] bg-white shadow-[0_1px_0_#E5E1D8,0_12px_32px_-16px_rgba(15,23,42,0.12)]">
       <div className="flex flex-wrap items-end justify-between gap-4 p-5 sm:p-6 border-b border-[#EFEBE3]">
         <div>
-          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A929B]">
-            Escala semanal · {[...new Set(sectors.map(modeOf))].join(" + ") || schedule.mode}
-          </p>
-          <h2 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight mt-1">Quem trabalha, quem folga.</h2>
-          <div className="mt-4"><WeekNav week={week} onChange={onWeekChange} /></div>
+          {mural ? (
+            <>
+              <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A929B]">Escala semanal</p>
+              <h2 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight mt-1">
+                {activeSector === "all" ? "Todos os setores" : activeSector}
+              </h2>
+              <p className="text-sm font-semibold text-[#575E65] mt-1">
+                {fmtLong(dates[0])} a {fmtLong(dates[6])} de {dates[6].getFullYear()}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A929B]">
+                Escala semanal · {[...new Set(sectors.map(modeOf))].join(" + ") || schedule.mode}
+              </p>
+              <h2 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight mt-1">Quem trabalha, quem folga.</h2>
+            </>
+          )}
+          <div className="mt-4 no-print"><WeekNav week={week} onChange={onWeekChange} /></div>
           {!schedule.generated_at && employees.length > 0 && (
             <p data-testid="week-not-generated" className="no-print text-xs text-[#B45309] mt-3">Escala desta semana ainda não gerada — clique em <b>Gerar escala</b>.</p>
           )}
         </div>
-        <div className="flex gap-4 text-xs text-[#575E65] no-print">
+        <div className="no-print flex flex-col items-end gap-3">
+        <button
+          data-testid="btn-mural"
+          onClick={() => setMuralOn((v) => !v)}
+          title="Mostra a escala como vai ser impressa: só quem trabalha na semana, sem contagens e alertas"
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+            muralOn ? "bg-[#0F172A] border-[#0F172A] text-white" : "bg-white border-[#E5E1D8] text-[#575E65] hover:border-[#0F172A]"
+          }`}
+        >
+          <Printer className="h-3.5 w-3.5" /> Versão para o mural
+        </button>
+        {!mural && <div className="flex flex-wrap justify-end gap-4 text-xs text-[#575E65]">
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#DCFCE7] border border-[#BBF7D0]" />Trabalha</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FEF3C7] border border-[#FCD34D]" />Folga</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FEF2F2] border border-[#DC2626]" />Folga em pico</span>
@@ -327,6 +394,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F0F9FF] border border-[#7DD3FC]" />Convocado (intermitente)</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F1F5F9] border border-[#CBD5E1]" />Férias</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F5F3FF] border border-[#C4B5FD]" />Extra (shift + clique na folga)</span>
+        </div>}
         </div>
       </div>
       {employees.length === 0 ? (
@@ -372,12 +440,12 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       </div>
                     </th>
                   ))}
-                  <th className="pb-3 text-xs font-semibold text-[#8A929B] uppercase tracking-wider">Folgas</th>
+                  {!mural && <th className="pb-3 text-xs font-semibold text-[#8A929B] uppercase tracking-wider">Folgas</th>}
                 </tr>
               </thead>
               <tbody>
-                {groups.map((g) => [
-                  <SectorHeader key={`h-${g.name}`} name={g.name} members={g.members} worksOn={worksOn} peaks={peaks} mode={modeOf(g.name)} showCount={groups.length > 1} />,
+                {groups.map((g, gi) => [
+                  <SectorHeader key={`h-${g.name}`} name={g.name} members={g.members} worksOn={worksOn} peaks={peaks} mode={modeOf(g.name)} showCount={groups.length > 1 && !mural} mural={mural} newPage={gi > 0} />,
                   ...g.members.map((emp, idx) => (
                     <Row
                       key={emp.id}
@@ -397,11 +465,12 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       onToggle={onToggle}
                       onExtra={onExtra}
                       shiftOn={(d) => shiftOf(emp, d)}
+                      mural={mural}
                     />
                   )),
                 ])}
               </tbody>
-              <tfoot>
+              {!mural && <tfoot>
                 <tr className="border-t-2 border-[#191C1E]">
                   <td className="pt-4 text-xs font-bold uppercase tracking-wider sticky left-0 bg-white">
                     Em operação{activeSector !== "all" && <span className="block text-[10px] text-[#8A929B] normal-case tracking-normal">{activeSector}</span>}
@@ -413,7 +482,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                   ))}
                   <td />
                 </tr>
-              </tfoot>
+              </tfoot>}
             </table>
           </div>
           )}
