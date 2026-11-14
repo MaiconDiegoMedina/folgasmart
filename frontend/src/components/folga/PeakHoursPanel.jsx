@@ -22,6 +22,7 @@ const worksOn = (schedule, emp, day) => {
   if (emp.status === "ferias") return false;
   if ((schedule.suspension_days?.[emp.id] || []).includes(day)) return false;
   if ((schedule.absence_days?.[emp.id] || []).includes(day)) return false;
+  if ((schedule.vacation_days?.[emp.id] || []).includes(day)) return false;
   const off = (schedule.off_days?.[emp.id] || []).includes(day);
   return !off || (schedule.extra_days?.[emp.id] || []).includes(day);
 };

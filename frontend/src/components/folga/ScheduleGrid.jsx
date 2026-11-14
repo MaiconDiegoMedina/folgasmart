@@ -53,10 +53,12 @@ const Cell = ({ off, susp, absent, extra, peak, status, cct, onClick, testId }) 
   );
 };
 
-const Row = ({ emp, offs, suspensions, absences, extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx }) => {
+const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx }) => {
   // EXTRA é computado como folga. Folga a mais pode ocorrer pelas regras de domingo/6 dias.
   const realOffs = offs;
-  const wrong = emp.status !== "ferias" && realOffs.length < required;
+  // Semana com férias: os dias de férias contam como descanso, sem alerta de folga
+  const onVacation = emp.status === "ferias" || vacationDays.length > 0;
+  const wrong = !onVacation && realOffs.length < required;
 
   return (
     <tr data-testid="employee-row" className="rise border-t border-[#EFEBE3]" style={{ animationDelay: `${idx * 30}ms` }}>
@@ -89,7 +91,7 @@ const Row = ({ emp, offs, suspensions, absences, extras, peaks, required, onTogg
             extra={extras.includes(d)}
             cct={streakDays?.includes(d) ? "Mais de 6 dias seguidos sem folga (máximo 6)" : d === 6 ? cctAlert : undefined}
             peak={peaks.includes(d)}
-            status={emp.status}
+            status={vacationDays.includes(d) ? "ferias" : emp.status}
             // Shift + clique numa folga marca EXTRA. Clique normal alterna a folga.
             onClick={(e) => (e.shiftKey ? onExtra(emp, d, offs.includes(d)) : onToggle(emp.id, d))}
             testId={`cell-${emp.id}-${d}`}
@@ -99,7 +101,7 @@ const Row = ({ emp, offs, suspensions, absences, extras, peaks, required, onTogg
       <td className="pl-3 text-center">
         <span data-testid={`row-summary-${emp.id}`} className={`inline-flex items-center gap-1 text-xs font-mono-data font-semibold ${wrong ? "text-[#DC2626]" : "text-[#575E65]"}`}>
           {wrong && <AlertTriangle className="h-3.5 w-3.5" />}
-          {emp.status === "ferias" ? "7/7" : `${realOffs.length}/${required}`}
+          {emp.status === "ferias" || vacationDays.length === 7 ? "Férias" : `${realOffs.length}/${required}`}
         </span>
       </td>
     </tr>
@@ -204,11 +206,12 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   const offsOf = (id) => schedule.off_days?.[id] || [];
   const suspensionsOf = (id) => schedule.suspension_days?.[id] || [];
   const absencesOf = (id) => schedule.absence_days?.[id] || [];
+  const vacationOf = (id) => schedule.vacation_days?.[id] || [];
   const extrasOf = (id) => schedule.extra_days?.[id] || [];
   // EXTRA conta como dia trabalhado mesmo sendo folga
   // Suspensão e falta não contam como em operação
   const worksOn = (id, d) =>
-    (!offsOf(id).includes(d) || extrasOf(id).includes(d)) && !suspensionsOf(id).includes(d) && !absencesOf(id).includes(d);
+    (!offsOf(id).includes(d) || extrasOf(id).includes(d)) && !suspensionsOf(id).includes(d) && !absencesOf(id).includes(d) && !vacationOf(id).includes(d);
   const sectors = [...new Set(employees.map((e) => e.sector))].sort((a, b) => a.localeCompare(b));
   const activeSector = sectors.includes(sector) ? sector : "all";
   const activeDay = activeSector === "all" ? null : dayView;
@@ -302,6 +305,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       offs={offsOf(emp.id)}
                       suspensions={suspensionsOf(emp.id)}
                       absences={absencesOf(emp.id)}
+                      vacationDays={vacationOf(emp.id)}
                       extras={extrasOf(emp.id)}
                       cctAlert={schedule.cct_alerts?.[emp.id]}
                       streakDays={schedule.streak_alerts?.[emp.id]}

@@ -3,8 +3,9 @@ import { Plus, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { http, errMsg } from "@/lib/api";
+import { http, errMsg, isoDate } from "@/lib/api";
 import { ImportEmployees } from "@/components/folga/ImportEmployees";
+import { VacationDialog, fmtDate } from "@/components/folga/VacationDialog";
 
 const EMPTY = { name: "", role: "", sector: "", status: "ativo", gender: "", workload: "" };
 const selectCls = "text-xs bg-[#F8F6F0] border border-[#E5E1D8] rounded-lg px-2 py-1.5 text-[#575E65] font-medium outline-none focus:border-[#0F172A] transition-colors";
@@ -61,8 +62,12 @@ const EmployeeForm = ({ sectors, workloads, onSaved }) => {
   );
 };
 
-export const EmployeesPanel = ({ employees, workloads = [], onChange }) => {
+export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onChange }) => {
   const sectors = [...new Set(employees.map((e) => e.sector))];
+  const [vacationFor, setVacationFor] = useState(null);
+  const today = isoDate(new Date());
+  // Férias em andamento ou futuras, para mostrar embaixo do nome
+  const upcoming = (emp) => vacations.filter((v) => v.employee_id === emp.id && v.end >= today);
 
   const remove = async (emp) => {
     try {
@@ -108,6 +113,11 @@ export const EmployeesPanel = ({ employees, workloads = [], onChange }) => {
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold truncate">{e.name}</p>
               <p className="text-xs text-[#8A929B] truncate">{e.role} · <span className="text-[#575E65]">{e.sector}</span></p>
+              {upcoming(e).map((v) => (
+                <button key={v.id} onClick={() => setVacationFor(e)} className="block text-[10px] font-semibold text-[#475569] bg-[#F1F5F9] rounded px-1.5 py-0.5 mt-0.5 hover:bg-[#E2E8F0]">
+                  Férias {fmtDate(v.start)} a {fmtDate(v.end)}
+                </button>
+              ))}
             </div>
             
             <select
@@ -136,11 +146,15 @@ export const EmployeesPanel = ({ employees, workloads = [], onChange }) => {
             <select
               aria-label="Status"
               value={e.status || "ativo"}
-              onChange={(evt) => update(e, { status: evt.target.value }, `Status de ${e.name} atualizado para ${evt.target.value}`)}
+              onChange={(evt) =>
+                evt.target.value === "ferias"
+                  ? setVacationFor(e) // Férias: abre a janela para informar o período
+                  : update(e, { status: evt.target.value }, `Status de ${e.name} atualizado para ${evt.target.value}`)
+              }
               className={selectCls}
             >
               <option value="ativo">Ativo</option>
-              <option value="ferias">Férias</option>
+              <option value="ferias">{e.status === "ferias" ? "Férias (semana toda)" : "Férias…"}</option>
               <option value="suspensao">Suspensão</option>
               <option value="falta">Falta</option>
             </select>
@@ -151,6 +165,7 @@ export const EmployeesPanel = ({ employees, workloads = [], onChange }) => {
           </li>
         ))}
       </ul>
+      <VacationDialog employee={vacationFor} vacations={vacations} onClose={() => setVacationFor(null)} onSaved={onChange} />
     </section>
   );
 };

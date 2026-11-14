@@ -12,7 +12,8 @@ const buildCsv = (employees, schedule) => {
   const extra = (e, i) => (schedule.extra_days?.[e.id] || []).includes(i);
   const susp = (e, i) => (schedule.suspension_days?.[e.id] || []).includes(i);
   const absent = (e, i) => (schedule.absence_days?.[e.id] || []).includes(i);
-  const label = (e, i) => (absent(e, i) ? "FALTA" : susp(e, i) ? "SUSPENSÃO" : extra(e, i) ? "EXTRA" : off(e, i) ? "FOLGA" : "TRABALHA");
+  const vacation = (e, i) => e.status === "ferias" || (schedule.vacation_days?.[e.id] || []).includes(i);
+  const label = (e, i) => (vacation(e, i) ? "FÉRIAS" : absent(e, i) ? "FALTA" : susp(e, i) ? "SUSPENSÃO" : extra(e, i) ? "EXTRA" : off(e, i) ? "FOLGA" : "TRABALHA");
   const rows = sorted.map((e) => [e.sector, e.name, e.role, ...DAYS.map((_, i) => label(e, i))].join(";"));
   const coverage = DAYS.map((_, i) => employees.filter((e) => label(e, i) === "TRABALHA" || label(e, i) === "EXTRA").length);
   return [header, ...rows, ["Em operação", "", "", ...coverage].join(";")].join("\n");

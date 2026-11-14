@@ -100,6 +100,8 @@ SCHEMA_STATEMENTS = [
     """CREATE TABLE IF NOT EXISTS shifts (week TEXT NOT NULL, day INTEGER NOT NULL,
     data TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (week, day))""",
     """CREATE TABLE IF NOT EXISTS sector_modes (sector TEXT PRIMARY KEY, mode TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS vacations (id TEXT PRIMARY KEY, employee_id TEXT NOT NULL,
+    start TEXT NOT NULL, end TEXT NOT NULL, created_at TEXT NOT NULL)""",
     """CREATE TABLE IF NOT EXISTS workloads (id TEXT PRIMARY KEY, name TEXT NOT NULL, minutes TEXT NOT NULL,
     break_minutes INTEGER NOT NULL DEFAULT 60, minutes_5x2 INTEGER, created_at TEXT NOT NULL)""",
 ]
@@ -177,6 +179,8 @@ class Schedule(BaseModel):
     off_days: Dict[str, List[int]] = Field(default_factory=dict)
     suspension_days: Dict[str, List[int]] = Field(default_factory=dict)
     absence_days: Dict[str, List[int]] = Field(default_factory=dict)
+    # Calculado a partir dos períodos de férias (não é gravado na escala)
+    vacation_days: Dict[str, List[int]] = Field(default_factory=dict)
     generated_at: str | None = None
     cct_alerts: Dict[str, str] = Field(default_factory=dict)
     sector_modes: Dict[str, Mode] = Field(default_factory=dict)
@@ -196,6 +200,16 @@ class WorkloadOut(WorkloadIn):
 
 class EmployeesImport(BaseModel):
     employees: List[EmployeeIn] = Field(min_length=1, max_length=2000)
+
+
+class VacationIn(BaseModel):
+    employee_id: str
+    start: str
+    end: str
+
+
+class Vacation(VacationIn):
+    id: str
 
 
 class SectorModeIn(BaseModel):
@@ -298,7 +312,29 @@ async def save_movement(request: Request, movement: Movement) -> None:
            json.dumps(movement.peak_days), movement.total_records, movement.updated_at).run()
 
 
+async def vacation_days_for(request: Request, week: str) -> Dict[str, List[int]]:
+    """Dias da semana (0 = segunda) em férias, por funcionário."""
+    start = date.fromisoformat(week)
+    end = start + timedelta(days=6)
+    rows = (await db(request).prepare(
+        "SELECT employee_id, start, end FROM vacations WHERE start <= ? AND end >= ?"
+    ).bind(end.isoformat(), start.isoformat()).all()).results
+    days: Dict[str, set] = {}
+    for row in rows:
+        first, last = date.fromisoformat(row["start"]), date.fromisoformat(row["end"])
+        for i in range(7):
+            if first <= start + timedelta(days=i) <= last:
+                days.setdefault(row["employee_id"], set()).add(i)
+    return {emp_id: sorted(d) for emp_id, d in days.items()}
+
+
 async def get_schedule(request: Request, week: str) -> Schedule:
+    schedule = await load_schedule(request, week)
+    schedule.vacation_days = await vacation_days_for(request, week)
+    return schedule
+
+
+async def load_schedule(request: Request, week: str) -> Schedule:
     row = await db(request).prepare(
         "SELECT week, mode, off_days, suspension_days, generated_at, sector_modes, absence_days FROM schedule WHERE week = ?"
     ).bind(week).first()
@@ -363,6 +399,8 @@ SUNDAY_CYCLE = {"M": "TTFF", "F": "TF"}
 
 
 def sunday_of(schedule: Schedule, emp_id: str) -> str | None:
+    if SUNDAY in schedule.vacation_days.get(emp_id, []):
+        return "F"
     if emp_id not in schedule.off_days:
         return None
     off = SUNDAY in schedule.off_days[emp_id] and SUNDAY not in schedule.extra_days.get(emp_id, [])
@@ -406,11 +444,12 @@ MAX_STREAK = 6
 
 
 def worked_days(schedule: Schedule, emp_id: str) -> List[bool] | None:
-    if emp_id not in schedule.off_days:
+    vacation = set(schedule.vacation_days.get(emp_id, []))
+    if emp_id not in schedule.off_days and not vacation:
         return None
     # EXTRA é computado como folga
-    off = set(schedule.off_days[emp_id]) | set(schedule.suspension_days.get(emp_id, []))
-    off |= set(schedule.absence_days.get(emp_id, []))
+    off = set(schedule.off_days.get(emp_id, [])) | set(schedule.suspension_days.get(emp_id, []))
+    off |= set(schedule.absence_days.get(emp_id, [])) | vacation
     return [day not in off for day in range(7)]
 
 
@@ -458,7 +497,8 @@ async def with_alerts(request: Request, schedule: Schedule, employees: List[Empl
 def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
                      rotate: int = 0, previous_days: dict | None = None,
                      sunday_rule: Dict[str, str] | None = None,
-                     sector_modes: Dict[str, str] | None = None) -> Dict[str, List[int]]:
+                     sector_modes: Dict[str, str] | None = None,
+                     vacation: Dict[str, List[int]] | None = None) -> Dict[str, List[int]]:
     max_avg = max(movement.avg) or 1
     weight = [1 + 4 * (value / max_avg) for value in movement.avg]
     peaks = set(movement.peak_days)
@@ -479,6 +519,17 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
         # Último dia de folga da semana anterior (6 = domingo, sem restrição se não houver histórico)
         last_day = (previous_days or {}).get(emp.id, SUNDAY)
         rule = (sunday_rule or {}).get(emp.id)
+        vac = set((vacation or {}).get(emp.id, []))
+        if vac:
+            # Semana com férias: os dias de férias contam como descanso
+            if len(vac) >= 7:
+                result[emp.id] = []
+                continue
+            rule = None
+            offs_needed = max(0, offs_needed - len(vac))
+            if offs_needed == 0 and not any(d <= last_day for d in vac):
+                offs_needed = 1  # ainda precisa de folga para não passar de 6 dias seguidos
+            offs_needed = min(offs_needed, 7 - len(vac))
         # Folga de domingo pela CCT e a semana anterior terminou cedo: no 6x1 só um dia de folga
         # não cumpre as duas regras, então ganha uma folga a mais
         if rule == "F" and last_day < SUNDAY and offs_needed == 1:
@@ -491,7 +542,7 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
                 if day in peaks:
                     value += 1000
                 # No máximo 6 dias seguidos: a primeira folga precisa vir até o dia last_day
-                if pick == offs_needed - 1 and not any(d <= last_day for d in chosen) and day > last_day:
+                if pick == offs_needed - 1 and not any(d <= last_day for d in chosen + list(vac)) and day > last_day:
                     value += 1000000 + 1000 * (day - last_day)
                 # Regra de domingos da CCT tem prioridade sobre as demais
                 if rule == "F" and SUNDAY not in chosen and day != SUNDAY:
@@ -499,7 +550,7 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
                 if rule == "T" and day == SUNDAY:
                     value += 100000
                 return value
-            day = min((d for d in range(7) if d not in chosen), key=lambda d: (cost(d), d))
+            day = min((d for d in range(7) if d not in chosen and d not in vac), key=lambda d: (cost(d), d))
             chosen.append(day)
             sec[day] += 1
         result[emp.id] = sorted(chosen)
@@ -604,6 +655,7 @@ async def delete_employee(emp_id: str, request: Request):
             "UPDATE schedule SET off_days=?, suspension_days=? WHERE week=?"
         ).bind(json.dumps(off), json.dumps(suspension), row["week"]).run()
     await database.prepare("DELETE FROM employees WHERE id = ?").bind(emp_id).run()
+    await database.prepare("DELETE FROM vacations WHERE employee_id = ?").bind(emp_id).run()
     return {"ok": True}
 
 
@@ -673,6 +725,39 @@ async def delete_workload(workload_id: str, request: Request):
     database = db(request)
     await database.prepare("DELETE FROM workloads WHERE id = ?").bind(workload_id).run()
     await database.prepare("UPDATE employees SET workload = NULL WHERE workload = ?").bind(workload_id).run()
+    return {"ok": True}
+
+
+@api.get("/vacations", response_model=List[Vacation])
+async def vacations_api(request: Request):
+    rows = (await db(request).prepare(
+        "SELECT id, employee_id, start, end FROM vacations ORDER BY start"
+    ).all()).results
+    return [Vacation(id=r["id"], employee_id=r["employee_id"], start=r["start"], end=r["end"]) for r in rows]
+
+
+@api.post("/vacations", response_model=Vacation)
+async def create_vacation(data: VacationIn, request: Request):
+    try:
+        first, last = date.fromisoformat(data.start), date.fromisoformat(data.end)
+    except ValueError:
+        raise HTTPException(400, "Datas inválidas. Use AAAA-MM-DD.")
+    if last < first:
+        raise HTTPException(400, "O fim das férias precisa ser depois do início.")
+    if (last - first).days > 60:
+        raise HTTPException(400, "Período de férias maior que 60 dias.")
+    if not await db(request).prepare("SELECT id FROM employees WHERE id = ?").bind(data.employee_id).first():
+        raise HTTPException(404, "Funcionário não encontrado")
+    item = Vacation(id=str(uuid.uuid4()), employee_id=data.employee_id, start=first.isoformat(), end=last.isoformat())
+    await db(request).prepare(
+        "INSERT INTO vacations (id, employee_id, start, end, created_at) VALUES (?, ?, ?, ?, ?)"
+    ).bind(item.id, item.employee_id, item.start, item.end, now_iso()).run()
+    return item
+
+
+@api.delete("/vacations/{vacation_id}")
+async def delete_vacation(vacation_id: str, request: Request):
+    await db(request).prepare("DELETE FROM vacations WHERE id = ?").bind(vacation_id).run()
     return {"ok": True}
 
 
@@ -749,8 +834,9 @@ async def generate(data: GenerateIn, request: Request):
         plan = sunday_plan(emp.gender, [sunday_of(h, emp.id) for h in history], rotate + same.index(emp))
         if plan:
             sunday_rule[emp.id] = plan
+    vacation = await vacation_days_for(request, week)
     off_days = compute_schedule(target, mov, data.mode, rotate, previous_days, sunday_rule,
-                                {k.lower(): v for k, v in snapshot.items()})
+                                {k.lower(): v for k, v in snapshot.items()}, vacation)
     if sector_key:
         # Refaz só o setor escolhido: folgas, EXTRA e suspensões dos outros setores ficam como estão
         sched = await get_schedule(request, week)
@@ -763,6 +849,7 @@ async def generate(data: GenerateIn, request: Request):
         sched.generated_at = now_iso()
     else:
         sched = Schedule(week=week, mode=data.mode, generated_at=now_iso(), off_days=off_days, sector_modes=snapshot)
+    sched.vacation_days = vacation
     await save_schedule(request, sched)
     return await with_alerts(request, sched, employees, history[:2])
 

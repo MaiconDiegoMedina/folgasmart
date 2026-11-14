@@ -17,16 +17,18 @@ export default function Dashboard() {
   const [generating, setGenerating] = useState(false);
   const [sectorModes, setSectorModes] = useState({});
   const [workloads, setWorkloads] = useState([]);
+  const [vacations, setVacations] = useState([]);
   const [sector, setSector] = useState("all");
   const activeSector = employees.some((e) => e.sector === sector) ? sector : null;
 
   const load = useCallback(async () => {
     try {
-      const [e, m, sm, w] = await Promise.all([http.get("/employees"), http.get("/movement"), http.get("/sectors/modes"), http.get("/workloads")]);
+      const [e, m, sm, w, v] = await Promise.all([http.get("/employees"), http.get("/movement"), http.get("/sectors/modes"), http.get("/workloads"), http.get("/vacations")]);
       setEmployees(e.data);
       setMovement(m.data);
       setSectorModes(sm.data);
       setWorkloads(w.data);
+      setVacations(v.data);
     } catch (err) { toast.error(errMsg(err)); }
   }, []);
 
@@ -75,7 +77,7 @@ export default function Dashboard() {
         <ScheduleGrid employees={employees} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} workloads={workloads} sector={sector} onSectorChange={setSector} />
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 no-print">
           <div className="lg:col-span-3"><MovementPanel movement={movement} onChange={setMovement} /></div>
-          <div className="lg:col-span-2"><EmployeesPanel employees={employees} workloads={workloads} onChange={load} /></div>
+          <div className="lg:col-span-2"><EmployeesPanel employees={employees} workloads={workloads} vacations={vacations} onChange={load} /></div>
         </div>
         <div className="no-print"><WorkloadsPanel workloads={workloads} onChange={load} /></div>
       </main>
