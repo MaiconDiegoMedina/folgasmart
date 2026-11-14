@@ -22,14 +22,22 @@ export default function Dashboard() {
   const activeSector = employees.some((e) => e.sector === sector) ? sector : null;
 
   const load = useCallback(async () => {
-    try {
-      const [e, m, sm, w, v] = await Promise.all([http.get("/employees"), http.get("/movement"), http.get("/sectors/modes"), http.get("/workloads"), http.get("/vacations")]);
-      setEmployees(e.data);
-      setMovement(m.data);
-      setSectorModes(sm.data);
-      setWorkloads(w.data);
-      setVacations(v.data);
-    } catch (err) { toast.error(errMsg(err)); }
+    // Cada pedido é independente: se um falhar (ex.: servidor ainda sem a rota nova), o resto carrega
+    const requests = [
+      ["/employees", setEmployees],
+      ["/movement", setMovement],
+      ["/sectors/modes", setSectorModes],
+      ["/workloads", setWorkloads],
+      ["/vacations", setVacations],
+    ];
+    const results = await Promise.allSettled(requests.map(([url]) => http.get(url)));
+    const failed = [];
+    results.forEach((r, i) => {
+      if (r.status === "fulfilled") requests[i][1](r.value.data);
+      else failed.push(requests[i][0]);
+    });
+    if (failed.includes("/employees")) toast.error(errMsg(results[0].reason));
+    else if (failed.length) toast.error(`Algumas funções estão indisponíveis no servidor (${failed.join(", ")}). Atualize o worker.`);
   }, []);
 
   useEffect(() => { load(); }, [load]);
