@@ -866,8 +866,8 @@ async def toggle_cell(data: CellToggle, request: Request):
     extra = list(sched.extra_days.get(data.employee_id, []))
 
     if data.extra:
-        if employee["status"] != "ativo":
-            raise HTTPException(400, "A marcação EXTRA só pode ser usada para funcionário ativo.")
+        if employee["status"] == "ferias":
+            raise HTTPException(400, "A marcação EXTRA não pode ser usada para funcionário de férias.")
         if data.day not in off:
             raise HTTPException(400, "EXTRA só pode ser marcado em um dia de folga.")
         if data.day in extra:
@@ -876,26 +876,16 @@ async def toggle_cell(data: CellToggle, request: Request):
             extra.append(data.day)
     elif data.day in extra:
         extra.remove(data.day)
-    elif employee["status"] in ("suspensao", "falta"):
-        # Ciclo: TRAB. -> FOLGA -> SUSP./FALTA -> TRAB.
-        marks = suspension if employee["status"] == "suspensao" else absence
-        other = absence if marks is suspension else suspension
-        if data.day in other:
-            other.remove(data.day)
-        if data.day not in off and data.day not in marks:
-            off.append(data.day)
-        elif data.day in off:
-            off.remove(data.day)
-            marks.append(data.day)
-        else:
-            marks.remove(data.day)
+    # Ciclo para todos: TRAB. -> FOLGA -> SUSP. -> FALTA -> TRAB.
     elif data.day in off:
         off.remove(data.day)
+        suspension.append(data.day)
+    elif data.day in suspension:
+        suspension.remove(data.day)
+        absence.append(data.day)
+    elif data.day in absence:
+        absence.remove(data.day)
     else:
-        if data.day in suspension:
-            suspension.remove(data.day)
-        if data.day in absence:
-            absence.remove(data.day)
         off.append(data.day)
 
     sched.off_days[data.employee_id] = sorted(off)

@@ -45,7 +45,18 @@ const Cell = ({ off, susp, absent, extra, peak, status, cct, onClick, testId }) 
       onMouseDown={(e) => {
         if (e.shiftKey) e.preventDefault();
       }}
-      title={cct || (extra ? "Extra: trabalha no dia de folga (clique para voltar a folga)" : off ? "Shift + clique marca como EXTRA" : undefined)}
+      title={
+        cct ||
+        (extra
+          ? "Extra: trabalha no dia de folga (clique para voltar a folga)"
+          : absent
+            ? "Falta · clique: volta a trabalhar"
+            : susp
+              ? "Suspensão · clique: falta"
+              : off
+                ? "Folga · clique: suspensão · shift + clique: EXTRA"
+                : "Trabalha · clique: folga")
+      }
       className={`w-full h-11 rounded-lg text-[11px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[#0F172A] ${classesEstilo} ${cct ? "ring-2 ring-[#DC2626] ring-offset-1" : ""}`}
     >
       {texto}
@@ -92,7 +103,7 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
             cct={streakDays?.includes(d) ? "Mais de 6 dias seguidos sem folga (máximo 6)" : d === 6 ? cctAlert : undefined}
             peak={peaks.includes(d)}
             status={vacationDays.includes(d) ? "ferias" : emp.status}
-            // Shift + clique numa folga marca EXTRA. Clique normal alterna a folga.
+            // Clique: TRAB. -> FOLGA -> SUSP. -> FALTA -> TRAB. Shift + clique numa folga marca EXTRA.
             onClick={(e) => (e.shiftKey ? onExtra(emp, d, offs.includes(d)) : onToggle(emp.id, d))}
             testId={`cell-${emp.id}-${d}`}
           />
@@ -220,7 +231,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   const coverage = DAYS_SHORT.map((_, d) => visible.filter((e) => worksOn(e.id, d)).length);
 
   const onExtra = (emp, d, isOff) => {
-    if (emp.status !== "ativo") return toast.error("EXTRA só pode ser marcado para funcionário ativo.");
+    if (emp.status === "ferias") return toast.error("EXTRA não pode ser marcado para funcionário de férias.");
     if (!isOff) return toast.error("EXTRA só pode ser marcado em um dia de folga.");
     onToggle(emp.id, d, true);
   };

@@ -155,8 +155,9 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
             >
               <option value="ativo">Ativo</option>
               <option value="ferias">{e.status === "ferias" ? "Férias (semana toda)" : "Férias…"}</option>
-              <option value="suspensao">Suspensão</option>
-              <option value="falta">Falta</option>
+              {/* Suspensão e falta agora são marcadas direto na escala; opções só para cadastros antigos */}
+              {e.status === "suspensao" && <option value="suspensao">Suspensão</option>}
+              {e.status === "falta" && <option value="falta">Falta</option>}
             </select>
 
             <button data-testid={`btn-delete-employee-${e.id}`} onClick={() => remove(e)} className="p-2 rounded-lg text-[#8A929B] hover:bg-[#FEF2F2] hover:text-[#DC2626] transition-colors">
