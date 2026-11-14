@@ -17,12 +17,12 @@ const CONVOCATION_STYLE = {
 };
 const CONVOCATION_NEXT = { none: "convocar", pending: "marcar aceite", accepted: "marcar recusa", declined: "limpar" };
 
-const ConvocationCell = ({ conv, date, vacation, shift, mural, onClick, testId }) => {
+const ConvocationCell = ({ conv, date, vacation, shift, mural, excess, onClick, testId }) => {
   if (vacation) return <Cell status="ferias" testId={testId} />;
   const state = conv?.status || "none";
   // Mural: só o dia aceito aparece; convocação pendente ou recusada fica em branco
   if (mural) {
-    return state === "accepted" ? (
+    return state === "accepted" && !excess ? (
       <Cell shift={shift} mural testId={testId} />
     ) : (
       <div data-testid={testId} className="w-full h-11" />
@@ -35,8 +35,8 @@ const ConvocationCell = ({ conv, date, vacation, shift, mural, onClick, testId }
       onClick={onClick}
       title={`${state === "none" ? "Não convocado" : CONVOCATION_LABEL[state]}${conv?.at ? ` em ${conv.at.split("-").reverse().join("/")}` : ""} · clique: ${CONVOCATION_NEXT[state]}${
         late ? ` · convocação com menos de ${MIN_NOTICE_DAYS} dias de antecedência` : ""
-      }`}
-      className={`w-full h-11 rounded-lg text-[10px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none ${CONVOCATION_STYLE[state]} ${late ? "ring-2 ring-[#F59E0B] ring-offset-1" : ""}`}
+      }${excess ? ` · ${excess} — fica fora do mural` : ""}`}
+      className={`w-full h-11 rounded-lg text-[10px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none ${CONVOCATION_STYLE[state]} ${excess ? "ring-2 ring-[#DC2626] ring-offset-1" : late ? "ring-2 ring-[#F59E0B] ring-offset-1" : ""}`}
     >
       {state === "none" ? "—" : state === "accepted" ? (shift ? <ShiftText shift={shift} /> : "TRAB.") : CONVOCATION_LABEL[state]}
     </button>
@@ -121,8 +121,17 @@ const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp
   );
 };
 
-const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx, schedule, dates, shiftOn, mural }) => {
+const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx, schedule, dates, shiftOn, mural, streakLimit = 6 }) => {
   const intermittent = isIntermittent(emp);
+  // Intermitente: dias aceitos depois do limite de dias seguidos (6 no 6x1, 5 no 5x2)
+  const excessDays = new Set();
+  if (intermittent) {
+    let run = 0;
+    for (let d = 0; d < 7; d++) {
+      run = acceptedOn(schedule, emp.id, d) && !vacationDays.includes(d) ? run + 1 : 0;
+      if (run > streakLimit) excessDays.add(d);
+    }
+  }
   // EXTRA é computado como folga. Folga a mais pode ocorrer pelas regras de domingo/6 dias.
   const realOffs = offs;
   // Semana com férias: os dias de férias contam como descanso, sem alerta de folga
@@ -145,6 +154,11 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
           )}
         </p>
         {cctAlert && !mural && <p className="text-[10px] text-[#DC2626] leading-tight mt-0.5 max-w-[220px]">{cctAlert.replace("CCT: ", "")}</p>}
+        {excessDays.size > 0 && !mural && (
+          <p className="text-[10px] text-[#DC2626] leading-tight mt-0.5 max-w-[220px] flex items-center gap-1">
+            <AlertTriangle className="h-2.5 w-2.5 shrink-0" /> Mais de {streakLimit} dias seguidos — excedente fica fora do mural
+          </p>
+        )}
         {streakDays?.length > 0 && !mural && (
           <p data-testid={`streak-alert-${emp.id}`} className="text-[10px] text-[#DC2626] leading-tight mt-0.5 max-w-[220px] flex items-center gap-1">
             <AlertTriangle className="h-2.5 w-2.5 shrink-0" /> Mais de 6 dias seguidos sem folga
@@ -161,6 +175,7 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
               vacation={vacationDays.includes(d)}
               shift={shiftOn(d)}
               mural={mural}
+              excess={excessDays.has(d) ? `Passou de ${streakLimit} dias seguidos` : null}
               onClick={() => onToggle(emp.id, d)}
               testId={`cell-${emp.id}-${d}`}
             />
@@ -419,7 +434,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
             </>
           )}
           {activeDay !== null ? (
-            <PeakHoursPanel day={activeDay} date={dates[activeDay]} sector={activeSector} sectorMode={modeOf(activeSector)} workloads={workloads} members={visible} schedule={schedule} week={week} />
+            <PeakHoursPanel day={activeDay} date={dates[activeDay]} sector={activeSector} sectorMode={modeOf(activeSector)} workloads={workloads} members={visible} allEmployees={employees} schedule={schedule} week={week} />
           ) : (
           <div className="overflow-x-auto p-3 sm:p-5">
             <table className="w-full border-separate border-spacing-0">
@@ -462,6 +477,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       streakDays={schedule.streak_alerts?.[emp.id]}
                       peaks={peaks}
                       required={OFFS_PER_MODE[modeOf(emp.sector)]}
+                      streakLimit={modeOf(emp.sector) === "5x2" ? 5 : 6}
                       onToggle={onToggle}
                       onExtra={onExtra}
                       shiftOn={(d) => shiftOf(emp, d)}

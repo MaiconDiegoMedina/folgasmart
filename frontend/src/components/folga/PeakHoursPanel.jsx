@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Bar, CartesianGrid, Cell, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Clock, FileUp, Flame, Loader2, Trash2, AlertTriangle } from "lucide-react";
+import { Clock, FileUp, Flame, Loader2, Trash2, AlertTriangle, UserPlus, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { http, errMsg, DAYS, fmtDayMonth } from "@/lib/api";
@@ -104,6 +104,30 @@ const ShiftInputs = ({ shift, fallback, onSave, minutes, breakLen }) => {
   );
 };
 
+// Janela em que alguém de outro setor ajuda aqui: [de, até]
+const LoanInputs = ({ shift, onSave }) => {
+  const [values, setValues] = useState(shift);
+  useEffect(() => { setValues(shift); }, [shift]);
+  const onBlur = (e) => {
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    if (values.join("|") === shift.join("|")) return;
+    const [start, end] = values;
+    if (!start || !end || end <= start) {
+      setValues(shift);
+      return toast.error("Informe de que horas até que horas a pessoa ajuda.");
+    }
+    onSave({ start, break_start: null, break_end: null, end });
+  };
+  const cls = "w-[78px] rounded-md border border-[#C4B5FD] bg-[#F5F3FF] px-1 py-1 text-xs font-mono-data focus:outline-none focus:ring-2 focus:ring-[#6D28D9]";
+  return (
+    <div className="flex items-center gap-1" onBlur={onBlur}>
+      <input type="time" step={300} aria-label="Ajuda de" title="Ajuda de" value={values[0]} onChange={(e) => setValues([e.target.value, values[1]])} className={cls} />
+      <span className="text-[10px] text-[#8A929B] w-[78px] text-center">até</span>
+      <input type="time" step={300} aria-label="Ajuda até" title="Ajuda até" value={values[1]} onChange={(e) => setValues([values[0], e.target.value])} className={cls} />
+    </div>
+  );
+};
+
 const ImportPreview = ({ preview, setPreview, onSave, saving }) => {
   const period = preview.periods.find((p) => p.key === preview.key);
   const total = period.hours.reduce((s, h) => s + h.clients, 0);
@@ -148,7 +172,7 @@ const ImportPreview = ({ preview, setPreview, onSave, saving }) => {
   );
 };
 
-export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workloads = [], members, schedule, week }) => {
+export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workloads = [], members, allEmployees = [], schedule, week }) => {
   const wlOf = (emp) => workloads.find((w) => w.id === emp.workload);
   const minutesOf = (emp) => dailyMinutes(wlOf(emp), sectorMode, day);
   // Efetivos: horário do ponto da jornada, a não ser que tenha um ajuste salvo para o dia
@@ -172,6 +196,24 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
   const working = members.filter((e) => worksOn(schedule, e, day));
   const away = members.filter((e) => !worksOn(schedule, e, day));
 
+  // Ajuda de outro setor: turno salvo com a chave "funcionário@setor" (só a janela em que ajuda)
+  const byId = Object.fromEntries(allEmployees.map((e) => [e.id, e]));
+  const loanKey = (id) => `${id}@${sector}`;
+  const helpers = Object.entries(shifts)
+    .filter(([k]) => k.endsWith(`@${sector}`))
+    .map(([k, shift]) => ({ emp: byId[k.slice(0, k.lastIndexOf("@"))], shift, key: k }))
+    .filter((x) => x.emp && x.emp.sector !== sector);
+  const candidates = allEmployees
+    .filter((e) => e.sector !== sector && e.status !== "inativo" && worksOn(schedule, e, day) && !shifts[loanKey(e.id)])
+    .sort((a, b) => a.sector.localeCompare(b.sector) || a.name.localeCompare(b.name, "pt-BR"));
+  // Gente deste setor ajudando em outro: nessas horas não conta aqui
+  const lentOut = (emp) =>
+    Object.entries(shifts)
+      .filter(([k]) => k.startsWith(`${emp.id}@`) && k !== loanKey(emp.id))
+      .map(([k, shift]) => ({ to: k.slice(k.lastIndexOf("@") + 1), shift }));
+  const lentAt = (emp, h) => lentOut(emp).find((l) => coversHour(l.shift, h));
+  const presentAt = (emp, h) => coversHour(shiftOf(emp), h) && !lentAt(emp, h);
+
   let [lo, hi] = DEFAULT_RANGE;
   if (report?.hours.length) {
     lo = Math.min(...report.hours.map((h) => h.hour));
@@ -184,11 +226,15 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
     lo = Math.min(lo, Number(shift[0].slice(0, 2)));
     hi = Math.max(hi, Number(e.slice(0, 2)) - (e.endsWith(":00") ? 1 : 0));
   }
+  for (const { shift } of helpers) {
+    lo = Math.min(lo, Number(shift[0].slice(0, 2)));
+    hi = Math.max(hi, Number(shift[1].slice(0, 2)) - (shift[1].endsWith(":00") ? 1 : 0));
+  }
   const hours = Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
 
   const peaks = report ? peakHours(report.hours) : [];
   const clientsAt = (h) => report?.hours.find((x) => x.hour === h)?.clients || 0;
-  const coverage = hours.map((h) => working.filter((e) => coversHour(shiftOf(e), h)).length);
+  const coverage = hours.map((h) => working.filter((e) => presentAt(e, h)).length + helpers.filter((x) => coversHour(x.shift, h)).length);
   const staffHours = coverage.reduce((s, c, i) => s + (clientsAt(hours[i]) > 0 ? c : 0), 0);
   const totalClients = hours.reduce((s, h) => s + clientsAt(h), 0);
   const avgRatio = staffHours ? totalClients / staffHours : 0;
@@ -244,6 +290,13 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
     }
   };
 
+  const addHelper = (id) => {
+    if (!id) return;
+    const start = peaks.length ? Math.min(...peaks) : 11;
+    const end = peaks.length ? Math.max(...peaks) + 1 : 14;
+    saveShift(loanKey(id), { start: `${pad(start)}:00`, break_start: null, break_end: null, end: `${pad(Math.min(end, 23))}:00` });
+  };
+
   return (
     <div data-testid="peak-hours-panel" className="p-3 sm:p-5 space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -294,7 +347,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
         )
       )}
 
-      {working.length === 0 ? (
+      {working.length === 0 && helpers.length === 0 && candidates.length === 0 ? (
         <p className="text-sm text-[#575E65]">Ninguém do setor {sector} trabalha neste dia.</p>
       ) : (
         <div className="overflow-x-auto">
@@ -325,6 +378,9 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                       {emp.role}
                       {minutesOf(emp) && <> · {fromMin(minutesOf(emp)).replace(":", "h")}</>}
                     </p>
+                    {lentOut(emp).map((l) => (
+                      <p key={l.to} className="text-[10px] font-semibold text-[#B45309]">ajuda em {l.to} {l.shift[0]}–{l.shift[1]}</p>
+                    ))}
                     {defaultOf(emp) && (shifts[emp.id] ? (
                       <button onClick={() => saveShift(emp.id, null)} className="text-[10px] font-semibold text-[#C2410C] hover:underline no-print" title="Descartar o ajuste e usar o horário da jornada">
                         ajustado · voltar à jornada
@@ -337,15 +393,52 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                   {hours.map((h) => (
                     <td key={h} className="p-0.5">
                       <div
-                        title={onBreak(shiftOf(emp), h) ? "Intervalo" : undefined}
+                        title={lentAt(emp, h) ? `Ajudando em ${lentAt(emp, h).to}` : onBreak(shiftOf(emp), h) ? "Intervalo" : undefined}
                         className={`h-8 rounded ${
-                          coversHour(shiftOf(emp), h) ? "bg-[#15803D]" : onBreak(shiftOf(emp), h) ? "bg-[#BAE6FD]" : peaks.includes(h) ? "bg-[#FEF2F2]" : "bg-[#F2EFE8]"
+                          lentAt(emp, h) && coversHour(shiftOf(emp), h) ? "bg-[#FCD34D]" : coversHour(shiftOf(emp), h) ? "bg-[#15803D]" : onBreak(shiftOf(emp), h) ? "bg-[#BAE6FD]" : peaks.includes(h) ? "bg-[#FEF2F2]" : "bg-[#F2EFE8]"
                         }`}
                       />
                     </td>
                   ))}
                 </tr>
               ))}
+              {helpers.map(({ emp, shift, key }) => (
+                <tr key={key} className="border-t border-[#EFEBE3]">
+                  <td className="py-1.5 pr-3 sticky left-0 bg-white z-10 min-w-[120px]">
+                    <p className="font-semibold text-sm leading-tight flex items-center gap-1">
+                      {emp.name}
+                      <button onClick={() => saveShift(key, null)} className="no-print p-0.5 rounded text-[#8A929B] hover:text-[#DC2626]" aria-label={`Tirar ${emp.name} da ajuda`}>
+                        <X className="h-3 w-3" />
+                      </button>
+                    </p>
+                    <p className="text-[10px] font-semibold text-[#6D28D9]">ajuda · vem de {emp.sector}</p>
+                  </td>
+                  <td className="px-2 no-print"><LoanInputs shift={shift} onSave={(times) => saveShift(key, times)} /></td>
+                  {hours.map((h) => (
+                    <td key={h} className="p-0.5">
+                      <div className={`h-8 rounded ${coversHour(shift, h) ? "bg-[#8B5CF6]" : peaks.includes(h) ? "bg-[#FEF2F2]" : "bg-[#F2EFE8]"}`} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+              {candidates.length > 0 && (
+                <tr className="no-print">
+                  <td colSpan={2 + hours.length} className="pt-2">
+                    <label className="inline-flex items-center gap-1.5 text-xs text-[#6D28D9] font-semibold">
+                      <UserPlus className="h-3.5 w-3.5" />
+                      <select
+                        data-testid="select-helper"
+                        value=""
+                        onChange={(e) => addHelper(e.target.value)}
+                        className="rounded-md border border-[#C4B5FD] bg-[#F5F3FF] px-2 py-1 text-xs text-[#6D28D9]"
+                      >
+                        <option value="">Ajuda de outro setor…</option>
+                        {candidates.map((e) => <option key={e.id} value={e.id}>{e.sector} · {e.name}</option>)}
+                      </select>
+                    </label>
+                  </td>
+                </tr>
+              )}
             </tbody>
             <tfoot>
               <tr>
@@ -372,6 +465,8 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
           <div className="flex gap-4 text-[11px] text-[#575E65] mt-3">
             <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#15803D]" />No setor</span>
             <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#BAE6FD]" />Intervalo</span>
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#8B5CF6]" />Ajuda de outro setor</span>
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FCD34D]" />Ajudando em outro setor</span>
             <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FEF2F2] border border-[#FECACA]" />Pico sem a pessoa</span>
           </div>
           {coverage.some((_, i) => understaffed(i)) && (
