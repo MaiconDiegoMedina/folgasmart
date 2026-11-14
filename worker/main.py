@@ -22,7 +22,7 @@ app.add_middleware(
     allow_origins=["https://folgasmart.pages.dev"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["Content-Type", "Authorization", "X-Admin-Unlock"],
 )
 
 Mode = Literal["6x1", "5x2"]
@@ -66,6 +66,42 @@ def _make_token(session_id: str, expiry: int, signing_key: str) -> str:
     payload = _b64encode(json.dumps({"sid": session_id, "exp": expiry}, separators=(",", ":")).encode())
     signature = hmac.new(signing_key.encode(), payload.encode(), hashlib.sha256).digest()
     return f"{payload}.{_b64encode(signature)}"
+
+
+# Dias anteriores a hoje (horário de Brasília) ficam bloqueados
+BR_TZ = timezone(timedelta(hours=-3))
+ADMIN_UNLOCK_SECONDS = 30 * 60
+LOCKED_MSG = ("Dia já passou: a escala está bloqueada. Só dá para lançar falta ou atestado. "
+              "Para alterar, desbloqueie com a senha do administrador.")
+
+
+def today_br() -> date:
+    return datetime.now(BR_TZ).date()
+
+
+def is_past(week: str, day: int) -> bool:
+    return date.fromisoformat(week) + timedelta(days=day) < today_br()
+
+
+def admin_unlocked(request: Request) -> bool:
+    token = request.headers.get("x-admin-unlock", "")
+    if not token:
+        return False
+    try:
+        _, signing_key = _secrets(request)
+        payload_part, signature_part = token.split(".", 1)
+        expected = hmac.new(signing_key.encode(), f"adm.{payload_part}".encode(), hashlib.sha256).digest()
+        if not hmac.compare_digest(expected, _b64decode(signature_part)):
+            return False
+        payload = json.loads(_b64decode(payload_part))
+        return bool(payload.get("adm")) and int(payload["exp"]) > int(time.time())
+    except Exception:
+        return False
+
+
+def ensure_unlocked(request: Request, week: str, day: int):
+    if is_past(week, day) and not admin_unlocked(request):
+        raise HTTPException(423, LOCKED_MSG)
 
 
 async def require_auth(request: Request) -> str:
@@ -112,7 +148,8 @@ DEFAULT_WORKLOADS = [
 ]
 NEW_COLUMNS = [("employees", "gender"), ("employees", "workload"), ("schedule", "sector_modes"),
                ("schedule", "absence_days"), ("employees", "contract"), ("schedule", "convocations"),
-               ("workloads", "times"), ("workloads", "times_5x2")]
+               ("workloads", "times"), ("workloads", "times_5x2"),
+               ("vacations", "kind")]
 
 
 async def ensure_schema(request: Request) -> None:
@@ -198,6 +235,8 @@ class Schedule(BaseModel):
     convocations: Dict[str, Dict[str, Dict[str, str]]] = Field(default_factory=dict)
     # Calculado a partir dos períodos de férias (não é gravado na escala)
     vacation_days: Dict[str, List[int]] = Field(default_factory=dict)
+    # Calculado a partir dos atestados
+    sick_days: Dict[str, List[int]] = Field(default_factory=dict)
     generated_at: str | None = None
     cct_alerts: Dict[str, str] = Field(default_factory=dict)
     sector_modes: Dict[str, Mode] = Field(default_factory=dict)
@@ -282,6 +321,7 @@ class VacationIn(BaseModel):
     employee_id: str
     start: str
     end: str
+    kind: Literal["ferias", "atestado"] = "ferias"
 
 
 class Vacation(VacationIn):
@@ -389,13 +429,13 @@ async def save_movement(request: Request, movement: Movement) -> None:
            json.dumps(movement.peak_days), movement.total_records, movement.updated_at).run()
 
 
-async def vacation_days_for(request: Request, week: str) -> Dict[str, List[int]]:
-    """Dias da semana (0 = segunda) em férias, por funcionário."""
+async def vacation_days_for(request: Request, week: str, kind: str = "ferias") -> Dict[str, List[int]]:
+    """Dias da semana (0 = segunda) em férias (ou atestado), por funcionário."""
     start = date.fromisoformat(week)
     end = start + timedelta(days=6)
     rows = (await db(request).prepare(
-        "SELECT employee_id, start, end FROM vacations WHERE start <= ? AND end >= ?"
-    ).bind(end.isoformat(), start.isoformat()).all()).results
+        "SELECT employee_id, start, end FROM vacations WHERE start <= ? AND end >= ? AND COALESCE(kind, 'ferias') = ?"
+    ).bind(end.isoformat(), start.isoformat(), kind).all()).results
     days: Dict[str, set] = {}
     for row in rows:
         first, last = date.fromisoformat(row["start"]), date.fromisoformat(row["end"])
@@ -408,7 +448,16 @@ async def vacation_days_for(request: Request, week: str) -> Dict[str, List[int]]
 async def get_schedule(request: Request, week: str) -> Schedule:
     schedule = await load_schedule(request, week)
     schedule.vacation_days = await vacation_days_for(request, week)
+    schedule.sick_days = await vacation_days_for(request, week, "atestado")
     return schedule
+
+
+def merge_days(*dicts: Dict[str, List[int]]) -> Dict[str, List[int]]:
+    out: Dict[str, set] = {}
+    for d in dicts:
+        for k, v in d.items():
+            out.setdefault(k, set()).update(v)
+    return {k: sorted(v) for k, v in out.items()}
 
 
 async def load_schedule(request: Request, week: str) -> Schedule:
@@ -477,7 +526,7 @@ SUNDAY_CYCLE = {"M": "TTFF", "F": "TF"}
 
 
 def sunday_of(schedule: Schedule, emp_id: str) -> str | None:
-    if SUNDAY in schedule.vacation_days.get(emp_id, []):
+    if SUNDAY in schedule.vacation_days.get(emp_id, []) or SUNDAY in schedule.sick_days.get(emp_id, []):
         return "F"
     if emp_id not in schedule.off_days:
         return None
@@ -522,7 +571,7 @@ MAX_STREAK = 6
 
 
 def worked_days(schedule: Schedule, emp_id: str) -> List[bool] | None:
-    vacation = set(schedule.vacation_days.get(emp_id, []))
+    vacation = set(schedule.vacation_days.get(emp_id, [])) | set(schedule.sick_days.get(emp_id, []))
     if emp_id not in schedule.off_days and not vacation:
         accepted = {int(d) for d, c in schedule.convocations.get(emp_id, {}).items() if c.get("status") == "accepted"}
         return [day in accepted for day in range(7)] if accepted else None
@@ -826,12 +875,46 @@ async def delete_workload(workload_id: str, request: Request):
     return {"ok": True}
 
 
+class AdminUnlockIn(BaseModel):
+    password: str
+
+
+@api.post("/admin/unlock")
+async def admin_unlock(data: AdminUnlockIn, request: Request):
+    admin_password = getattr(request.scope["env"], "FOLGASMART_ADMIN_PASSWORD", None)
+    if not admin_password:
+        raise HTTPException(503, "Senha do administrador não configurada no Cloudflare (FOLGASMART_ADMIN_PASSWORD).")
+    _, signing_key = _secrets(request)
+    database = db(request)
+    now = int(time.time())
+    key = "adm:" + request.headers.get("cf-connecting-ip", "unknown")
+    attempt = await database.prepare("SELECT window_started, attempts FROM auth_attempts WHERE ip = ?").bind(key).first()
+    window_started = int(attempt["window_started"]) if attempt else now
+    attempts = int(attempt["attempts"]) if attempt else 0
+    if now - window_started >= LOGIN_WINDOW_SECONDS:
+        window_started, attempts = now, 0
+    if attempts >= LOGIN_MAX_ATTEMPTS:
+        raise HTTPException(429, "Muitas tentativas. Aguarde 15 minutos e tente novamente.")
+    if not hmac.compare_digest(data.password.encode(), str(admin_password).encode()):
+        await database.prepare(
+            """INSERT INTO auth_attempts (ip, window_started, attempts) VALUES (?, ?, ?)
+            ON CONFLICT(ip) DO UPDATE SET window_started=excluded.window_started, attempts=excluded.attempts"""
+        ).bind(key, window_started, attempts + 1).run()
+        raise HTTPException(403, "Senha do administrador incorreta.")
+    await database.prepare("DELETE FROM auth_attempts WHERE ip = ?").bind(key).run()
+    expiry = now + ADMIN_UNLOCK_SECONDS
+    payload = _b64encode(json.dumps({"adm": 1, "exp": expiry}, separators=(",", ":")).encode())
+    signature = hmac.new(signing_key.encode(), f"adm.{payload}".encode(), hashlib.sha256).digest()
+    return {"token": f"{payload}.{_b64encode(signature)}", "expires_at": expiry}
+
+
 @api.get("/vacations", response_model=List[Vacation])
 async def vacations_api(request: Request):
     rows = (await db(request).prepare(
-        "SELECT id, employee_id, start, end FROM vacations ORDER BY start"
+        "SELECT id, employee_id, start, end, kind FROM vacations ORDER BY start"
     ).all()).results
-    return [Vacation(id=r["id"], employee_id=r["employee_id"], start=r["start"], end=r["end"]) for r in rows]
+    return [Vacation(id=r["id"], employee_id=r["employee_id"], start=r["start"], end=r["end"],
+                     kind=r["kind"] or "ferias") for r in rows]
 
 
 @api.post("/vacations", response_model=Vacation)
@@ -840,21 +923,30 @@ async def create_vacation(data: VacationIn, request: Request):
         first, last = date.fromisoformat(data.start), date.fromisoformat(data.end)
     except ValueError:
         raise HTTPException(400, "Datas inválidas. Use AAAA-MM-DD.")
+    what = "do atestado" if data.kind == "atestado" else "das férias"
     if last < first:
-        raise HTTPException(400, "O fim das férias precisa ser depois do início.")
-    if (last - first).days > 60:
-        raise HTTPException(400, "Período de férias maior que 60 dias.")
+        raise HTTPException(400, f"O fim {what} precisa ser depois do início.")
+    if (last - first).days > (180 if data.kind == "atestado" else 60):
+        raise HTTPException(400, f"Período {what} longo demais.")
+    # Atestado pode ser lançado em dia que já passou; férias no passado só com a senha do administrador
+    if data.kind == "ferias" and first < today_br() and not admin_unlocked(request):
+        raise HTTPException(423, "Férias com dias que já passaram: desbloqueie com a senha do administrador.")
     if not await db(request).prepare("SELECT id FROM employees WHERE id = ?").bind(data.employee_id).first():
         raise HTTPException(404, "Funcionário não encontrado")
-    item = Vacation(id=str(uuid.uuid4()), employee_id=data.employee_id, start=first.isoformat(), end=last.isoformat())
+    item = Vacation(id=str(uuid.uuid4()), employee_id=data.employee_id, start=first.isoformat(), end=last.isoformat(),
+                    kind=data.kind)
     await db(request).prepare(
-        "INSERT INTO vacations (id, employee_id, start, end, created_at) VALUES (?, ?, ?, ?, ?)"
-    ).bind(item.id, item.employee_id, item.start, item.end, now_iso()).run()
+        "INSERT INTO vacations (id, employee_id, start, end, kind, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).bind(item.id, item.employee_id, item.start, item.end, item.kind, now_iso()).run()
     return item
 
 
 @api.delete("/vacations/{vacation_id}")
 async def delete_vacation(vacation_id: str, request: Request):
+    row = await db(request).prepare("SELECT start, kind FROM vacations WHERE id = ?").bind(vacation_id).first()
+    if row and (row["kind"] or "ferias") == "ferias" and date.fromisoformat(row["start"]) < today_br() \
+            and not admin_unlocked(request):
+        raise HTTPException(423, "Férias com dias que já passaram: desbloqueie com a senha do administrador.")
     await db(request).prepare("DELETE FROM vacations WHERE id = ?").bind(vacation_id).run()
     return {"ok": True}
 
@@ -904,6 +996,9 @@ async def schedule_api(week: str, request: Request):
 @api.post("/schedule/generate", response_model=Schedule)
 async def generate(data: GenerateIn, request: Request):
     week = week_start(data.week)
+    if is_past(week, 0) and not admin_unlocked(request):
+        raise HTTPException(423, "Esta semana já começou e os dias passados estão bloqueados. "
+                                 "Para gerar de novo, desbloqueie com a senha do administrador.")
     employees = await list_employees(request)
     mov = await get_movement(request)
     week_date = date.fromisoformat(week)
@@ -934,8 +1029,9 @@ async def generate(data: GenerateIn, request: Request):
         if plan:
             sunday_rule[emp.id] = plan
     vacation = await vacation_days_for(request, week)
+    sick = await vacation_days_for(request, week, "atestado")
     off_days = compute_schedule(target, mov, data.mode, rotate, previous_days, sunday_rule,
-                                {k.lower(): v for k, v in snapshot.items()}, vacation)
+                                {k.lower(): v for k, v in snapshot.items()}, merge_days(vacation, sick))
     if sector_key:
         # Refaz só o setor escolhido: folgas, EXTRA e suspensões dos outros setores ficam como estão
         sched = await get_schedule(request, week)
@@ -951,6 +1047,7 @@ async def generate(data: GenerateIn, request: Request):
         sched = Schedule(week=week, mode=data.mode, generated_at=now_iso(), off_days=off_days, sector_modes=snapshot,
                          convocations=previous.convocations)
     sched.vacation_days = vacation
+    sched.sick_days = sick
     await save_schedule(request, sched)
     return await with_alerts(request, sched, employees, history[:2])
 
@@ -964,6 +1061,24 @@ async def toggle_cell(data: CellToggle, request: Request):
         raise HTTPException(404, "Funcionário não encontrado")
     sched = await get_schedule(request, week_start(data.week))
     contract = employee["contract"] or ("intermitente" if "intermitente" in (employee["role"] or "").lower() else "efetivo")
+    if is_past(sched.week, data.day) and not admin_unlocked(request):
+        # Dia passado: só lança ou retira FALTA de quem estava escalado para trabalhar
+        off = sched.off_days.get(data.employee_id, [])
+        extra = sched.extra_days.get(data.employee_id, [])
+        absence = list(sched.absence_days.get(data.employee_id, []))
+        resting = (data.day in off and data.day not in extra) or data.day in sched.suspension_days.get(data.employee_id, []) \
+            or data.day in sched.vacation_days.get(data.employee_id, []) or data.day in sched.sick_days.get(data.employee_id, [])
+        if contract == "intermitente":
+            resting = sched.convocations.get(data.employee_id, {}).get(str(data.day), {}).get("status") != "accepted"
+        if data.extra or (resting and data.day not in absence):
+            raise HTTPException(423, LOCKED_MSG)
+        if data.day in absence:
+            absence.remove(data.day)
+        else:
+            absence.append(data.day)
+        sched.absence_days[data.employee_id] = sorted(absence)
+        await save_schedule(request, sched)
+        return await with_alerts(request, sched)
     if contract == "intermitente":
         if data.extra:
             raise HTTPException(400, "Intermitente não tem folga para marcar EXTRA.")
@@ -1071,6 +1186,7 @@ async def week_shifts_api(week: str, request: Request) -> Dict[str, Dict[str, Li
 @api.put("/shifts", response_model=DayShifts)
 async def set_shift(data: ShiftIn, request: Request):
     week = week_start(data.week)
+    ensure_unlocked(request, week, data.day)
     current = await get_shifts(request, week, data.day)
     if data.start and data.end:
         if data.end <= data.start:

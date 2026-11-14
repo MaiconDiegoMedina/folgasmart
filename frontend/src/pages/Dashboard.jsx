@@ -6,6 +6,7 @@ import { MovementPanel } from "@/components/folga/MovementPanel";
 import { EmployeesPanel } from "@/components/folga/EmployeesPanel";
 import { WorkloadsPanel } from "@/components/folga/WorkloadsPanel";
 import { ScheduleGrid } from "@/components/folga/ScheduleGrid";
+import { UnlockDialog } from "@/components/folga/UnlockDialog";
 import { useAuth } from "@/components/LoginGate";
 
 export default function Dashboard() {
@@ -84,6 +85,7 @@ export default function Dashboard() {
     <div className="grain min-h-screen bg-[#F9F8F5] text-[#191C1E]">
       <Header onLogout={logout} employees={scheduled} movement={movement} schedule={schedule} generating={generating} onGenerate={generate} generateSector={activeSector} />
       <main className="relative z-10 mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        <UnlockDialog />
         <ScheduleGrid employees={scheduled} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} workloads={workloads} sector={sector} onSectorChange={setSector} />
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 no-print">
           <div className="lg:col-span-2"><MovementPanel movement={movement} onChange={setMovement} /></div>

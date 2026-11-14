@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { toast } from "sonner";
-import { Flame, AlertTriangle, Users, CalendarDays, Printer } from "lucide-react";
+import { Flame, AlertTriangle, Users, CalendarDays, Printer, Lock } from "lucide-react";
+import { UnlockButton, useUnlock } from "@/components/folga/UnlockDialog";
 import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate, http } from "@/lib/api";
 import { defaultShiftOf } from "@/lib/workloadTimes";
 import { WeekNav } from "@/components/folga/WeekNav";
@@ -17,8 +18,9 @@ const CONVOCATION_STYLE = {
 };
 const CONVOCATION_NEXT = { none: "convocar", pending: "marcar aceite", accepted: "marcar recusa", declined: "limpar" };
 
-const ConvocationCell = ({ conv, date, vacation, shift, mural, excess, onClick, testId }) => {
+const ConvocationCell = ({ conv, date, vacation, sick, shift, mural, excess, onClick, testId }) => {
   if (vacation) return <Cell status="ferias" testId={testId} />;
+  if (sick) return <Cell status="atestado" testId={testId} />;
   const state = conv?.status || "none";
   // Mural: só o dia aceito aparece; convocação pendente ou recusada fica em branco
   if (mural) {
@@ -51,7 +53,7 @@ const ShiftText = ({ shift }) => (
   </span>
 );
 
-const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp, shift, mural, onClick, testId }) => {
+const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp, shift, mural, locked, onClick, testId }) => {
   // Mural: falta acontece depois da impressão (vale o horário escalado) e não mostra alertas
   const absent = mural ? false : absentProp;
   const cct = mural ? undefined : cctProp;
@@ -66,16 +68,27 @@ const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp
       </div>
     );
   }
+  if (status === "atestado") {
+    return (
+      <div
+        data-testid={testId}
+        className="w-full h-11 flex items-center justify-center rounded-lg text-[10px] font-extrabold tracking-wider bg-[#F0FDFA] border border-[#99F6E4] text-[#0F766E] font-mono-data select-none cursor-not-allowed"
+        title="Atestado médico (lançado no status do funcionário)"
+      >
+        ATESTADO
+      </div>
+    );
+  }
 
   let texto = shift ? <ShiftText shift={shift} /> : "TRAB.";
   let classesEstilo = "bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D] hover:bg-[#DCFCE7]"; // Trabalhando
 
-  if (extra) {
-    texto = "FOLGA"; // A cor lilás indica que é EXTRA
-    classesEstilo = "bg-[#F5F3FF] border-[#C4B5FD] text-[#6D28D9] hover:bg-[#EDE9FE]"; // Trabalha na folga
-  } else if (absent) {
+  if (absent) {
     texto = "FALTA";
     classesEstilo = "bg-[#FFF7ED] border-[#FDBA74] text-[#C2410C] hover:bg-[#FFEDD5]"; // Falta
+  } else if (extra) {
+    texto = "FOLGA"; // A cor lilás indica que é EXTRA
+    classesEstilo = "bg-[#F5F3FF] border-[#C4B5FD] text-[#6D28D9] hover:bg-[#EDE9FE]"; // Trabalha na folga
   } else if (susp) {
     texto = "SUSP.";
     classesEstilo = "bg-[#FFF1F2] border-[#FECDD3] text-[#E11D48] hover:bg-[#FFE4E6]"; // Suspensão
@@ -104,7 +117,13 @@ const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp
       }}
       title={
         cct ||
-        (extra
+        (locked
+          ? absent
+            ? "Dia bloqueado · Falta · clique: retirar a falta"
+            : off || susp
+              ? "Dia bloqueado · só falta ou atestado"
+              : "Dia bloqueado · clique: lançar falta"
+          : extra
           ? "Extra: trabalha no dia de folga (clique para voltar a folga)"
           : absent
             ? "Falta · clique: volta a trabalhar"
@@ -114,14 +133,14 @@ const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp
                 ? "Folga · clique: suspensão · shift + clique: EXTRA"
                 : "Trabalha · clique: folga")
       }
-      className={`w-full h-11 rounded-lg text-[11px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[#0F172A] ${classesEstilo} ${cct ? "ring-2 ring-[#DC2626] ring-offset-1" : ""}`}
+      className={`w-full h-11 rounded-lg text-[11px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[#0F172A] ${classesEstilo} ${cct ? "ring-2 ring-[#DC2626] ring-offset-1" : ""} ${locked && !absent ? "opacity-70" : ""}`}
     >
       {texto}
     </button>
   );
 };
 
-const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx, schedule, dates, shiftOn, mural, streakLimit = 6 }) => {
+const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx, schedule, dates, shiftOn, mural, streakLimit = 6, sickDays = [], lockedDay = () => false }) => {
   const intermittent = isIntermittent(emp);
   // Intermitente: dias aceitos depois do limite de dias seguidos (6 no 6x1, 5 no 5x2)
   const excessDays = new Set();
@@ -173,6 +192,7 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
               conv={convocationOf(schedule, emp.id, d)}
               date={dates[d]}
               vacation={vacationDays.includes(d)}
+              sick={sickDays.includes(d)}
               shift={shiftOn(d)}
               mural={mural}
               excess={excessDays.has(d) ? `Passou de ${streakLimit} dias seguidos` : null}
@@ -189,7 +209,8 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
             peak={peaks.includes(d)}
             shift={shiftOn(d)}
             mural={mural}
-            status={vacationDays.includes(d) ? "ferias" : emp.status}
+            locked={lockedDay(d)}
+            status={vacationDays.includes(d) ? "ferias" : sickDays.includes(d) ? "atestado" : emp.status}
             // Clique: TRAB. -> FOLGA -> SUSP. -> FALTA -> TRAB. Shift + clique numa folga marca EXTRA.
             onClick={(e) => (e.shiftKey ? onExtra(emp, d, offs.includes(d)) : onToggle(emp.id, d))}
             testId={`cell-${emp.id}-${d}`}
@@ -328,12 +349,17 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   const absencesOf = (id) => schedule.absence_days?.[id] || [];
   const vacationOf = (id) => schedule.vacation_days?.[id] || [];
   const extrasOf = (id) => schedule.extra_days?.[id] || [];
+  const sickOf = (id) => schedule.sick_days?.[id] || [];
+  // Dias antes de hoje ficam bloqueados (só falta e atestado), a não ser com a senha do administrador
+  const unlockedUntil = useUnlock();
+  const pastDay = (d) => isoDate(dates[d]) < today;
+  const lockedDay = (d) => pastDay(d) && !unlockedUntil;
   // EXTRA conta como dia trabalhado mesmo sendo folga
   // Suspensão e falta não contam como em operação
   const byId = Object.fromEntries(employees.map((e) => [e.id, e]));
   const worksOn = (id, d) =>
-    isIntermittent(byId[id]) ? acceptedOn(schedule, id, d) && !vacationOf(id).includes(d) :
-    (!offsOf(id).includes(d) || extrasOf(id).includes(d)) && !suspensionsOf(id).includes(d) && !absencesOf(id).includes(d) && !vacationOf(id).includes(d);
+    isIntermittent(byId[id]) ? acceptedOn(schedule, id, d) && !vacationOf(id).includes(d) && !sickOf(id).includes(d) :
+    (!offsOf(id).includes(d) || extrasOf(id).includes(d)) && !suspensionsOf(id).includes(d) && !absencesOf(id).includes(d) && !vacationOf(id).includes(d) && !sickOf(id).includes(d);
   const sectors = [...new Set(employees.map((e) => e.sector))].sort((a, b) => a.localeCompare(b));
   const activeSector = sectors.includes(sector) ? sector : "all";
   const activeDay = activeSector === "all" ? null : dayView;
@@ -400,6 +426,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
         >
           <Printer className="h-3.5 w-3.5" /> Versão para o mural
         </button>
+        {DAYS_SHORT.some((_, d) => pastDay(d)) && <UnlockButton />}
         {!mural && <div className="flex flex-wrap justify-end gap-4 text-xs text-[#575E65]">
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#DCFCE7] border border-[#BBF7D0]" />Trabalha</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FEF3C7] border border-[#FCD34D]" />Folga</span>
@@ -408,6 +435,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FFEDD5] border border-[#FDBA74]" />Falta</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F0F9FF] border border-[#7DD3FC]" />Convocado (intermitente)</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F1F5F9] border border-[#CBD5E1]" />Férias</span>
+          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F0FDFA] border border-[#99F6E4]" />Atestado</span>
           <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F5F3FF] border border-[#C4B5FD]" />Extra (shift + clique na folga)</span>
         </div>}
         </div>
@@ -434,7 +462,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
             </>
           )}
           {activeDay !== null ? (
-            <PeakHoursPanel day={activeDay} date={dates[activeDay]} sector={activeSector} sectorMode={modeOf(activeSector)} workloads={workloads} members={visible} allEmployees={employees} schedule={schedule} week={week} />
+            <PeakHoursPanel day={activeDay} date={dates[activeDay]} sector={activeSector} sectorMode={modeOf(activeSector)} workloads={workloads} members={visible} allEmployees={employees} schedule={schedule} week={week} locked={lockedDay(activeDay)} />
           ) : (
           <div className="overflow-x-auto p-3 sm:p-5">
             <table className="w-full border-separate border-spacing-0">
@@ -450,7 +478,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       className={`pb-3 px-1 ${activeSector !== "all" ? "cursor-pointer" : ""}`}
                     >
                       <div className={`rounded-lg py-1.5 text-xs font-bold uppercase tracking-wider ${peaks.includes(i) ? "bg-[#DC2626] text-white" : "text-[#575E65]"} ${isoDate(dates[i]) === today ? "ring-2 ring-offset-2 ring-[#0F172A]" : ""}`}>
-                        <span className="inline-flex items-center gap-1">{peaks.includes(i) && <Flame className="h-3 w-3" />}{d}</span>
+                        <span className="inline-flex items-center gap-1">{peaks.includes(i) && <Flame className="h-3 w-3" />}{lockedDay(i) && !mural && <Lock className="h-3 w-3 opacity-70" />}{d}</span>
                         <span data-testid={`header-date-${i}`} className="block font-mono-data text-[10px] font-medium opacity-80 normal-case">{fmtDayMonth(dates[i])}</span>
                       </div>
                     </th>
@@ -478,6 +506,8 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       peaks={peaks}
                       required={OFFS_PER_MODE[modeOf(emp.sector)]}
                       streakLimit={modeOf(emp.sector) === "5x2" ? 5 : 6}
+                      sickDays={sickOf(emp.id)}
+                      lockedDay={lockedDay}
                       onToggle={onToggle}
                       onExtra={onExtra}
                       shiftOn={(d) => shiftOf(emp, d)}

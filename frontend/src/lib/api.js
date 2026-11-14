@@ -7,9 +7,24 @@ const TOKEN_KEY = "folgasmart_access_token";
 export const getAccessToken = () => sessionStorage.getItem(TOKEN_KEY);
 export const clearAccessToken = () => sessionStorage.removeItem(TOKEN_KEY);
 
+// Desbloqueio dos dias passados pela senha do administrador (só em memória, expira em 30 min)
+let adminUnlock = null;
+export const adminUnlockedUntil = () => (adminUnlock && adminUnlock.expiresAt > Date.now() ? adminUnlock.expiresAt : null);
+const unlockChanged = () => window.dispatchEvent(new Event("folgasmart:unlock-changed"));
+export const unlockAdmin = async (password) => {
+  const { data } = await http.post("/admin/unlock", { password });
+  adminUnlock = { token: data.token, expiresAt: data.expires_at * 1000 };
+  unlockChanged();
+};
+export const lockAdmin = () => {
+  adminUnlock = null;
+  unlockChanged();
+};
+
 http.interceptors.request.use((config) => {
   const token = getAccessToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  if (adminUnlockedUntil()) config.headers["X-Admin-Unlock"] = adminUnlock.token;
   return config;
 });
 
@@ -19,6 +34,8 @@ http.interceptors.response.use((response) => response, (error) => {
     clearAccessToken();
     window.dispatchEvent(new Event("folgasmart:auth-expired"));
   }
+  // Dia bloqueado: pede a senha do administrador
+  if (error.response?.status === 423) window.dispatchEvent(new Event("folgasmart:locked"));
   return Promise.reject(error);
 });
 

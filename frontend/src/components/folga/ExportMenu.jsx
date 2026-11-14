@@ -18,7 +18,8 @@ const buildCsv = (employees, schedule) => {
     const st = convocationOf(schedule, e.id, i)?.status;
     return st === "accepted" ? "TRABALHA" : st === "pending" ? "CONVOCADO" : st === "declined" ? "RECUSOU" : "-";
   };
-  const label = (e, i) => (vacation(e, i) ? "FÉRIAS" : isIntermittent(e) ? intermittentLabel(e, i) : absent(e, i) ? "FALTA" : susp(e, i) ? "SUSPENSÃO" : extra(e, i) ? "EXTRA" : off(e, i) ? "FOLGA" : "TRABALHA");
+  const sick = (e, i) => (schedule.sick_days?.[e.id] || []).includes(i);
+  const label = (e, i) => (vacation(e, i) ? "FÉRIAS" : sick(e, i) ? "ATESTADO" : isIntermittent(e) ? intermittentLabel(e, i) : absent(e, i) ? "FALTA" : susp(e, i) ? "SUSPENSÃO" : extra(e, i) ? "EXTRA" : off(e, i) ? "FOLGA" : "TRABALHA");
   const rows = sorted.map((e) => [e.sector, e.name, e.role, ...DAYS.map((_, i) => label(e, i))].join(";"));
   const coverage = DAYS.map((_, i) => employees.filter((e) => label(e, i) === "TRABALHA" || label(e, i) === "EXTRA").length);
   return [header, ...rows, ["Em operação", "", "", ...coverage].join(";")].join("\n");

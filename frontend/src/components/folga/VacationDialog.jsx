@@ -7,29 +7,32 @@ import { http, errMsg } from "@/lib/api";
 
 export const fmtDate = (iso) => iso.split("-").reverse().join("/");
 
-// Janela para informar o período de férias; só esses dias ficam como FÉRIAS na escala
-export const VacationDialog = ({ employee, vacations, onClose, onSaved }) => {
+// Janela para informar o período de férias ou atestado; só esses dias mudam na escala
+export const VacationDialog = ({ kind = "ferias", employee, vacations, onClose, onSaved }) => {
+  const sick = kind === "atestado";
+  const noun = sick ? "atestado" : "férias";
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => { setStart(""); setEnd(""); }, [employee]);
 
-  const mine = employee ? vacations.filter((v) => v.employee_id === employee.id) : [];
+  const mine = employee ? vacations.filter((v) => v.employee_id === employee.id && (v.kind || "ferias") === kind) : [];
 
   const save = async () => {
-    if (!start || !end) return toast.error("Informe o início e o fim das férias.");
-    if (end < start) return toast.error("O fim das férias precisa ser depois do início.");
+    if (!start || !end) return toast.error(`Informe o início e o fim ${sick ? "do atestado" : "das férias"}.`);
+    if (end < start) return toast.error(`O fim ${sick ? "do atestado" : "das férias"} precisa ser depois do início.`);
     setBusy(true);
     try {
-      await http.post("/vacations", { employee_id: employee.id, start, end });
+      await http.post("/vacations", { employee_id: employee.id, start, end, kind });
       // Quem estava com o status antigo "Férias" (a semana toda) volta a ativo: agora vale só o período
-      if (employee.status === "ferias") {
+      if (!sick && employee.status === "ferias") {
         await http.put(`/employees/${employee.id}`, {
           name: employee.name, role: employee.role, sector: employee.sector,
           status: "ativo", gender: employee.gender || null, workload: employee.workload || null,
+          contract: employee.contract || null,
         });
       }
-      toast.success(`Férias de ${employee.name}: ${fmtDate(start)} a ${fmtDate(end)}`);
+      toast.success(`${sick ? "Atestado" : "Férias"} de ${employee.name}: ${fmtDate(start)} a ${fmtDate(end)}`);
       onSaved();
       onClose();
     } catch (err) {
@@ -42,7 +45,7 @@ export const VacationDialog = ({ employee, vacations, onClose, onSaved }) => {
   const remove = async (v) => {
     try {
       await http.delete(`/vacations/${v.id}`);
-      toast.success("Período de férias removido");
+      toast.success(`Período de ${noun} removido`);
       onSaved();
     } catch (err) {
       toast.error(errMsg(err));
@@ -55,8 +58,11 @@ export const VacationDialog = ({ employee, vacations, onClose, onSaved }) => {
     <Dialog open={!!employee} onOpenChange={(open) => !open && onClose()}>
       <DialogContent data-testid="vacation-dialog" className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Férias · {employee?.name}</DialogTitle>
-          <DialogDescription>Informe o período. Só esses dias ficam como férias na escala.</DialogDescription>
+          <DialogTitle>{sick ? "Atestado" : "Férias"} · {employee?.name}</DialogTitle>
+          <DialogDescription>
+            Informe o período. Só esses dias ficam como {sick ? "atestado" : "férias"} na escala.
+            {sick && " Pode ser lançado também em dias que já passaram."}
+          </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-3">
           <label className="text-xs font-semibold text-[#575E65] space-y-1">
@@ -86,7 +92,7 @@ export const VacationDialog = ({ employee, vacations, onClose, onSaved }) => {
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Cancelar</Button>
           <Button disabled={busy} onClick={save} className="bg-[#0F172A] hover:bg-[#1E293B] text-white">
-            {busy && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Salvar férias
+            {busy && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Salvar {noun}
           </Button>
         </DialogFooter>
       </DialogContent>

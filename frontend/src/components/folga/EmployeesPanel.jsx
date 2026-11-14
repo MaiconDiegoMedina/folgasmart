@@ -73,6 +73,8 @@ const EmployeeForm = ({ sectors, workloads, onSaved }) => {
 export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onChange }) => {
   const sectors = [...new Set(employees.map((e) => e.sector))];
   const [vacationFor, setVacationFor] = useState(null);
+  const [leaveKind, setLeaveKind] = useState("ferias");
+  const openLeave = (emp, kind) => { setLeaveKind(kind); setVacationFor(emp); };
   const [query, setQuery] = useState("");
   const q = fold(query.trim());
   const list = employees
@@ -141,8 +143,14 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
               <p className="text-sm font-semibold truncate">{e.name}</p>
               <p className="text-xs text-[#8A929B] truncate">{e.role} · <span className="text-[#575E65]">{e.sector}</span></p>
               {upcoming(e).map((v) => (
-                <button key={v.id} onClick={() => setVacationFor(e)} className="block text-[10px] font-semibold text-[#475569] bg-[#F1F5F9] rounded px-1.5 py-0.5 mt-0.5 hover:bg-[#E2E8F0]">
-                  Férias {fmtDate(v.start)} a {fmtDate(v.end)}
+                <button
+                  key={v.id}
+                  onClick={() => openLeave(e, v.kind || "ferias")}
+                  className={`block text-[10px] font-semibold rounded px-1.5 py-0.5 mt-0.5 ${
+                    v.kind === "atestado" ? "text-[#0F766E] bg-[#F0FDFA] hover:bg-[#CCFBF1]" : "text-[#475569] bg-[#F1F5F9] hover:bg-[#E2E8F0]"
+                  }`}
+                >
+                  {v.kind === "atestado" ? "Atestado" : "Férias"} {fmtDate(v.start)} a {fmtDate(v.end)}
                 </button>
               ))}
             </div>
@@ -184,14 +192,15 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
               aria-label="Status"
               value={e.status || "ativo"}
               onChange={(evt) =>
-                evt.target.value === "ferias"
-                  ? setVacationFor(e) // Férias: abre a janela para informar o período
+                evt.target.value === "ferias" || evt.target.value === "atestado"
+                  ? openLeave(e, evt.target.value) // Férias e atestado: abre a janela para informar o período
                   : update(e, { status: evt.target.value }, `Status de ${e.name} atualizado para ${evt.target.value}`)
               }
               className={selectCls}
             >
               <option value="ativo">Ativo</option>
               <option value="ferias">{e.status === "ferias" ? "Férias (semana toda)" : "Férias…"}</option>
+              <option value="atestado">Atestado…</option>
               {/* Suspensão e falta agora são marcadas direto na escala; opções só para cadastros antigos */}
               {e.status === "suspensao" && <option value="suspensao">Suspensão</option>}
               {e.status === "falta" && <option value="falta">Falta</option>}
@@ -204,7 +213,7 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
           </li>
         ))}
       </ul>
-      <VacationDialog employee={vacationFor} vacations={vacations} onClose={() => setVacationFor(null)} onSaved={onChange} />
+      <VacationDialog kind={leaveKind} employee={vacationFor} vacations={vacations} onClose={() => setVacationFor(null)} onSaved={onChange} />
     </section>
   );
 };

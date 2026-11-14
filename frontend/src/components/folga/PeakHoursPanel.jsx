@@ -23,6 +23,7 @@ const readText = async (file) => {
 const worksOn = (schedule, emp, day) => {
   if (emp.status === "ferias") return false;
   if ((schedule.vacation_days?.[emp.id] || []).includes(day)) return false;
+  if ((schedule.sick_days?.[emp.id] || []).includes(day)) return false;
   if (isIntermittent(emp)) return acceptedOn(schedule, emp.id, day);
   if ((schedule.suspension_days?.[emp.id] || []).includes(day)) return false;
   if ((schedule.absence_days?.[emp.id] || []).includes(day)) return false;
@@ -196,7 +197,7 @@ const ImportPreview = ({ preview, setPreview, onSave, saving }) => {
   );
 };
 
-export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workloads = [], members, allEmployees = [], schedule, week }) => {
+export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workloads = [], members, allEmployees = [], schedule, week, locked = false }) => {
   const wlOf = (emp) => workloads.find((w) => w.id === emp.workload);
   const minutesOf = (emp) => dailyMinutes(wlOf(emp), sectorMode, day);
   // Efetivos: horário do ponto da jornada, a não ser que tenha um ajuste salvo para o dia
@@ -343,6 +344,12 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
           <input ref={fileRef} type="file" accept=".csv,.txt,text/csv,text/plain" className="hidden" onChange={(e) => onFile(e.target.files[0])} />
         </div>
       </div>
+
+      {locked && (
+        <p className="no-print text-xs text-[#B45309] bg-[#FFFBEB] border border-[#FCD34D] rounded-lg px-3 py-2">
+          Este dia já passou: os horários estão bloqueados. Para alterar, desbloqueie com a senha do administrador.
+        </p>
+      )}
 
       {preview && <ImportPreview preview={preview} setPreview={setPreview} onSave={saveReport} saving={saving} />}
 
