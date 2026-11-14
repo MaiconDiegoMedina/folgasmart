@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Bar, CartesianGrid, Cell, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Clock, FileUp, Flame, Loader2, Trash2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { http, errMsg, DAYS, fmtDayMonth } from "@/lib/api";
 import { isIntermittent, acceptedOn } from "@/lib/convocation";
+import { defaultShiftOf, fromMin, toMin } from "@/lib/workloadTimes";
 import { parseHourlyReport, singleWeekday, peakHours, coversHour, onBreak } from "@/lib/hourlyReport";
 
 const DEFAULT_RANGE = [7, 22];
@@ -42,8 +43,6 @@ const dailyMinutes = (wl, mode, day) => {
 };
 // Intervalo: o da jornada acima de 6h; 15 min entre 4h e 6h; nenhum até 4h
 const breakFor = (wl, minutes) => (minutes > 360 ? wl?.break_minutes ?? 60 : minutes > 240 ? 15 : 0);
-const fromMin = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
-const toMin = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
 
 // Sugere intervalo e saída a partir da entrada (intervalo após 4h, ou no meio do turno se for curto)
 const suggestShift = (start, minutes, breakLen) => {
@@ -56,16 +55,22 @@ const suggestShift = (start, minutes, breakLen) => {
   return [start, fromMin(at), fromMin(at + breakLen), fromMin(end)];
 };
 
-const ShiftInputs = ({ shift, onSave, minutes, breakLen }) => {
-  const [values, setValues] = useState(() => toFields(shift));
-  useEffect(() => { setValues(toFields(shift)); }, [shift]);
+const ShiftInputs = ({ shift, fallback, onSave, minutes, breakLen }) => {
+  const base = shift || fallback;
+  const [values, setValues] = useState(() => toFields(base));
+  useEffect(() => { setValues(toFields(base)); }, [base]);
+  const usingDefault = !shift && !!fallback && values.join("|") === toFields(fallback).join("|");
 
   // Salva só quando o foco sai dos quatro campos
   const onBlur = (e) => {
     if (e.currentTarget.contains(e.relatedTarget)) return;
     const [start, bs, be, end] = values;
-    if (values.join("|") === toFields(shift).join("|")) return;
-    if (!start && !bs && !be && !end) return onSave(null);
+    if (values.join("|") === toFields(base).join("|")) return;
+    if (!start && !bs && !be && !end) {
+      if (fallback) setValues(toFields(fallback)); // limpar volta para o horário da jornada
+      return shift ? onSave(null) : undefined;
+    }
+    if (fallback && !shift && values.join("|") === toFields(fallback).join("|")) return;
     if (!start || !end) return toast.error("Informe a entrada e a saída do expediente.");
     if (end <= start) return toast.error("A saída precisa ser depois da entrada.");
     if (!!bs !== !!be) return toast.error("Informe a saída e a volta do intervalo.");
@@ -92,7 +97,7 @@ const ShiftInputs = ({ shift, onSave, minutes, breakLen }) => {
               return v.map((x, j) => (j === i ? value : x));
             });
           }}
-          className={`${cls} ${i === 1 || i === 2 ? "bg-[#F0F9FF]" : ""}`}
+          className={`${cls} ${i === 1 || i === 2 ? "bg-[#F0F9FF]" : ""} ${usingDefault ? "text-[#8A929B]" : ""}`}
         />
       ))}
     </div>
@@ -146,6 +151,9 @@ const ImportPreview = ({ preview, setPreview, onSave, saving }) => {
 export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workloads = [], members, schedule, week }) => {
   const wlOf = (emp) => workloads.find((w) => w.id === emp.workload);
   const minutesOf = (emp) => dailyMinutes(wlOf(emp), sectorMode, day);
+  // Efetivos: horário do ponto da jornada, a não ser que tenha um ajuste salvo para o dia
+  const defaultOf = (emp) => (isIntermittent(emp) ? null : defaultShiftOf(wlOf(emp), sectorMode, day));
+  const shiftOf = (emp) => shifts[emp.id] || defaultOf(emp);
   const fileRef = useRef(null);
   const [hourlyAll, setHourlyAll] = useState([]);
   const [shifts, setShifts] = useState({});
@@ -164,24 +172,23 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
   const working = members.filter((e) => worksOn(schedule, e, day));
   const away = members.filter((e) => !worksOn(schedule, e, day));
 
-  const hours = useMemo(() => {
-    let [lo, hi] = DEFAULT_RANGE;
-    if (report?.hours.length) {
-      lo = Math.min(...report.hours.map((h) => h.hour));
-      hi = Math.max(...report.hours.map((h) => h.hour));
-    }
-    for (const id of Object.keys(shifts)) {
-      const s = shifts[id][0];
-      const e = shifts[id][shifts[id].length - 1];
-      lo = Math.min(lo, Number(s.slice(0, 2)));
-      hi = Math.max(hi, Number(e.slice(0, 2)) - (e.endsWith(":00") ? 1 : 0));
-    }
-    return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
-  }, [report, shifts]);
+  let [lo, hi] = DEFAULT_RANGE;
+  if (report?.hours.length) {
+    lo = Math.min(...report.hours.map((h) => h.hour));
+    hi = Math.max(...report.hours.map((h) => h.hour));
+  }
+  for (const emp of working) {
+    const shift = shiftOf(emp);
+    if (!shift) continue;
+    const e = shift[shift.length - 1];
+    lo = Math.min(lo, Number(shift[0].slice(0, 2)));
+    hi = Math.max(hi, Number(e.slice(0, 2)) - (e.endsWith(":00") ? 1 : 0));
+  }
+  const hours = Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
 
   const peaks = report ? peakHours(report.hours) : [];
   const clientsAt = (h) => report?.hours.find((x) => x.hour === h)?.clients || 0;
-  const coverage = hours.map((h) => working.filter((e) => coversHour(shifts[e.id], h)).length);
+  const coverage = hours.map((h) => working.filter((e) => coversHour(shiftOf(e), h)).length);
   const staffHours = coverage.reduce((s, c, i) => s + (clientsAt(hours[i]) > 0 ? c : 0), 0);
   const totalClients = hours.reduce((s, h) => s + clientsAt(h), 0);
   const avgRatio = staffHours ? totalClients / staffHours : 0;
@@ -318,14 +325,21 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                       {emp.role}
                       {minutesOf(emp) && <> · {fromMin(minutesOf(emp)).replace(":", "h")}</>}
                     </p>
+                    {defaultOf(emp) && (shifts[emp.id] ? (
+                      <button onClick={() => saveShift(emp.id, null)} className="text-[10px] font-semibold text-[#C2410C] hover:underline no-print" title="Descartar o ajuste e usar o horário da jornada">
+                        ajustado · voltar à jornada
+                      </button>
+                    ) : (
+                      <p className="text-[10px] text-[#8A929B]">horário da jornada</p>
+                    ))}
                   </td>
-                  <td className="px-2 no-print"><ShiftInputs shift={shifts[emp.id]} minutes={minutesOf(emp)} breakLen={breakFor(wlOf(emp), minutesOf(emp))} onSave={(times) => saveShift(emp.id, times)} /></td>
+                  <td className="px-2 no-print"><ShiftInputs shift={shifts[emp.id]} fallback={defaultOf(emp)} minutes={minutesOf(emp)} breakLen={breakFor(wlOf(emp), minutesOf(emp))} onSave={(times) => saveShift(emp.id, times)} /></td>
                   {hours.map((h) => (
                     <td key={h} className="p-0.5">
                       <div
-                        title={onBreak(shifts[emp.id], h) ? "Intervalo" : undefined}
+                        title={onBreak(shiftOf(emp), h) ? "Intervalo" : undefined}
                         className={`h-8 rounded ${
-                          coversHour(shifts[emp.id], h) ? "bg-[#15803D]" : onBreak(shifts[emp.id], h) ? "bg-[#BAE6FD]" : peaks.includes(h) ? "bg-[#FEF2F2]" : "bg-[#F2EFE8]"
+                          coversHour(shiftOf(emp), h) ? "bg-[#15803D]" : onBreak(shiftOf(emp), h) ? "bg-[#BAE6FD]" : peaks.includes(h) ? "bg-[#FEF2F2]" : "bg-[#F2EFE8]"
                         }`}
                       />
                     </td>

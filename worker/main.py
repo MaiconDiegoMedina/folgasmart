@@ -111,7 +111,8 @@ DEFAULT_WORKLOADS = [
     ("8h48", "8h48 (5x2)", [528] * 7, 60, None),
 ]
 NEW_COLUMNS = [("employees", "gender"), ("employees", "workload"), ("schedule", "sector_modes"),
-               ("schedule", "absence_days"), ("employees", "contract"), ("schedule", "convocations")]
+               ("schedule", "absence_days"), ("employees", "contract"), ("schedule", "convocations"),
+               ("workloads", "times"), ("workloads", "times_5x2")]
 
 
 async def ensure_schema(request: Request) -> None:
@@ -203,11 +204,70 @@ class Schedule(BaseModel):
     streak_alerts: Dict[str, List[int]] = Field(default_factory=dict)
 
 
+HHMM_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+def _mins(t: str) -> int:
+    return int(t[:2]) * 60 + int(t[3:])
+
+
+def normalize_day(times: List[str] | None) -> List[str] | None:
+    """Horários do ponto num dia: [entrada, saída] ou [entrada, saída int., volta int., saída]; None = não trabalha."""
+    if not times or not any(times):
+        return None
+    if len(times) == 4:
+        start, bs, be, end = times
+    elif len(times) == 2:
+        start, bs, be, end = times[0], "", "", times[1]
+    else:
+        raise ValueError("Cada dia precisa de entrada, intervalo e saída.")
+    if not start or not end:
+        raise ValueError("Informe a entrada e a saída de cada dia trabalhado.")
+    for t in (start, bs, be, end):
+        if t and not HHMM_RE.match(t):
+            raise ValueError(f"Horário inválido: {t}")
+    if end <= start:
+        raise ValueError("A saída precisa ser depois da entrada.")
+    if bool(bs) != bool(be):
+        raise ValueError("Informe a saída e a volta do intervalo.")
+    if bs:
+        if not start <= bs < be <= end:
+            raise ValueError("O intervalo precisa ficar dentro do expediente.")
+        return [start, bs, be, end]
+    return [start, end]
+
+
+def day_minutes(times: List[str] | None) -> int:
+    if not times:
+        return 0
+    worked = _mins(times[-1]) - _mins(times[0])
+    return worked - (_mins(times[2]) - _mins(times[1]) if len(times) == 4 else 0)
+
+
 class WorkloadIn(BaseModel):
     name: Text
-    minutes: List[int] = Field(min_length=7, max_length=7)
+    minutes: List[int] = Field(default_factory=lambda: [0] * 7)
     break_minutes: int = Field(default=60, ge=0, le=240)
     minutes_5x2: int | None = Field(default=None, ge=0, le=1440)
+    # Horários do ponto por dia (seg a dom) e, opcionalmente, o horário usado quando o setor está em 5x2
+    times: List[List[str] | None] | None = None
+    times_5x2: List[str] | None = None
+
+    @model_validator(mode="after")
+    def derive_from_times(self):
+        if self.times is not None:
+            if len(self.times) != 7:
+                raise ValueError("Informe os horários dos 7 dias.")
+            self.times = [normalize_day(t) for t in self.times]
+            self.minutes = [day_minutes(t) for t in self.times]
+            breaks = [_mins(t[2]) - _mins(t[1]) for t in self.times if t and len(t) == 4]
+            self.break_minutes = breaks[0] if breaks else 0
+        self.times_5x2 = normalize_day(self.times_5x2)
+        if self.times_5x2:
+            self.minutes_5x2 = day_minutes(self.times_5x2)
+        if len(self.minutes) != 7 or any(not 0 <= m <= 1440 for m in self.minutes):
+            raise ValueError("Horas por dia inválidas.")
+        return self
 
 
 class WorkloadOut(WorkloadIn):
@@ -723,20 +783,38 @@ async def set_peaks(data: PeaksIn, request: Request):
 @api.get("/workloads", response_model=List[WorkloadOut])
 async def workloads_api(request: Request):
     rows = (await db(request).prepare(
-        "SELECT id, name, minutes, break_minutes, minutes_5x2 FROM workloads ORDER BY created_at"
+        "SELECT id, name, minutes, break_minutes, minutes_5x2, times, times_5x2 FROM workloads ORDER BY created_at"
     ).all()).results
     return [WorkloadOut(id=row["id"], name=row["name"], minutes=json.loads(row["minutes"]),
-                        break_minutes=row["break_minutes"], minutes_5x2=row["minutes_5x2"]) for row in rows]
+                        break_minutes=row["break_minutes"], minutes_5x2=row["minutes_5x2"],
+                        times=json.loads(row["times"]) if row["times"] else None,
+                        times_5x2=json.loads(row["times_5x2"]) if row["times_5x2"] else None) for row in rows]
 
 
 @api.post("/workloads", response_model=WorkloadOut)
 async def create_workload(data: WorkloadIn, request: Request):
-    if any(not 0 <= m <= 1440 for m in data.minutes):
-        raise HTTPException(400, "Horas por dia inválidas.")
     item = WorkloadOut(id=str(uuid.uuid4()), **data.model_dump())
     await db(request).prepare(
-        "INSERT INTO workloads (id, name, minutes, break_minutes, minutes_5x2, created_at) VALUES (?, ?, ?, ?, ?, ?)"
-    ).bind(item.id, item.name, json.dumps(item.minutes), item.break_minutes, item.minutes_5x2, now_iso()).run()
+        """INSERT INTO workloads (id, name, minutes, break_minutes, minutes_5x2, times, times_5x2, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)"""
+    ).bind(item.id, item.name, json.dumps(item.minutes), item.break_minutes, item.minutes_5x2,
+           json.dumps(item.times) if item.times else None,
+           json.dumps(item.times_5x2) if item.times_5x2 else None, now_iso()).run()
+    return item
+
+
+@api.put("/workloads/{workload_id}", response_model=WorkloadOut)
+async def update_workload(workload_id: str, data: WorkloadIn, request: Request):
+    database = db(request)
+    if not await database.prepare("SELECT id FROM workloads WHERE id = ?").bind(workload_id).first():
+        raise HTTPException(404, "Jornada não encontrada")
+    item = WorkloadOut(id=workload_id, **data.model_dump())
+    await database.prepare(
+        """UPDATE workloads SET name=?, minutes=?, break_minutes=?, minutes_5x2=?, times=?, times_5x2=?
+        WHERE id=?"""
+    ).bind(item.name, json.dumps(item.minutes), item.break_minutes, item.minutes_5x2,
+           json.dumps(item.times) if item.times else None,
+           json.dumps(item.times_5x2) if item.times_5x2 else None, workload_id).run()
     return item
 
 
