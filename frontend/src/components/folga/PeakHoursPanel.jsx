@@ -157,6 +157,8 @@ const LoanInputs = ({ shift, onSave }) => {
   );
 };
 
+const isOperator = (emp) => !/pacot|fiscal|recep/i.test(emp?.role || "");
+
 const ImportPreview = ({ preview, setPreview, onSave, saving }) => {
   const period = preview.periods.find((p) => p.key === preview.key);
   const total = period.hours.reduce((s, h) => s + h.clients, 0);
@@ -231,17 +233,28 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
   // Ajuda de outro setor: turno salvo com a chave "funcionário@setor" (só a janela em que ajuda)
   const byId = Object.fromEntries(allEmployees.map((e) => [e.id, e]));
   const loanKey = (id) => `${id}@${sector}`;
-  const helpers = Object.entries(shifts)
-    .filter(([k]) => k.endsWith(`@${sector}`))
-    .map(([k, shift]) => ({ emp: byId[k.slice(0, k.lastIndexOf("@"))], shift, key: k }))
-    .filter((x) => x.emp && x.emp.sector !== sector);
+  const offKey = (id) => `${id}@${sector}@fora`;
+  const helpers = [
+    ...Object.entries(shifts)
+      .filter(([k]) => k.endsWith(`@${sector}`))
+      .map(([k, shift]) => ({ emp: byId[k.slice(0, k.lastIndexOf("@"))], shift, key: k, offClock: false }))
+      .filter((x) => x.emp && x.emp.sector !== sector),
+    ...Object.entries(shifts)
+      .filter(([k]) => k.endsWith(`@${sector}@fora`))
+      .map(([k, shift]) => ({ emp: byId[k.slice(0, k.indexOf("@"))], shift, key: k, offClock: true }))
+      .filter((x) => x.emp),
+  ];
+  // Operadoras do setor que trabalham hoje e podem ficar depois do turno, fora do ponto
+  const offClockCandidates = members
+    .filter((e) => isOperator(e) && worksOn(schedule, e, day) && !shifts[offKey(e.id)])
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
   const candidates = allEmployees
     .filter((e) => e.sector !== sector && e.status !== "inativo" && worksOn(schedule, e, day) && !shifts[loanKey(e.id)])
     .sort((a, b) => a.sector.localeCompare(b.sector) || a.name.localeCompare(b.name, "pt-BR"));
   // Gente deste setor ajudando em outro: nessas horas não conta aqui
   const lentOut = (emp) =>
     Object.entries(shifts)
-      .filter(([k]) => k.startsWith(`${emp.id}@`) && k !== loanKey(emp.id))
+      .filter(([k]) => k.startsWith(`${emp.id}@`) && k !== loanKey(emp.id) && !k.endsWith("@fora"))
       .map(([k, shift]) => ({ to: k.slice(k.lastIndexOf("@") + 1), shift }));
   const lentAt = (emp, h) => lentOut(emp).find((l) => coversHour(l.shift, h));
   const presentAt = (emp, h) => coversHour(shiftOf(emp), h) && !lentAt(emp, h);
@@ -325,7 +338,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
   const clashes = [];
   if (showCheckouts) {
     for (const c of checkouts) {
-      const people = working.filter((e) => assign[e.id] === c.id);
+      const people = working.filter((e) => isOperator(e) && assign[e.id] === c.id);
       if (people.length < 2) continue;
       let from = null;
       const names = new Set();
@@ -356,10 +369,19 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
 
   // Soma das horas do dia (funcionários do setor + ajuda de outros setores)
   const totalMinutes =
-    working.reduce((sum, e) => sum + dayMinutes(shiftOf(e)), 0) + helpers.reduce((sum, x) => sum + dayMinutes(x.shift), 0);
+    working.reduce((sum, e) => sum + dayMinutes(shiftOf(e)), 0) + helpers.filter((x) => !x.offClock).reduce((sum, x) => sum + dayMinutes(x.shift), 0);
 
-  const addHelper = (id) => {
-    if (!id) return;
+  const addHelper = (value) => {
+    if (!value) return;
+    if (value.startsWith("fora:")) {
+      const emp = byId[value.slice(5)];
+      const own = shiftOf(emp);
+      const start = own ? toMin(own[own.length - 1]) : 18 * 60;
+      const end = Math.min(start + 120, 23 * 60 + 55);
+      if (end <= start) return toast.error("O turno dessa operadora termina tarde demais para incluir mais horas.");
+      return saveShift(offKey(emp.id), { start: fromMin(start), break_start: null, break_end: null, end: fromMin(end) });
+    }
+    const id = value;
     const start = peaks.length ? Math.min(...peaks) : 11;
     const end = peaks.length ? Math.max(...peaks) + 1 : 14;
     saveShift(loanKey(id), { start: `${pad(start)}:00`, break_start: null, break_end: null, end: `${pad(Math.min(end, 23))}:00` });
@@ -421,7 +443,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
         )
       )}
 
-      {working.length === 0 && helpers.length === 0 && candidates.length === 0 ? (
+      {working.length === 0 && helpers.length === 0 && candidates.length === 0 && offClockCandidates.length === 0 ? (
         <p className="text-sm text-[#575E65]">Ninguém do setor {sector} trabalha neste dia.</p>
       ) : (
         <div className="overflow-x-auto">
@@ -470,7 +492,8 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                   </td>
                   <td className="px-2 no-print"><ShiftInputs shift={shifts[emp.id]} fallback={defaultOf(emp)} minutes={minutesOf(emp)} breakLen={breakFor(wlOf(emp), minutesOf(emp))} onSave={(times) => saveShift(emp.id, times)} /></td>
                   <td className="px-2 text-center font-mono-data text-xs font-semibold text-[#191C1E] whitespace-nowrap">{fmtHours(dayMinutes(shiftOf(emp)))}</td>
-                  {showCheckouts && (
+                  {showCheckouts && !isOperator(emp) && <td />}
+                  {showCheckouts && isOperator(emp) && (
                     <td className="px-2">
                       <select
                         aria-label={`Caixa de ${emp.name}`}
@@ -499,7 +522,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                 </tr>
                 )),
               ])}
-              {helpers.map(({ emp, shift, key }) => (
+              {helpers.map(({ emp, shift, key, offClock }) => (
                 <tr key={key} className="border-t border-[#EFEBE3]">
                   <td className="py-1.5 pr-3 sticky left-0 bg-white z-10 min-w-[120px]">
                     <p className="font-semibold text-sm leading-tight flex items-center gap-1">
@@ -508,19 +531,33 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                         <X className="h-3 w-3" />
                       </button>
                     </p>
-                    <p className="text-[10px] font-semibold text-[#6D28D9]">ajuda · vem de {emp.sector}</p>
+                    {offClock ? (
+                      <p className="text-[10px] font-semibold text-[#C2410C]" title="Depois do turno, sem bater ponto. Não entra no total de horas nem no mural.">
+                        após o turno · fora do ponto
+                        {shiftOf(emp) && shiftOf(emp)[shiftOf(emp).length - 1] > shift[0] && (
+                          <span className="block text-[#DC2626]">começa antes do fim do turno ({shiftOf(emp)[shiftOf(emp).length - 1]})</span>
+                        )}
+                      </p>
+                    ) : (
+                      <p className="text-[10px] font-semibold text-[#6D28D9]">ajuda · vem de {emp.sector}</p>
+                    )}
                   </td>
                   <td className="px-2 no-print"><LoanInputs shift={shift} onSave={(times) => saveShift(key, times)} /></td>
-                  <td className="px-2 text-center font-mono-data text-xs font-semibold text-[#6D28D9] whitespace-nowrap">{fmtHours(dayMinutes(shift))}</td>
+                  <td
+                    className={`px-2 text-center font-mono-data text-xs font-semibold whitespace-nowrap ${offClock ? "text-[#C2410C]" : "text-[#6D28D9]"}`}
+                    title={offClock ? "Fora do ponto: não entra no total" : undefined}
+                  >
+                    {offClock ? `(${fmtHours(dayMinutes(shift))})` : fmtHours(dayMinutes(shift))}
+                  </td>
                   {showCheckouts && <td />}
                   {hours.map((h) => (
                     <td key={h} className="p-0.5">
-                      <HourCell shift={shift} h={h} peak={peaks.includes(h)} workColor="bg-[#8B5CF6]" />
+                      <HourCell shift={shift} h={h} peak={peaks.includes(h)} workColor={offClock ? "bg-[#EA580C]" : "bg-[#8B5CF6]"} />
                     </td>
                   ))}
                 </tr>
               ))}
-              {candidates.length > 0 && (
+              {(candidates.length > 0 || offClockCandidates.length > 0) && (
                 <tr className="no-print">
                   <td colSpan={3 + extraCols + hours.length} className="pt-2">
                     <label className="inline-flex items-center gap-1.5 text-xs text-[#6D28D9] font-semibold">
@@ -532,7 +569,20 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                         className="rounded-md border border-[#C4B5FD] bg-[#F5F3FF] px-2 py-1 text-xs text-[#6D28D9]"
                       >
                         <option value="">Ajuda de outro setor…</option>
-                        {candidates.map((e) => <option key={e.id} value={e.id}>{e.sector} · {e.name}</option>)}
+                        {candidates.length > 0 && (
+                          <optgroup label="Outros setores">
+                            {candidates.map((e) => <option key={e.id} value={e.id}>{e.sector} · {e.name}</option>)}
+                          </optgroup>
+                        )}
+                        {offClockCandidates.length > 0 && (
+                          <optgroup label="Após o turno (fora do ponto)">
+                            {offClockCandidates.map((e) => (
+                              <option key={e.id} value={`fora:${e.id}`}>
+                                {e.name}{shiftOf(e) ? ` · saiu às ${shiftOf(e)[shiftOf(e).length - 1]}` : ""}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
                       </select>
                     </label>
                   </td>
@@ -571,6 +621,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
             <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#15803D]" />No setor</span>
             <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#BAE6FD]" />Intervalo</span>
             <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#8B5CF6]" />Ajuda de outro setor</span>
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#EA580C]" />Após o turno (fora do ponto)</span>
             <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FCD34D]" />Ajudando em outro setor</span>
             <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FEF2F2] border border-[#FECACA]" />Pico sem a pessoa</span>
           </div>
