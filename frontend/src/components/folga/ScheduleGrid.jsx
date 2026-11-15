@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { toast } from "sonner";
 import { Flame, AlertTriangle, Users, CalendarDays, Printer, Lock } from "lucide-react";
 import { UnlockButton, useUnlock } from "@/components/folga/UnlockDialog";
+import { groupByRole } from "@/lib/groupByRole";
 import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate, http } from "@/lib/api";
 import { defaultShiftOf } from "@/lib/workloadTimes";
 import { WeekNav } from "@/components/folga/WeekNav";
@@ -140,6 +141,21 @@ const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp
   );
 };
 
+const Alert = ({ title, testId, children }) => (
+  <span data-testid={testId} title={title} className="inline-flex items-center gap-0.5 text-[9px] bg-[#FEF2F2] text-[#DC2626] border border-[#FECACA] font-bold px-1.5 py-0.5 rounded cursor-help">
+    <AlertTriangle className="h-2.5 w-2.5" /> {children}
+  </span>
+);
+
+const RoleHeader = ({ role, count, span }) => (
+  <tr>
+    <td colSpan={span} className="pt-3 pb-1 sticky left-0 bg-white">
+      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8A929B]">{role}</span>
+      <span className="ml-1.5 text-[10px] text-[#B8B2A7]">{count}</span>
+    </td>
+  </tr>
+);
+
 const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx, schedule, dates, shiftOn, mural, streakLimit = 6, sickDays = [], lockedDay = () => false }) => {
   const intermittent = isIntermittent(emp);
   // Intermitente: dias aceitos depois do limite de dias seguidos (6 no 6x1, 5 no 5x2)
@@ -159,31 +175,17 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
 
   return (
     <tr data-testid="employee-row" className="rise border-t border-[#EFEBE3]" style={{ animationDelay: `${idx * 30}ms` }}>
-      <td className="py-2 pr-4 sticky left-0 bg-white z-10 min-w-[110px] md:min-w-[200px]">
+      <td className="py-1.5 pr-4 sticky left-0 bg-white z-10 min-w-[110px] md:min-w-[200px]">
         <p className="font-semibold text-sm leading-tight flex items-center gap-1.5">
           {emp.name}
           {emp.status === "ferias" && <span className="text-[9px] bg-[#E2E8F0] text-[#475569] font-bold px-1.5 py-0.5 rounded">FÉRIAS</span>}
           {emp.status === "suspensao" && <span className="text-[9px] bg-[#FFE4E6] text-[#E11D48] font-bold px-1.5 py-0.5 rounded">SUSP.</span>}
           {emp.status === "falta" && <span className="text-[9px] bg-[#FFEDD5] text-[#C2410C] font-bold px-1.5 py-0.5 rounded">FALTA</span>}
-          {intermittent && !mural && <span className="text-[9px] bg-[#E0F2FE] text-[#0369A1] font-bold px-1.5 py-0.5 rounded">INTERMITENTE</span>}
-          {cctAlert && !mural && (
-            <span data-testid={`cct-alert-${emp.id}`} title={cctAlert} className="inline-flex items-center gap-0.5 text-[9px] bg-[#FEF2F2] text-[#DC2626] border border-[#FECACA] font-bold px-1.5 py-0.5 rounded">
-              <AlertTriangle className="h-2.5 w-2.5" /> CCT
-            </span>
-          )}
+          {intermittent && !mural && <span title="Intermitente: trabalha só nos dias com convocação aceita" className="text-[9px] bg-[#E0F2FE] text-[#0369A1] font-bold px-1.5 py-0.5 rounded">INT.</span>}
+          {!mural && cctAlert && <Alert testId={`cct-alert-${emp.id}`} title={cctAlert}>CCT</Alert>}
+          {!mural && streakDays?.length > 0 && <Alert testId={`streak-alert-${emp.id}`} title="Mais de 6 dias seguidos sem folga">+6 DIAS</Alert>}
+          {!mural && excessDays.size > 0 && <Alert title={`Mais de ${streakLimit} dias seguidos — os dias excedentes ficam fora do mural`}>+{streakLimit} DIAS</Alert>}
         </p>
-        {cctAlert && !mural && <p className="text-[10px] text-[#DC2626] leading-tight mt-0.5 max-w-[220px]">{cctAlert.replace("CCT: ", "")}</p>}
-        {excessDays.size > 0 && !mural && (
-          <p className="text-[10px] text-[#DC2626] leading-tight mt-0.5 max-w-[220px] flex items-center gap-1">
-            <AlertTriangle className="h-2.5 w-2.5 shrink-0" /> Mais de {streakLimit} dias seguidos — excedente fica fora do mural
-          </p>
-        )}
-        {streakDays?.length > 0 && !mural && (
-          <p data-testid={`streak-alert-${emp.id}`} className="text-[10px] text-[#DC2626] leading-tight mt-0.5 max-w-[220px] flex items-center gap-1">
-            <AlertTriangle className="h-2.5 w-2.5 shrink-0" /> Mais de 6 dias seguidos sem folga
-          </p>
-        )}
-        <p className="text-xs text-[#8A929B]">{emp.role} · {emp.sector}</p>
       </td>
       {DAYS_SHORT.map((_, d) => (
         <td key={d} className="p-1 min-w-[72px]">
@@ -489,7 +491,9 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
               <tbody>
                 {groups.map((g, gi) => [
                   <SectorHeader key={`h-${g.name}`} name={g.name} members={g.members} worksOn={worksOn} peaks={peaks} mode={modeOf(g.name)} showCount={groups.length > 1 && !mural} mural={mural} newPage={gi > 0} />,
-                  ...g.members.map((emp, idx) => (
+                  ...groupByRole(g.members).flatMap((rg) => [
+                    <RoleHeader key={`r-${g.name}-${rg.role}`} role={rg.role} count={rg.members.length} span={mural ? 8 : 9} />,
+                    ...rg.members.map((emp, idx) => (
                     <Row
                       key={emp.id}
                       idx={idx}
@@ -514,6 +518,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       mural={mural}
                     />
                   )),
+                  ]),
                 ])}
               </tbody>
               {!mural && <tfoot>

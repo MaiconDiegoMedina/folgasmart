@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { http, errMsg, DAYS, fmtDayMonth } from "@/lib/api";
 import { isIntermittent, acceptedOn } from "@/lib/convocation";
 import { defaultShiftOf, fromMin, toMin, dayMinutes } from "@/lib/workloadTimes";
+import { groupByRole } from "@/lib/groupByRole";
 
 const fmtHours = (m) => (m ? `${Math.floor(m / 60)}h${pad(m % 60)}` : "–");
 import { parseHourlyReport, singleWeekday, peakHours, coversHour, onBreak } from "@/lib/hourlyReport";
@@ -318,6 +319,10 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
     }
   };
 
+  // Dentro de cada cargo, em ordem de entrada
+  const byStart = (a, b) =>
+    (shiftOf(a)?.[0] || "99:99").localeCompare(shiftOf(b)?.[0] || "99:99") || a.name.localeCompare(b.name, "pt-BR");
+
   // Soma das horas do dia (funcionários do setor + ajuda de outros setores)
   const totalMinutes =
     working.reduce((sum, e) => sum + dayMinutes(shiftOf(e)), 0) + helpers.reduce((sum, x) => sum + dayMinutes(x.shift), 0);
@@ -409,23 +414,26 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
               </tr>
             </thead>
             <tbody>
-              {[...working].sort((a, b) => (shiftOf(a)?.[0] || "99:99").localeCompare(shiftOf(b)?.[0] || "99:99") || a.name.localeCompare(b.name, "pt-BR")).map((emp) => (
+              {groupByRole(working, byStart).flatMap((rg) => [
+                <tr key={`r-${rg.role}`}>
+                  <td colSpan={3 + hours.length} className="pt-3 pb-1 sticky left-0 bg-white">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8A929B]">{rg.role}</span>
+                    <span className="ml-1.5 text-[10px] text-[#B8B2A7]">{rg.members.length}</span>
+                  </td>
+                </tr>,
+                ...rg.members.map((emp) => (
                 <tr key={emp.id} className="border-t border-[#EFEBE3]">
-                  <td className="py-1.5 pr-3 sticky left-0 bg-white z-10 min-w-[120px]">
-                    <p className="font-semibold text-sm leading-tight">{emp.name}</p>
-                    <p className="text-xs text-[#8A929B]">
-                      {emp.role}
-                      {minutesOf(emp) && <> · {fromMin(minutesOf(emp)).replace(":", "h")}</>}
+                  <td className="py-1 pr-3 sticky left-0 bg-white z-10 min-w-[120px]">
+                    <p className="font-semibold text-sm leading-tight flex items-center gap-1.5">
+                      {emp.name}
+                      {defaultOf(emp) && shifts[emp.id] && (
+                        <button onClick={() => saveShift(emp.id, null)} className="no-print text-[10px] font-semibold text-[#C2410C] hover:underline" title="Horário ajustado neste dia · clique para voltar ao horário da jornada">
+                          ↺ jornada
+                        </button>
+                      )}
                     </p>
                     {lentOut(emp).map((l) => (
                       <p key={l.to} className="text-[10px] font-semibold text-[#B45309]">ajuda em {l.to} {l.shift[0]}–{l.shift[1]}</p>
-                    ))}
-                    {defaultOf(emp) && (shifts[emp.id] ? (
-                      <button onClick={() => saveShift(emp.id, null)} className="text-[10px] font-semibold text-[#C2410C] hover:underline no-print" title="Descartar o ajuste e usar o horário da jornada">
-                        ajustado · voltar à jornada
-                      </button>
-                    ) : (
-                      <p className="text-[10px] text-[#8A929B]">horário da jornada</p>
                     ))}
                   </td>
                   <td className="px-2 no-print"><ShiftInputs shift={shifts[emp.id]} fallback={defaultOf(emp)} minutes={minutesOf(emp)} breakLen={breakFor(wlOf(emp), minutesOf(emp))} onSave={(times) => saveShift(emp.id, times)} /></td>
@@ -441,7 +449,8 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                     </td>
                   ))}
                 </tr>
-              ))}
+                )),
+              ])}
               {helpers.map(({ emp, shift, key }) => (
                 <tr key={key} className="border-t border-[#EFEBE3]">
                   <td className="py-1.5 pr-3 sticky left-0 bg-white z-10 min-w-[120px]">
