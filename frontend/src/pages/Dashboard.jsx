@@ -5,6 +5,7 @@ import { Header } from "@/components/folga/Header";
 import { MovementPanel } from "@/components/folga/MovementPanel";
 import { EmployeesPanel } from "@/components/folga/EmployeesPanel";
 import { WorkloadsPanel } from "@/components/folga/WorkloadsPanel";
+import { CheckoutsPanel } from "@/components/folga/CheckoutsPanel";
 import { ScheduleGrid } from "@/components/folga/ScheduleGrid";
 import { UnlockDialog } from "@/components/folga/UnlockDialog";
 import { useAuth } from "@/components/LoginGate";
@@ -19,6 +20,7 @@ export default function Dashboard() {
   const [sectorModes, setSectorModes] = useState({});
   const [workloads, setWorkloads] = useState([]);
   const [vacations, setVacations] = useState([]);
+  const [checkouts, setCheckouts] = useState([]);
   const [sector, setSector] = useState("all");
   // Inativos ficam fora da escala, da geração e da exportação
   const scheduled = employees.filter((e) => e.status !== "inativo");
@@ -32,6 +34,7 @@ export default function Dashboard() {
       ["/sectors/modes", setSectorModes],
       ["/workloads", setWorkloads],
       ["/vacations", setVacations],
+      ["/checkouts", setCheckouts],
     ];
     const results = await Promise.allSettled(requests.map(([url]) => http.get(url)));
     const failed = [];
@@ -86,12 +89,13 @@ export default function Dashboard() {
       <Header onLogout={logout} employees={scheduled} movement={movement} schedule={schedule} generating={generating} onGenerate={generate} generateSector={activeSector} />
       <main className="relative z-10 mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         <UnlockDialog />
-        <ScheduleGrid employees={scheduled} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} workloads={workloads} sector={sector} onSectorChange={setSector} />
+        <ScheduleGrid employees={scheduled} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} workloads={workloads} checkouts={checkouts} sector={sector} onSectorChange={setSector} />
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 no-print">
           <div className="lg:col-span-2"><MovementPanel movement={movement} onChange={setMovement} /></div>
           <div className="lg:col-span-3"><EmployeesPanel employees={employees} workloads={workloads} vacations={vacations} onChange={load} /></div>
         </div>
         <div className="no-print"><WorkloadsPanel workloads={workloads} onChange={load} /></div>
+        <div className="no-print"><CheckoutsPanel checkouts={checkouts} onChange={load} /></div>
       </main>
     </div>
   );

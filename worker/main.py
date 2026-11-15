@@ -140,6 +140,9 @@ SCHEMA_STATEMENTS = [
     start TEXT NOT NULL, end TEXT NOT NULL, created_at TEXT NOT NULL)""",
     """CREATE TABLE IF NOT EXISTS workloads (id TEXT PRIMARY KEY, name TEXT NOT NULL, minutes TEXT NOT NULL,
     break_minutes INTEGER NOT NULL DEFAULT 60, minutes_5x2 INTEGER, created_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS checkouts (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS checkout_assign (week TEXT NOT NULL, day INTEGER NOT NULL, data TEXT NOT NULL,
+    PRIMARY KEY (week, day))""",
 ]
 DEFAULT_WORKLOADS = [
     ("8h_4h", "8h seg–sex + 4h sáb", [480, 480, 480, 480, 480, 240, 480], 60, 528),
@@ -1172,6 +1175,78 @@ async def shifts_api(week: str, day: int, request: Request):
     if not 0 <= day <= 6:
         raise HTTPException(400, "Dia inválido")
     return await get_shifts(request, week_start(week), day)
+
+
+# ---------- Caixas (checkouts) e o caixa de cada operadora por dia ----------
+class CheckoutIn(BaseModel):
+    name: Text
+
+
+class Checkout(CheckoutIn):
+    id: str
+
+
+class CheckoutAssignIn(BaseModel):
+    week: str
+    day: int = Field(ge=0, le=6)
+    employee_id: str
+    checkout_id: str | None = None
+
+
+@api.get("/checkouts", response_model=List[Checkout])
+async def checkouts_api(request: Request):
+    rows = (await db(request).prepare("SELECT id, name FROM checkouts ORDER BY created_at").all()).results
+    return [Checkout(id=r["id"], name=r["name"]) for r in rows]
+
+
+@api.post("/checkouts", response_model=Checkout)
+async def create_checkout(data: CheckoutIn, request: Request):
+    name = data.name.strip()
+    existing = (await db(request).prepare("SELECT name FROM checkouts").all()).results
+    if any(r["name"].strip().lower() == name.lower() for r in existing):
+        raise HTTPException(400, f'Já existe um caixa chamado "{name}".')
+    item = Checkout(id=str(uuid.uuid4()), name=name)
+    await db(request).prepare(
+        "INSERT INTO checkouts (id, name, created_at) VALUES (?, ?, ?)"
+    ).bind(item.id, item.name, now_iso()).run()
+    return item
+
+
+@api.delete("/checkouts/{checkout_id}")
+async def delete_checkout(checkout_id: str, request: Request):
+    await db(request).prepare("DELETE FROM checkouts WHERE id = ?").bind(checkout_id).run()
+    return {"ok": True}
+
+
+@api.get("/checkouts/assign/week")
+async def checkout_assign_week(week: str, request: Request) -> Dict[str, Dict[str, str]]:
+    """Caixa de cada operadora por dia: {"dia": {funcionário: caixa}}."""
+    rows = (await db(request).prepare(
+        "SELECT day, data FROM checkout_assign WHERE week = ?"
+    ).bind(week_start(week)).all()).results
+    return {str(r["day"]): json.loads(r["data"]) for r in rows}
+
+
+@api.put("/checkouts/assign")
+async def set_checkout_assign(data: CheckoutAssignIn, request: Request) -> Dict[str, str]:
+    week = week_start(data.week)
+    ensure_unlocked(request, week, data.day)
+    database = db(request)
+    row = await database.prepare(
+        "SELECT data FROM checkout_assign WHERE week = ? AND day = ?"
+    ).bind(week, data.day).first()
+    current = json.loads(row["data"]) if row else {}
+    if data.checkout_id:
+        if not await database.prepare("SELECT id FROM checkouts WHERE id = ?").bind(data.checkout_id).first():
+            raise HTTPException(404, "Caixa não encontrado")
+        current[data.employee_id] = data.checkout_id
+    else:
+        current.pop(data.employee_id, None)
+    await database.prepare(
+        """INSERT INTO checkout_assign (week, day, data) VALUES (?, ?, ?)
+        ON CONFLICT(week, day) DO UPDATE SET data=excluded.data"""
+    ).bind(week, data.day, json.dumps(current)).run()
+    return current
 
 
 @api.get("/shifts/week")

@@ -19,14 +19,20 @@ const CONVOCATION_STYLE = {
 };
 const CONVOCATION_NEXT = { none: "convocar", pending: "marcar aceite", accepted: "marcar recusa", declined: "limpar" };
 
-const ConvocationCell = ({ conv, date, vacation, sick, shift, mural, excess, onClick, testId }) => {
+const CheckoutTag = ({ name }) => (
+  <span className="absolute -top-1.5 left-1/2 -translate-x-1/2 max-w-[90%] truncate rounded bg-[#0F172A] px-1 text-[8px] font-bold leading-[12px] tracking-normal text-white" title={`Caixa: ${name}`}>
+    {name}
+  </span>
+);
+
+const ConvocationCell = ({ conv, date, vacation, sick, shift, checkout, mural, excess, onClick, testId }) => {
   if (vacation) return <Cell status="ferias" testId={testId} />;
   if (sick) return <Cell status="atestado" testId={testId} />;
   const state = conv?.status || "none";
   // Mural: só o dia aceito aparece; convocação pendente ou recusada fica em branco
   if (mural) {
     return state === "accepted" && !excess ? (
-      <Cell shift={shift} mural testId={testId} />
+      <Cell shift={shift} checkout={checkout} mural testId={testId} />
     ) : (
       <div data-testid={testId} className="w-full h-11" />
     );
@@ -39,8 +45,9 @@ const ConvocationCell = ({ conv, date, vacation, sick, shift, mural, excess, onC
       title={`${state === "none" ? "Não convocado" : CONVOCATION_LABEL[state]}${conv?.at ? ` em ${conv.at.split("-").reverse().join("/")}` : ""} · clique: ${CONVOCATION_NEXT[state]}${
         late ? ` · convocação com menos de ${MIN_NOTICE_DAYS} dias de antecedência` : ""
       }${excess ? ` · ${excess} — fica fora do mural` : ""}`}
-      className={`w-full h-11 rounded-lg text-[10px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none ${CONVOCATION_STYLE[state]} ${excess ? "ring-2 ring-[#DC2626] ring-offset-1" : late ? "ring-2 ring-[#F59E0B] ring-offset-1" : ""}`}
+      className={`relative w-full h-11 rounded-lg text-[10px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none ${CONVOCATION_STYLE[state]} ${excess ? "ring-2 ring-[#DC2626] ring-offset-1" : late ? "ring-2 ring-[#F59E0B] ring-offset-1" : ""}`}
     >
+      {state === "accepted" && checkout && <CheckoutTag name={checkout} />}
       {state === "none" ? "—" : state === "accepted" ? (shift ? <ShiftText shift={shift} /> : "TRAB.") : CONVOCATION_LABEL[state]}
     </button>
   );
@@ -54,7 +61,7 @@ const ShiftText = ({ shift }) => (
   </span>
 );
 
-const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp, shift, mural, locked, onClick, testId }) => {
+const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp, shift, checkout, mural, locked, onClick, testId }) => {
   // Mural: falta acontece depois da impressão (vale o horário escalado) e não mostra alertas
   const absent = mural ? false : absentProp;
   const cct = mural ? undefined : cctProp;
@@ -100,9 +107,13 @@ const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp
       : "bg-[#FFFBEB] border-[#FCD34D] text-[#B45309] hover:bg-[#FEF3C7]"; // Folga comum
   }
 
+  // Dia trabalhado (inclui EXTRA): mostra o caixa
+  const working = !absent && (extra || (!off && !susp));
+
   if (mural) {
     return (
-      <div data-testid={testId} className={`w-full h-11 flex items-center justify-center rounded-lg text-[11px] font-bold tracking-wider font-mono-data border select-none ${classesEstilo}`}>
+      <div data-testid={testId} className={`relative w-full h-11 flex items-center justify-center rounded-lg text-[11px] font-bold tracking-wider font-mono-data border select-none ${classesEstilo}`}>
+        {working && checkout && <CheckoutTag name={checkout} />}
         {texto}
       </div>
     );
@@ -134,8 +145,9 @@ const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp
                 ? "Folga · clique: suspensão · shift + clique: EXTRA"
                 : "Trabalha · clique: folga")
       }
-      className={`w-full h-11 rounded-lg text-[11px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[#0F172A] ${classesEstilo} ${cct ? "ring-2 ring-[#DC2626] ring-offset-1" : ""} ${locked && !absent ? "opacity-70" : ""}`}
+      className={`relative w-full h-11 rounded-lg text-[11px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[#0F172A] ${classesEstilo} ${cct ? "ring-2 ring-[#DC2626] ring-offset-1" : ""} ${locked && !absent ? "opacity-70" : ""}`}
     >
+      {working && checkout && <CheckoutTag name={checkout} />}
       {texto}
     </button>
   );
@@ -156,7 +168,7 @@ const RoleHeader = ({ role, count, span }) => (
   </tr>
 );
 
-const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx, schedule, dates, shiftOn, mural, streakLimit = 6, sickDays = [], lockedDay = () => false }) => {
+const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx, schedule, dates, shiftOn, mural, streakLimit = 6, sickDays = [], lockedDay = () => false, checkoutOn = () => null }) => {
   const intermittent = isIntermittent(emp);
   // Intermitente: dias aceitos depois do limite de dias seguidos (6 no 6x1, 5 no 5x2)
   const excessDays = new Set();
@@ -196,6 +208,7 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
               vacation={vacationDays.includes(d)}
               sick={sickDays.includes(d)}
               shift={shiftOn(d)}
+              checkout={checkoutOn(d)}
               mural={mural}
               excess={excessDays.has(d) ? `Passou de ${streakLimit} dias seguidos` : null}
               onClick={() => onToggle(emp.id, d)}
@@ -210,6 +223,7 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
             cct={streakDays?.includes(d) ? "Mais de 6 dias seguidos sem folga (máximo 6)" : d === 6 ? cctAlert : undefined}
             peak={peaks.includes(d)}
             shift={shiftOn(d)}
+            checkout={checkoutOn(d)}
             mural={mural}
             locked={lockedDay(d)}
             status={vacationDays.includes(d) ? "ferias" : sickDays.includes(d) ? "atestado" : emp.status}
@@ -318,7 +332,7 @@ const SectorHeader = ({ name, members, worksOn, peaks, mode, showCount, mural, n
   </tr>
 );
 
-export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange, onToggle, sectorModes = {}, onSectorMode, workloads = [], sector: sectorProp, onSectorChange }) => {
+export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange, onToggle, sectorModes = {}, onSectorMode, workloads = [], checkouts = [], sector: sectorProp, onSectorChange }) => {
   const dates = weekDates(week);
   const today = isoDate(new Date());
   const [sectorLocal, setSectorLocal] = useState("all");
@@ -380,6 +394,20 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
     if (activeDay !== null) return; // recarrega ao voltar da sub-aba, onde os turnos podem ter mudado
     http.get("/shifts/week", { params: { week } }).then(({ data }) => setWeekShifts(data)).catch(() => setWeekShifts({}));
   }, [week, activeDay]);
+  // Caixa de cada operadora por dia
+  const [weekCheckouts, setWeekCheckouts] = useState({});
+  useEffect(() => {
+    http.get("/checkouts/assign/week", { params: { week } }).then(({ data }) => setWeekCheckouts(data)).catch(() => setWeekCheckouts({}));
+  }, [week]);
+  const checkoutName = (id) => checkouts.find((c) => c.id === id)?.name || null;
+  const assignCheckout = async (day, employee_id, checkout_id) => {
+    try {
+      const { data } = await http.put("/checkouts/assign", { week, day, employee_id, checkout_id: checkout_id || null });
+      setWeekCheckouts((all) => ({ ...all, [String(day)]: data }));
+    } catch (err) {
+      toast.error(errMsg(err));
+    }
+  };
   const shiftOf = (emp, d) =>
     weekShifts[String(d)]?.[emp.id] ||
     (isIntermittent(emp) ? null : defaultShiftOf(workloads.find((w) => w.id === emp.workload), modeOf(emp.sector), d));
@@ -464,7 +492,11 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
             </>
           )}
           {activeDay !== null ? (
-            <PeakHoursPanel day={activeDay} date={dates[activeDay]} sector={activeSector} sectorMode={modeOf(activeSector)} workloads={workloads} members={visible} allEmployees={employees} schedule={schedule} week={week} locked={lockedDay(activeDay)} />
+            <PeakHoursPanel day={activeDay} date={dates[activeDay]} sector={activeSector} sectorMode={modeOf(activeSector)} workloads={workloads} members={visible} allEmployees={employees} schedule={schedule} week={week} locked={lockedDay(activeDay)}
+              checkouts={checkouts}
+              assign={weekCheckouts[String(activeDay)] || {}}
+              onAssign={(empId, checkoutId) => assignCheckout(activeDay, empId, checkoutId)}
+            />
           ) : (
           <div className="overflow-x-auto p-3 sm:p-5">
             <table className="w-full border-separate border-spacing-0">
@@ -515,6 +547,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       onToggle={onToggle}
                       onExtra={onExtra}
                       shiftOn={(d) => shiftOf(emp, d)}
+                      checkoutOn={(d) => checkoutName(weekCheckouts[String(d)]?.[emp.id])}
                       mural={mural}
                     />
                   )),
