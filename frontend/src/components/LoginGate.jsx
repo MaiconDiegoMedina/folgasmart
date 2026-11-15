@@ -58,7 +58,7 @@ export function LoginGate({ children }) {
         <form onSubmit={submit} className="w-full max-w-sm rounded-2xl border border-[#E5E1D8] bg-white p-7 shadow-sm">
           <div className="mb-6 text-center">
             <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-xl bg-[#0F172A] text-xl text-white">F</div>
-            <h1 className="text-2xl font-bold text-[#191C1E]">FolgaSmart</h1>
+            <h1 className="text-2xl font-bold text-[#191C1E]">EscalaSmart</h1>
             <p className="mt-2 text-sm text-[#575E65]">Digite a senha de acesso para continuar.</p>
           </div>
           <label htmlFor="access-password" className="mb-2 block text-sm font-medium text-[#191C1E]">Senha</label>

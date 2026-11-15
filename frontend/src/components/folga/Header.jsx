@@ -31,7 +31,7 @@ export const Header = ({ employees, movement, schedule, generating, onGenerate, 
             <CalendarRange className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="font-display text-2xl font-extrabold tracking-tight leading-none">FolgaSmart</h1>
+            <h1 className="font-display text-2xl font-extrabold tracking-tight leading-none">EscalaSmart</h1>
             <p className="text-xs text-[#575E65] mt-1">
               <span data-testid="stat-employees">{employees.length} funcionários</span>
               {peaks.length > 0 && <> · pico: <span className="text-[#DC2626] font-semibold">{peaks.map((d) => DAYS_SHORT[d]).join(", ")}</span></>}
