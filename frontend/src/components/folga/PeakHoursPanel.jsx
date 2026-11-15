@@ -626,7 +626,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                 <tr key={`r-${gi}-${rg.role}`}>
                   <td colSpan={3 + extraCols + hours.length} className="pt-3 pb-1 sticky left-0 bg-white">
                     <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8A929B]">{rg.role}</span>
-                    <span className="ml-1.5 text-[10px] text-[#B8B2A7]">{rg.members.length}</span>
+                    <span className="ml-1.5 text-[10px] text-[#B8B2A7]">{rg.items.length}</span>
                   </td>
                 </tr>,
                 ...rg.items.map((it) => (it.kind === "emp" ? empRow(it.emp) : helperRow(it))),
