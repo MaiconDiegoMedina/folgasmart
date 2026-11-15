@@ -7,6 +7,7 @@ import { http, errMsg, DAYS, fmtDayMonth } from "@/lib/api";
 import { isIntermittent, acceptedOn } from "@/lib/convocation";
 import { defaultShiftOf, fromMin, toMin, dayMinutes } from "@/lib/workloadTimes";
 import { groupByRole } from "@/lib/groupByRole";
+import { isTrial } from "@/components/folga/RoleDialog";
 
 const fmtHours = (m) => (m ? `${Math.floor(m / 60)}h${pad(m % 60)}` : "–");
 import { parseHourlyReport, singleWeekday, peakHours, coversHour, onBreak } from "@/lib/hourlyReport";
@@ -407,6 +408,19 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
   const byStart = (a, b) =>
     (shiftOf(a)?.[0] || "99:99").localeCompare(shiftOf(b)?.[0] || "99:99") || a.name.localeCompare(b.name, "pt-BR");
 
+  // Frente de caixa: operadoras agrupadas por caixa (quem entra de manhã e quem assume à tarde);
+  // sem caixa num grupo à parte; fiscais, pacoteiros e recepcionistas por cargo no fim
+  const hasCheckout = (e) => checkouts.some((c) => c.id === assign[e.id]);
+  const rowGroups = showCheckouts
+    ? [
+        ...checkouts
+          .map((c) => ({ role: c.name, members: working.filter((e) => isOperator(e) && assign[e.id] === c.id).sort(byStart) }))
+          .filter((g) => g.members.length > 0),
+        ...[{ role: "Sem caixa", members: working.filter((e) => isOperator(e) && !hasCheckout(e)).sort(byStart) }].filter((g) => g.members.length > 0),
+        ...groupByRole(working.filter((e) => !isOperator(e)), byStart),
+      ]
+    : groupByRole(working, byStart);
+
   // Soma das horas do dia (funcionários do setor + ajuda de outros setores)
   const totalMinutes =
     working.reduce((sum, e) => sum + dayMinutes(shiftOf(e)), 0) + helpers.filter((x) => !x.offClock).reduce((sum, x) => sum + dayMinutes(x.shift), 0);
@@ -508,8 +522,8 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
               </tr>
             </thead>
             <tbody>
-              {groupByRole(working, byStart).flatMap((rg) => [
-                <tr key={`r-${rg.role}`}>
+              {rowGroups.flatMap((rg, gi) => [
+                <tr key={`r-${gi}-${rg.role}`}>
                   <td colSpan={3 + extraCols + hours.length} className="pt-3 pb-1 sticky left-0 bg-white">
                     <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8A929B]">{rg.role}</span>
                     <span className="ml-1.5 text-[10px] text-[#B8B2A7]">{rg.members.length}</span>
@@ -519,6 +533,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                 <tr key={emp.id} className="border-t border-[#EFEBE3]">
                   <td className="py-1 pr-3 sticky left-0 bg-white z-10 min-w-[120px]">
                     <p className="font-semibold text-sm leading-tight flex items-center gap-1.5">
+                      {isTrial(emp) && <span title={`Em teste (${emp.role})`} className="text-[9px] bg-[#FEF3C7] text-[#B45309] font-bold px-1.5 py-0.5 rounded">TESTE</span>}
                       {emp.name}
                       {defaultOf(emp) && shifts[emp.id] && (
                         <button onClick={() => saveShift(emp.id, null)} className="no-print text-[10px] font-semibold text-[#C2410C] hover:underline" title="Horário ajustado neste dia · clique para voltar ao horário da jornada">
