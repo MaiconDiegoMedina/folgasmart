@@ -343,14 +343,17 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
   const clashes = [];
   if (showCheckouts) {
     for (const c of checkouts) {
-      const people = working.filter((e) => isOperator(e) && assign[e.id] === c.id);
+      const people = [
+        ...working.filter((e) => isOperator(e) && assign[e.id] === c.id).map((e) => ({ id: e.id, shift: shiftOf(e) })),
+        ...helpers.filter((h) => assign[h.key] === c.id).map((h) => ({ id: h.key, shift: h.shift })),
+      ];
       if (people.length < 2) continue;
       let from = null;
       const names = new Set();
       for (let slot = 0; slot <= 24 * 4; slot++) {
         const h = Math.floor(slot / 4);
         const q = slot % 4;
-        const busy = slot < 24 * 4 ? people.filter((e) => quarterState(shiftOf(e), h, q) === "work") : [];
+        const busy = slot < 24 * 4 ? people.filter((x) => quarterState(x.shift, h, q) === "work") : [];
         if (busy.length > 1) {
           if (from === null) from = slot;
           busy.forEach((e) => names.add(e.id));
@@ -362,7 +365,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
       }
     }
   }
-  const nameOf = (id) => working.find((e) => e.id === id)?.name;
+  const nameOf = (id) => working.find((e) => e.id === id)?.name || helpers.find((h) => h.key === id)?.emp.name;
   const clashOf = (id) => {
     const c = clashes.find((x) => x.ids.includes(id));
     return c && `${c.checkout}: ${c.ids.map(nameOf).join(" e ")} ao mesmo tempo (${c.from}–${c.to})`;
@@ -410,16 +413,28 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
 
   // Frente de caixa: operadoras agrupadas por caixa (quem entra de manhã e quem assume à tarde);
   // sem caixa num grupo à parte; fiscais, pacoteiros e recepcionistas por cargo no fim
-  const hasCheckout = (e) => checkouts.some((c) => c.id === assign[e.id]);
+  const hasCheckout = (id) => checkouts.some((c) => c.id === assign[id]);
+  const empItem = (emp) => ({ kind: "emp", id: emp.id, emp, start: shiftOf(emp)?.[0] || "99:99" });
+  const helpItem = (h) => ({ kind: "help", id: h.key, ...h, start: h.shift[0] });
+  const byItemStart = (a, b) => a.start.localeCompare(b.start) || a.emp.name.localeCompare(b.emp.name, "pt-BR");
+  const roleGroups = (list) => groupByRole(list, byStart).map((g) => ({ role: g.role, items: g.members.map(empItem) }));
   const rowGroups = showCheckouts
     ? [
         ...checkouts
-          .map((c) => ({ role: c.name, members: working.filter((e) => isOperator(e) && assign[e.id] === c.id).sort(byStart) }))
-          .filter((g) => g.members.length > 0),
-        ...[{ role: "Sem caixa", members: working.filter((e) => isOperator(e) && !hasCheckout(e)).sort(byStart) }].filter((g) => g.members.length > 0),
-        ...groupByRole(working.filter((e) => !isOperator(e)), byStart),
+          .map((c) => ({
+            role: c.name,
+            items: [
+              ...working.filter((e) => isOperator(e) && assign[e.id] === c.id).map(empItem),
+              ...helpers.filter((h) => assign[h.key] === c.id).map(helpItem),
+            ].sort(byItemStart),
+          }))
+          .filter((g) => g.items.length > 0),
+        ...[{ role: "Sem caixa", items: working.filter((e) => isOperator(e) && !hasCheckout(e.id)).sort(byStart).map(empItem) }].filter((g) => g.items.length > 0),
+        ...roleGroups(working.filter((e) => !isOperator(e))),
       ]
-    : groupByRole(working, byStart);
+    : roleGroups(working);
+  // Ajudas sem caixa ficam no fim, como antes
+  const trailingHelpers = showCheckouts ? helpers.filter((h) => !hasCheckout(h.key)) : helpers;
 
   // Soma das horas do dia (funcionários do setor + ajuda de outros setores)
   const totalMinutes =
@@ -440,6 +455,91 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
     const end = peaks.length ? Math.max(...peaks) + 1 : 14;
     saveShift(loanKey(id), { start: `${pad(start)}:00`, break_start: null, break_end: null, end: `${pad(Math.min(end, 23))}:00` });
   };
+
+  const checkoutCell = (id, name) => (
+    <td className="px-2">
+      <select
+        aria-label={`Caixa de ${name}`}
+        value={checkouts.some((c) => c.id === assign[id]) ? assign[id] : ""}
+        onChange={(e) => onAssign?.(id, e.target.value)}
+        title={clashOf(id) || undefined}
+        className={`rounded-md border px-1.5 py-1 text-xs max-w-[120px] ${
+          clashOf(id) ? "border-[#DC2626] bg-[#FEF2F2] text-[#DC2626]" : assign[id] ? "border-[#0F172A] bg-white font-semibold" : "border-[#E5E1D8] bg-white text-[#8A929B]"
+        }`}
+      >
+        <option value="">—</option>
+        {checkouts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+      </select>
+    </td>
+  );
+
+  const empRow = (emp) => (
+                <tr key={emp.id} className="border-t border-[#EFEBE3]">
+                  <td className="py-1 pr-3 sticky left-0 bg-white z-10 min-w-[120px]">
+                    <p className="font-semibold text-sm leading-tight flex items-center gap-1.5">
+                      {isTrial(emp) && <span title={`Em teste (${emp.role})`} className="text-[9px] bg-[#FEF3C7] text-[#B45309] font-bold px-1.5 py-0.5 rounded">TESTE</span>}
+                      {emp.name}
+                      {defaultOf(emp) && shifts[emp.id] && (
+                        <button onClick={() => saveShift(emp.id, null)} className="no-print text-[10px] font-semibold text-[#C2410C] hover:underline" title="Horário ajustado neste dia · clique para voltar ao horário da jornada">
+                          ↺ jornada
+                        </button>
+                      )}
+                    </p>
+                    {lentOut(emp).map((l) => (
+                      <p key={l.to} className="text-[10px] font-semibold text-[#B45309]">ajuda em {l.to} {l.shift[0]}–{l.shift[1]}</p>
+                    ))}
+                  </td>
+                  <td className="px-2 no-print"><ShiftInputs shift={shifts[emp.id]} fallback={defaultOf(emp)} minutes={minutesOf(emp)} breakLen={breakFor(wlOf(emp), minutesOf(emp))} onSave={(times) => saveShift(emp.id, times)} /></td>
+                  <td className="px-2 text-center font-mono-data text-xs font-semibold text-[#191C1E] whitespace-nowrap">{fmtHours(dayMinutes(shiftOf(emp)))}</td>
+                  {showCheckouts && (isOperator(emp) ? checkoutCell(emp.id, emp.name) : <td />)}
+                  {hours.map((h) => (
+                    <td key={h} className="p-0.5">
+                      <HourCell
+                        shift={shiftOf(emp)}
+                        h={h}
+                        peak={peaks.includes(h)}
+                        lentAt={(m) => lentOut(emp).find((l) => inRange(l.shift, 0, 1, m))?.to}
+                      />
+                    </td>
+                  ))}
+                </tr>
+  );
+
+  const helperRow = ({ emp, shift, key, offClock }) => (
+                <tr key={key} className="border-t border-[#EFEBE3]">
+                  <td className="py-1.5 pr-3 sticky left-0 bg-white z-10 min-w-[120px]">
+                    <p className="font-semibold text-sm leading-tight flex items-center gap-1">
+                      {emp.name}
+                      <button onClick={() => { saveShift(key, null); if (assign[key]) onAssign?.(key, ""); }} className="no-print p-0.5 rounded text-[#8A929B] hover:text-[#DC2626]" aria-label={`Tirar ${emp.name} da ajuda`}>
+                        <X className="h-3 w-3" />
+                      </button>
+                    </p>
+                    {offClock ? (
+                      <p className="text-[10px] font-semibold text-[#C2410C]" title="Depois do turno, sem bater ponto. Não entra no total de horas nem no mural.">
+                        após o turno · fora do ponto
+                        {shiftOf(emp) && shiftOf(emp)[shiftOf(emp).length - 1] > shift[0] && (
+                          <span className="block text-[#DC2626]">começa antes do fim do turno ({shiftOf(emp)[shiftOf(emp).length - 1]})</span>
+                        )}
+                      </p>
+                    ) : (
+                      <p className="text-[10px] font-semibold text-[#6D28D9]">ajuda · vem de {emp.sector}</p>
+                    )}
+                  </td>
+                  <td className="px-2 no-print"><LoanInputs shift={shift} onSave={(times) => saveShift(key, times)} /></td>
+                  <td
+                    className={`px-2 text-center font-mono-data text-xs font-semibold whitespace-nowrap ${offClock ? "text-[#C2410C]" : "text-[#6D28D9]"}`}
+                    title={offClock ? "Fora do ponto: não entra no total" : undefined}
+                  >
+                    {offClock ? `(${fmtHours(dayMinutes(shift))})` : fmtHours(dayMinutes(shift))}
+                  </td>
+                  {showCheckouts && checkoutCell(key, emp.name)}
+                  {hours.map((h) => (
+                    <td key={h} className="p-0.5">
+                      <HourCell shift={shift} h={h} peak={peaks.includes(h)} workColor={offClock ? "bg-[#EA580C]" : "bg-[#8B5CF6]"} />
+                    </td>
+                  ))}
+                </tr>
+  );
 
   return (
     <div data-testid="peak-hours-panel" className="p-3 sm:p-5 space-y-5">
@@ -529,89 +629,9 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                     <span className="ml-1.5 text-[10px] text-[#B8B2A7]">{rg.members.length}</span>
                   </td>
                 </tr>,
-                ...rg.members.map((emp) => (
-                <tr key={emp.id} className="border-t border-[#EFEBE3]">
-                  <td className="py-1 pr-3 sticky left-0 bg-white z-10 min-w-[120px]">
-                    <p className="font-semibold text-sm leading-tight flex items-center gap-1.5">
-                      {isTrial(emp) && <span title={`Em teste (${emp.role})`} className="text-[9px] bg-[#FEF3C7] text-[#B45309] font-bold px-1.5 py-0.5 rounded">TESTE</span>}
-                      {emp.name}
-                      {defaultOf(emp) && shifts[emp.id] && (
-                        <button onClick={() => saveShift(emp.id, null)} className="no-print text-[10px] font-semibold text-[#C2410C] hover:underline" title="Horário ajustado neste dia · clique para voltar ao horário da jornada">
-                          ↺ jornada
-                        </button>
-                      )}
-                    </p>
-                    {lentOut(emp).map((l) => (
-                      <p key={l.to} className="text-[10px] font-semibold text-[#B45309]">ajuda em {l.to} {l.shift[0]}–{l.shift[1]}</p>
-                    ))}
-                  </td>
-                  <td className="px-2 no-print"><ShiftInputs shift={shifts[emp.id]} fallback={defaultOf(emp)} minutes={minutesOf(emp)} breakLen={breakFor(wlOf(emp), minutesOf(emp))} onSave={(times) => saveShift(emp.id, times)} /></td>
-                  <td className="px-2 text-center font-mono-data text-xs font-semibold text-[#191C1E] whitespace-nowrap">{fmtHours(dayMinutes(shiftOf(emp)))}</td>
-                  {showCheckouts && !isOperator(emp) && <td />}
-                  {showCheckouts && isOperator(emp) && (
-                    <td className="px-2">
-                      <select
-                        aria-label={`Caixa de ${emp.name}`}
-                        value={checkouts.some((c) => c.id === assign[emp.id]) ? assign[emp.id] : ""}
-                        onChange={(e) => onAssign?.(emp.id, e.target.value)}
-                        title={clashOf(emp.id) || undefined}
-                        className={`rounded-md border px-1.5 py-1 text-xs max-w-[120px] ${
-                          clashOf(emp.id) ? "border-[#DC2626] bg-[#FEF2F2] text-[#DC2626]" : assign[emp.id] ? "border-[#0F172A] bg-white font-semibold" : "border-[#E5E1D8] bg-white text-[#8A929B]"
-                        }`}
-                      >
-                        <option value="">—</option>
-                        {checkouts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                      </select>
-                    </td>
-                  )}
-                  {hours.map((h) => (
-                    <td key={h} className="p-0.5">
-                      <HourCell
-                        shift={shiftOf(emp)}
-                        h={h}
-                        peak={peaks.includes(h)}
-                        lentAt={(m) => lentOut(emp).find((l) => inRange(l.shift, 0, 1, m))?.to}
-                      />
-                    </td>
-                  ))}
-                </tr>
-                )),
+                ...rg.items.map((it) => (it.kind === "emp" ? empRow(it.emp) : helperRow(it))),
               ])}
-              {helpers.map(({ emp, shift, key, offClock }) => (
-                <tr key={key} className="border-t border-[#EFEBE3]">
-                  <td className="py-1.5 pr-3 sticky left-0 bg-white z-10 min-w-[120px]">
-                    <p className="font-semibold text-sm leading-tight flex items-center gap-1">
-                      {emp.name}
-                      <button onClick={() => saveShift(key, null)} className="no-print p-0.5 rounded text-[#8A929B] hover:text-[#DC2626]" aria-label={`Tirar ${emp.name} da ajuda`}>
-                        <X className="h-3 w-3" />
-                      </button>
-                    </p>
-                    {offClock ? (
-                      <p className="text-[10px] font-semibold text-[#C2410C]" title="Depois do turno, sem bater ponto. Não entra no total de horas nem no mural.">
-                        após o turno · fora do ponto
-                        {shiftOf(emp) && shiftOf(emp)[shiftOf(emp).length - 1] > shift[0] && (
-                          <span className="block text-[#DC2626]">começa antes do fim do turno ({shiftOf(emp)[shiftOf(emp).length - 1]})</span>
-                        )}
-                      </p>
-                    ) : (
-                      <p className="text-[10px] font-semibold text-[#6D28D9]">ajuda · vem de {emp.sector}</p>
-                    )}
-                  </td>
-                  <td className="px-2 no-print"><LoanInputs shift={shift} onSave={(times) => saveShift(key, times)} /></td>
-                  <td
-                    className={`px-2 text-center font-mono-data text-xs font-semibold whitespace-nowrap ${offClock ? "text-[#C2410C]" : "text-[#6D28D9]"}`}
-                    title={offClock ? "Fora do ponto: não entra no total" : undefined}
-                  >
-                    {offClock ? `(${fmtHours(dayMinutes(shift))})` : fmtHours(dayMinutes(shift))}
-                  </td>
-                  {showCheckouts && <td />}
-                  {hours.map((h) => (
-                    <td key={h} className="p-0.5">
-                      <HourCell shift={shift} h={h} peak={peaks.includes(h)} workColor={offClock ? "bg-[#EA580C]" : "bg-[#8B5CF6]"} />
-                    </td>
-                  ))}
-                </tr>
-              ))}
+              {trailingHelpers.map(helperRow)}
               {(candidates.length > 0 || offClockCandidates.length > 0) && (
                 <tr className="no-print">
                   <td colSpan={3 + extraCols + hours.length} className="pt-2">
