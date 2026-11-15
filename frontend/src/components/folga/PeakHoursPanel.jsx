@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Bar, CartesianGrid, Cell, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Clock, FileUp, Flame, Loader2, Trash2, AlertTriangle, UserPlus, X } from "lucide-react";
+import { Clock, FileUp, Flame, Loader2, Trash2, AlertTriangle, UserPlus, X, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { http, errMsg, DAYS, fmtDayMonth } from "@/lib/api";
@@ -225,6 +225,10 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
     setShifts({});
     http.get("/shifts", { params: { week, day } }).then(({ data }) => setShifts(data.shifts)).catch((e) => toast.error(errMsg(e)));
   }, [week, day]);
+  const [weekAll, setWeekAll] = useState({});
+  useEffect(() => {
+    http.get("/shifts/week", { params: { week } }).then(({ data }) => setWeekAll(data)).catch(() => setWeekAll({}));
+  }, [week, day]);
 
   const report = hourlyAll.find((h) => h.day === day);
   const working = members.filter((e) => worksOn(schedule, e, day));
@@ -362,6 +366,42 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
     const c = clashes.find((x) => x.ids.includes(id));
     return c && `${c.checkout}: ${c.ids.map(nameOf).join(" e ")} ao mesmo tempo (${c.from}–${c.to})`;
   };
+
+  // Riscos de quem trabalha fora do ponto (só informativo: a decisão é do gestor)
+  const offClockOn = (id, dayShifts) =>
+    Object.entries(dayShifts || {})
+      .filter(([k]) => k.startsWith(`${id}@`) && k.endsWith("@fora"))
+      .reduce((sum, [, sh]) => sum + dayMinutes(sh), 0);
+  const offClockRisks = helpers
+    .filter((x) => x.offClock)
+    .map(({ emp, shift }) => {
+      const own = shiftOf(emp);
+      const off = dayMinutes(shift);
+      const total = dayMinutes(own) + off;
+      const flags = [];
+      if (total > 600) flags.push(`jornada de ${fmtHours(total)} no dia — passa do limite legal de 10h (art. 59)`);
+      if (off > 120) flags.push(`${fmtHours(off)} além do turno — passa de 2h extras por dia`);
+      if (own && own[own.length - 1] > shift[0]) flags.push(`começa antes do fim do turno (${own[own.length - 1]})`);
+      if (day < 6 && worksOn(schedule, emp, day + 1)) {
+        const next = isIntermittent(emp) ? null : defaultShiftOf(wlOf(emp), sectorMode, day + 1);
+        if (next) {
+          const rest = 24 * 60 - toMin(shift[1]) + toMin(next[0]);
+          if (rest < 660) flags.push(`descanso de ${fmtHours(rest)} até a entrada de amanhã (${next[0]}) — mínimo de 11h (art. 66)`);
+        }
+      }
+      let weekOff = 0;
+      for (let d = 0; d < 7; d++) weekOff += offClockOn(emp.id, d === day ? shifts : weekAll[String(d)]);
+      return { emp, off, total, flags, weekOff };
+    });
+  const offClockDay = offClockRisks.reduce((sum, r) => sum + r.off, 0);
+  const offClockWeek = (() => {
+    let sum = 0;
+    for (let d = 0; d < 7; d++) {
+      const dayShifts = d === day ? shifts : weekAll[String(d)];
+      for (const [k, sh] of Object.entries(dayShifts || {})) if (k.endsWith(`@${sector}@fora`)) sum += dayMinutes(sh);
+    }
+    return sum;
+  })();
 
   // Dentro de cada cargo, em ordem de entrada
   const byStart = (a, b) =>
@@ -635,6 +675,30 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
               <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Caixa {c.checkout}: {c.ids.map(nameOf).join(" e ")} ao mesmo tempo das {c.from} às {c.to}.
             </p>
           ))}
+          {offClockRisks.length > 0 && (
+            <div data-testid="offclock-risks" className="no-print mt-4 rounded-xl border border-[#FDBA74] bg-[#FFF7ED] p-4">
+              <p className="text-sm font-bold text-[#9A3412] flex items-center gap-1.5">
+                <ShieldAlert className="h-4 w-4" /> Riscos do fora do ponto
+              </p>
+              <ul className="mt-2 space-y-2">
+                {offClockRisks.map((r) => (
+                  <li key={r.emp.id} className="text-xs text-[#7C2D12]">
+                    <span className="font-semibold">{r.emp.name}</span>: {fmtHours(r.off)} fora do ponto hoje · {fmtHours(r.total)} trabalhadas no dia · {fmtHours(r.weekOff)} fora do ponto na semana
+                    {r.flags.map((f) => (
+                      <span key={f} className="flex items-start gap-1 text-[#DC2626] mt-0.5">
+                        <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" /> {f}
+                      </span>
+                    ))}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-[#9A3412] mt-3 pt-3 border-t border-[#FED7AA]">
+                Passivo potencial: <b>{fmtHours(offClockDay)}</b> hoje e <b>{fmtHours(offClockWeek)}</b> na semana em {sector}. Numa ação, cada hora sai
+                por no mínimo 1,5 hora de salário (adicional de 50%), mais reflexos em DSR, férias, 13º e FGTS. Fora do ponto, um acidente também não fica
+                coberto como acidente de trabalho.
+              </p>
+            </div>
+          )}
         </div>
       )}
 
