@@ -25,14 +25,15 @@ const CheckoutTag = ({ name }) => (
   </span>
 );
 
-const ConvocationCell = ({ conv, date, vacation, sick, shift, checkout, mural, excess, onClick, testId }) => {
+const ConvocationCell = ({ conv, date, vacation, sick, closed, doublePay, shift, checkout, mural, excess, onClick, testId }) => {
+  if (closed) return <Cell status="feriado" testId={testId} />;
   if (vacation) return <Cell status="ferias" testId={testId} />;
   if (sick) return <Cell status="atestado" testId={testId} />;
   const state = conv?.status || "none";
   // Mural: só o dia aceito aparece; convocação pendente ou recusada fica em branco
   if (mural) {
     return state === "accepted" && !excess ? (
-      <Cell shift={shift} checkout={checkout} mural testId={testId} />
+      <Cell shift={shift} checkout={checkout} doublePay={doublePay} mural testId={testId} />
     ) : (
       <div data-testid={testId} className="w-full h-11" />
     );
@@ -48,6 +49,7 @@ const ConvocationCell = ({ conv, date, vacation, sick, shift, checkout, mural, e
       className={`relative w-full h-11 rounded-lg text-[10px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none ${CONVOCATION_STYLE[state]} ${excess ? "ring-2 ring-[#DC2626] ring-offset-1" : late ? "ring-2 ring-[#F59E0B] ring-offset-1" : ""}`}
     >
       {state === "accepted" && checkout && <CheckoutTag name={checkout} />}
+      {state === "accepted" && doublePay && <DoubleTag />}
       {state === "none" ? "—" : state === "accepted" ? (shift ? <ShiftText shift={shift} /> : "TRAB.") : CONVOCATION_LABEL[state]}
     </button>
   );
@@ -61,7 +63,14 @@ const ShiftText = ({ shift }) => (
   </span>
 );
 
-const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp, shift, checkout, mural, locked, onClick, testId }) => {
+// Feriado com a loja aberta: quem trabalha recebe em dobro
+const DoubleTag = () => (
+  <span className="absolute -bottom-1.5 right-1 rounded bg-[#4338CA] px-1 text-[8px] font-bold leading-[12px] tracking-normal text-white" title="Trabalha no feriado: pagamento em dobro">
+    2×
+  </span>
+);
+
+const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp, shift, checkout, doublePay, mural, locked, onClick, testId }) => {
   // Mural: falta acontece depois da impressão (vale o horário escalado) e não mostra alertas
   const absent = mural ? false : absentProp;
   const cct = mural ? undefined : cctProp;
@@ -73,6 +82,17 @@ const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp
         title="Funcionário em período de férias"
       >
         FÉRIAS
+      </div>
+    );
+  }
+  if (status === "feriado") {
+    return (
+      <div
+        data-testid={testId}
+        className="w-full h-11 flex items-center justify-center rounded-lg text-[10px] font-extrabold tracking-wider bg-[#EEF2FF] border border-[#C7D2FE] text-[#4338CA] font-mono-data select-none cursor-not-allowed"
+        title="Feriado com a loja fechada"
+      >
+        FERIADO
       </div>
     );
   }
@@ -114,6 +134,7 @@ const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp
     return (
       <div data-testid={testId} className={`relative w-full h-11 flex items-center justify-center rounded-lg text-[11px] font-bold tracking-wider font-mono-data border select-none ${classesEstilo}`}>
         {working && checkout && <CheckoutTag name={checkout} />}
+        {working && doublePay && <DoubleTag />}
         {texto}
       </div>
     );
@@ -148,6 +169,7 @@ const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp
       className={`relative w-full h-11 rounded-lg text-[11px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[#0F172A] ${classesEstilo} ${cct ? "ring-2 ring-[#DC2626] ring-offset-1" : ""} ${locked && !absent ? "opacity-70" : ""}`}
     >
       {working && checkout && <CheckoutTag name={checkout} />}
+      {working && doublePay && <DoubleTag />}
       {texto}
     </button>
   );
@@ -168,7 +190,7 @@ const RoleHeader = ({ role, count, span }) => (
   </tr>
 );
 
-const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx, schedule, dates, shiftOn, mural, streakLimit = 6, sickDays = [], lockedDay = () => false, checkoutOn = () => null }) => {
+const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx, schedule, dates, shiftOn, mural, streakLimit = 6, sickDays = [], lockedDay = () => false, checkoutOn = () => null, closedDays = [], openHolidays = [] }) => {
   const intermittent = isIntermittent(emp);
   // Intermitente: dias aceitos depois do limite de dias seguidos (6 no 6x1, 5 no 5x2)
   const excessDays = new Set();
@@ -207,6 +229,8 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
               date={dates[d]}
               vacation={vacationDays.includes(d)}
               sick={sickDays.includes(d)}
+              closed={closedDays.includes(d)}
+              doublePay={openHolidays.includes(d)}
               shift={shiftOn(d)}
               checkout={checkoutOn(d)}
               mural={mural}
@@ -226,7 +250,8 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
             checkout={checkoutOn(d)}
             mural={mural}
             locked={lockedDay(d)}
-            status={vacationDays.includes(d) ? "ferias" : sickDays.includes(d) ? "atestado" : emp.status}
+            doublePay={openHolidays.includes(d)}
+            status={closedDays.includes(d) ? "feriado" : vacationDays.includes(d) ? "ferias" : sickDays.includes(d) ? "atestado" : emp.status}
             // Clique: TRAB. -> FOLGA -> SUSP. -> FALTA -> TRAB. Shift + clique numa folga marca EXTRA.
             onClick={(e) => (e.shiftKey ? onExtra(emp, d, offs.includes(d)) : onToggle(emp.id, d))}
             testId={`cell-${emp.id}-${d}`}
@@ -366,6 +391,9 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   const vacationOf = (id) => schedule.vacation_days?.[id] || [];
   const extrasOf = (id) => schedule.extra_days?.[id] || [];
   const sickOf = (id) => schedule.sick_days?.[id] || [];
+  const holidayOn = (d) => schedule.holidays?.[String(d)];
+  const closedDays = schedule.closed_days || [];
+  const openHolidays = DAYS_SHORT.map((_, d) => d).filter((d) => holidayOn(d) && !holidayOn(d).closed);
   // Dias antes de hoje ficam bloqueados (só falta e atestado), a não ser com a senha do administrador
   const unlockedUntil = useUnlock();
   const pastDay = (d) => isoDate(dates[d]) < today;
@@ -374,8 +402,8 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   // Suspensão e falta não contam como em operação
   const byId = Object.fromEntries(employees.map((e) => [e.id, e]));
   const worksOn = (id, d) =>
-    isIntermittent(byId[id]) ? acceptedOn(schedule, id, d) && !vacationOf(id).includes(d) && !sickOf(id).includes(d) :
-    (!offsOf(id).includes(d) || extrasOf(id).includes(d)) && !suspensionsOf(id).includes(d) && !absencesOf(id).includes(d) && !vacationOf(id).includes(d) && !sickOf(id).includes(d);
+    isIntermittent(byId[id]) ? acceptedOn(schedule, id, d) && !vacationOf(id).includes(d) && !sickOf(id).includes(d) && !closedDays.includes(d) :
+    (!offsOf(id).includes(d) || extrasOf(id).includes(d)) && !suspensionsOf(id).includes(d) && !absencesOf(id).includes(d) && !vacationOf(id).includes(d) && !sickOf(id).includes(d) && !closedDays.includes(d);
   const sectors = [...new Set(employees.map((e) => e.sector))].sort((a, b) => a.localeCompare(b));
   const activeSector = sectors.includes(sector) ? sector : "all";
   const activeDay = activeSector === "all" ? null : dayView;
@@ -514,6 +542,14 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       <div className={`rounded-lg py-1.5 text-xs font-bold uppercase tracking-wider ${peaks.includes(i) ? "bg-[#DC2626] text-white" : "text-[#575E65]"} ${isoDate(dates[i]) === today ? "ring-2 ring-offset-2 ring-[#0F172A]" : ""}`}>
                         <span className="inline-flex items-center gap-1">{peaks.includes(i) && <Flame className="h-3 w-3" />}{lockedDay(i) && !mural && <Lock className="h-3 w-3 opacity-70" />}{d}</span>
                         <span data-testid={`header-date-${i}`} className="block font-mono-data text-[10px] font-medium opacity-80 normal-case">{fmtDayMonth(dates[i])}</span>
+                        {holidayOn(i) && (
+                          <span
+                            title={`${holidayOn(i).name}${holidayOn(i).closed ? " · loja fechada" : " · loja aberta (pagamento em dobro)"}`}
+                            className="mt-1 mx-auto block max-w-[86px] truncate rounded bg-[#EEF2FF] px-1 text-[9px] font-semibold normal-case tracking-normal text-[#4338CA]"
+                          >
+                            {holidayOn(i).name}
+                          </span>
+                        )}
                       </div>
                     </th>
                   ))}
@@ -543,6 +579,8 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       required={OFFS_PER_MODE[modeOf(emp.sector)]}
                       streakLimit={modeOf(emp.sector) === "5x2" ? 5 : 6}
                       sickDays={sickOf(emp.id)}
+                      closedDays={closedDays}
+                      openHolidays={mural ? [] : openHolidays}
                       lockedDay={lockedDay}
                       onToggle={onToggle}
                       onExtra={onExtra}
@@ -568,6 +606,14 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                 </tr>
               </tfoot>}
             </table>
+            {!mural && openHolidays.map((d) => {
+              const names = visible.filter((e) => worksOn(e.id, d)).map((e) => e.name);
+              return (
+                <p key={d} className="no-print mt-3 text-xs text-[#4338CA]">
+                  <b>Feriado {fmtDayMonth(dates[d])} · {holidayOn(d).name}</b> (pagamento em dobro): {names.length ? names.join(", ") : "ninguém escalado"}.
+                </p>
+              );
+            })}
           </div>
           )}
         </>

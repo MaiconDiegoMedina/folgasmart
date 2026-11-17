@@ -8,7 +8,7 @@ import re
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from typing import Annotated, Dict, List, Literal
+from typing import Annotated, Any, Dict, List, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field, StringConstraints, model_validator
@@ -141,6 +141,8 @@ SCHEMA_STATEMENTS = [
     """CREATE TABLE IF NOT EXISTS workloads (id TEXT PRIMARY KEY, name TEXT NOT NULL, minutes TEXT NOT NULL,
     break_minutes INTEGER NOT NULL DEFAULT 60, minutes_5x2 INTEGER, created_at TEXT NOT NULL)""",
     """CREATE TABLE IF NOT EXISTS checkouts (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS holidays (date TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+    closed INTEGER NOT NULL DEFAULT 0)""",
     """CREATE TABLE IF NOT EXISTS checkout_assign (week TEXT NOT NULL, day INTEGER NOT NULL, data TEXT NOT NULL,
     PRIMARY KEY (week, day))""",
 ]
@@ -240,6 +242,9 @@ class Schedule(BaseModel):
     vacation_days: Dict[str, List[int]] = Field(default_factory=dict)
     # Calculado a partir dos atestados
     sick_days: Dict[str, List[int]] = Field(default_factory=dict)
+    # Calculado: feriados da semana {"dia": {"name", "kind", "closed"}} e dias com a loja fechada
+    holidays: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    closed_days: List[int] = Field(default_factory=list)
     generated_at: str | None = None
     cct_alerts: Dict[str, str] = Field(default_factory=dict)
     sector_modes: Dict[str, Mode] = Field(default_factory=dict)
@@ -448,10 +453,61 @@ async def vacation_days_for(request: Request, week: str, kind: str = "ferias") -
     return {emp_id: sorted(d) for emp_id, d in days.items()}
 
 
+# ---------- Feriados ----------
+def easter(year: int) -> date:
+    """Domingo de Páscoa (algoritmo de Meeus/Jones/Butcher)."""
+    a, b, c = year % 19, year // 100, year % 100
+    d, e = b // 4, b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = c // 4, c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = (h + l - 7 * m + 114) % 31 + 1
+    return date(year, month, day)
+
+
+def national_holidays(year: int) -> Dict[str, str]:
+    fixed = {
+        "01-01": "Confraternização Universal", "04-21": "Tiradentes", "05-01": "Dia do Trabalho",
+        "09-07": "Independência do Brasil", "10-12": "Nossa Senhora Aparecida", "11-02": "Finados",
+        "11-15": "Proclamação da República", "11-20": "Dia Nacional de Zumbi e da Consciência Negra",
+        "12-25": "Natal",
+    }
+    days = {f"{year}-{md}": name for md, name in fixed.items()}
+    days[(easter(year) - timedelta(days=2)).isoformat()] = "Sexta-feira Santa"
+    return days
+
+
+async def holidays_between(request: Request, first: date, last: date) -> List[Dict[str, Any]]:
+    """Feriados nacionais (automáticos) + cadastrados; o cadastro sobrescreve o nacional da mesma data."""
+    found: Dict[str, Dict[str, Any]] = {}
+    for year in range(first.year, last.year + 1):
+        for iso, name in national_holidays(year).items():
+            if first.isoformat() <= iso <= last.isoformat():
+                found[iso] = {"date": iso, "name": name, "kind": "nacional", "closed": False}
+    rows = (await db(request).prepare(
+        "SELECT date, name, kind, closed FROM holidays WHERE date >= ? AND date <= ?"
+    ).bind(first.isoformat(), last.isoformat()).all()).results
+    for r in rows:
+        found[r["date"]] = {"date": r["date"], "name": r["name"], "kind": r["kind"], "closed": bool(r["closed"])}
+    return sorted(found.values(), key=lambda h: h["date"])
+
+
+async def week_holidays(request: Request, week: str) -> Dict[str, Dict[str, Any]]:
+    start = date.fromisoformat(week)
+    items = await holidays_between(request, start, start + timedelta(days=6))
+    return {str((date.fromisoformat(h["date"]) - start).days): {k: h[k] for k in ("name", "kind", "closed")} for h in items}
+
+
 async def get_schedule(request: Request, week: str) -> Schedule:
     schedule = await load_schedule(request, week)
     schedule.vacation_days = await vacation_days_for(request, week)
     schedule.sick_days = await vacation_days_for(request, week, "atestado")
+    schedule.holidays = await week_holidays(request, week)
+    schedule.closed_days = sorted(int(d) for d, h in schedule.holidays.items() if h["closed"])
     return schedule
 
 
@@ -529,6 +585,8 @@ SUNDAY_CYCLE = {"M": "TTFF", "F": "TF"}
 
 
 def sunday_of(schedule: Schedule, emp_id: str) -> str | None:
+    if SUNDAY in schedule.closed_days:
+        return "F"  # domingo com a loja fechada conta como domingo de folga
     if SUNDAY in schedule.vacation_days.get(emp_id, []) or SUNDAY in schedule.sick_days.get(emp_id, []):
         return "F"
     if emp_id not in schedule.off_days:
@@ -575,12 +633,13 @@ MAX_STREAK = 6
 
 def worked_days(schedule: Schedule, emp_id: str) -> List[bool] | None:
     vacation = set(schedule.vacation_days.get(emp_id, [])) | set(schedule.sick_days.get(emp_id, []))
+    closed = set(schedule.closed_days)
     if emp_id not in schedule.off_days and not vacation:
         accepted = {int(d) for d, c in schedule.convocations.get(emp_id, {}).items() if c.get("status") == "accepted"}
-        return [day in accepted for day in range(7)] if accepted else None
+        return [day in accepted and day not in closed for day in range(7)] if accepted else None
     # EXTRA é computado como folga
     off = set(schedule.off_days.get(emp_id, [])) | set(schedule.suspension_days.get(emp_id, []))
-    off |= set(schedule.absence_days.get(emp_id, [])) | vacation
+    off |= set(schedule.absence_days.get(emp_id, [])) | vacation | closed
     return [day not in off for day in range(7)]
 
 
@@ -630,7 +689,9 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
                      rotate: int = 0, previous_days: dict | None = None,
                      sunday_rule: Dict[str, str] | None = None,
                      sector_modes: Dict[str, str] | None = None,
-                     vacation: Dict[str, List[int]] | None = None) -> Dict[str, List[int]]:
+                     vacation: Dict[str, List[int]] | None = None,
+                     closed: List[int] | None = None) -> Dict[str, List[int]]:
+    shut = set(closed or [])
     max_avg = max(movement.avg) or 1
     weight = [1 + 4 * (value / max_avg) for value in movement.avg]
     peaks = set(movement.peak_days)
@@ -662,6 +723,9 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
             if offs_needed == 0 and not any(d <= last_day for d in vac):
                 offs_needed = 1  # ainda precisa de folga para não passar de 6 dias seguidos
             offs_needed = min(offs_needed, 7 - len(vac))
+        if SUNDAY in shut:
+            rule = None  # domingo fechado: a regra de domingos já está cumprida
+        offs_needed = min(offs_needed, 7 - len(vac) - len(shut))
         # Folga de domingo pela CCT e a semana anterior terminou cedo: no 6x1 só um dia de folga
         # não cumpre as duas regras, então ganha uma folga a mais
         if rule == "F" and last_day < SUNDAY and offs_needed == 1:
@@ -674,7 +738,7 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
                 if day in peaks:
                     value += 1000
                 # No máximo 6 dias seguidos: a primeira folga precisa vir até o dia last_day
-                if pick == offs_needed - 1 and not any(d <= last_day for d in chosen + list(vac)) and day > last_day:
+                if pick == offs_needed - 1 and not any(d <= last_day for d in chosen + list(vac) + list(shut)) and day > last_day:
                     value += 1000000 + 1000 * (day - last_day)
                 # Regra de domingos da CCT tem prioridade sobre as demais
                 if rule == "F" and SUNDAY not in chosen and day != SUNDAY:
@@ -682,7 +746,7 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
                 if rule == "T" and day == SUNDAY:
                     value += 100000
                 return value
-            day = min((d for d in range(7) if d not in chosen and d not in vac), key=lambda d: (cost(d), d))
+            day = min((d for d in range(7) if d not in chosen and d not in vac and d not in shut), key=lambda d: (cost(d), d))
             chosen.append(day)
             sec[day] += 1
         result[emp.id] = sorted(chosen)
@@ -1034,7 +1098,8 @@ async def generate(data: GenerateIn, request: Request):
     vacation = await vacation_days_for(request, week)
     sick = await vacation_days_for(request, week, "atestado")
     off_days = compute_schedule(target, mov, data.mode, rotate, previous_days, sunday_rule,
-                                {k.lower(): v for k, v in snapshot.items()}, merge_days(vacation, sick))
+                                {k.lower(): v for k, v in snapshot.items()}, merge_days(vacation, sick),
+                                [int(d) for d, h in (await week_holidays(request, week)).items() if h["closed"]])
     if sector_key:
         # Refaz só o setor escolhido: folgas, EXTRA e suspensões dos outros setores ficam como estão
         sched = await get_schedule(request, week)
@@ -1051,6 +1116,8 @@ async def generate(data: GenerateIn, request: Request):
                          convocations=previous.convocations)
     sched.vacation_days = vacation
     sched.sick_days = sick
+    sched.holidays = await week_holidays(request, week)
+    sched.closed_days = sorted(int(d) for d, h in sched.holidays.items() if h["closed"])
     await save_schedule(request, sched)
     return await with_alerts(request, sched, employees, history[:2])
 
@@ -1064,6 +1131,8 @@ async def toggle_cell(data: CellToggle, request: Request):
         raise HTTPException(404, "Funcionário não encontrado")
     sched = await get_schedule(request, week_start(data.week))
     contract = employee["contract"] or ("intermitente" if "intermitente" in (employee["role"] or "").lower() else "efetivo")
+    if data.day in sched.closed_days:
+        raise HTTPException(400, "Feriado com a loja fechada: ninguém trabalha nesse dia.")
     if is_past(sched.week, data.day) and not admin_unlocked(request):
         # Dia passado: só lança ou retira FALTA de quem estava escalado para trabalhar
         off = sched.off_days.get(data.employee_id, [])
@@ -1175,6 +1244,48 @@ async def shifts_api(week: str, day: int, request: Request):
     if not 0 <= day <= 6:
         raise HTTPException(400, "Dia inválido")
     return await get_shifts(request, week_start(week), day)
+
+
+class HolidayIn(BaseModel):
+    date: str
+    name: Text
+    kind: Literal["nacional", "estadual", "municipal"] = "municipal"
+    closed: bool = False
+
+
+@api.get("/holidays")
+async def holidays_api(year: int, request: Request):
+    return await holidays_between(request, date(year, 1, 1), date(year, 12, 31))
+
+
+@api.put("/holidays")
+async def set_holiday(data: HolidayIn, request: Request):
+    try:
+        day = date.fromisoformat(data.date)
+    except ValueError:
+        raise HTTPException(400, "Data inválida. Use AAAA-MM-DD.")
+    if day < today_br() and not admin_unlocked(request):
+        raise HTTPException(423, "Feriado em data que já passou: desbloqueie com a senha do administrador.")
+    national = national_holidays(day.year).get(day.isoformat())
+    kind, name = ("nacional", national) if national else (data.kind, data.name.strip())
+    await db(request).prepare(
+        """INSERT INTO holidays (date, name, kind, closed) VALUES (?, ?, ?, ?)
+        ON CONFLICT(date) DO UPDATE SET name=excluded.name, kind=excluded.kind, closed=excluded.closed"""
+    ).bind(day.isoformat(), name, kind, 1 if data.closed else 0).run()
+    return {"date": day.isoformat(), "name": name, "kind": kind, "closed": data.closed}
+
+
+@api.delete("/holidays/{holiday_date}")
+async def delete_holiday(holiday_date: str, request: Request):
+    """Remove um feriado cadastrado; um nacional volta ao padrão (loja aberta)."""
+    try:
+        day = date.fromisoformat(holiday_date)
+    except ValueError:
+        raise HTTPException(400, "Data inválida.")
+    if day < today_br() and not admin_unlocked(request):
+        raise HTTPException(423, "Feriado em data que já passou: desbloqueie com a senha do administrador.")
+    await db(request).prepare("DELETE FROM holidays WHERE date = ?").bind(day.isoformat()).run()
+    return {"ok": True}
 
 
 # ---------- Caixas (checkouts) e o caixa de cada operadora por dia ----------

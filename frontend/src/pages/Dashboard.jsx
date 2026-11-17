@@ -6,6 +6,7 @@ import { MovementPanel } from "@/components/folga/MovementPanel";
 import { EmployeesPanel } from "@/components/folga/EmployeesPanel";
 import { WorkloadsPanel } from "@/components/folga/WorkloadsPanel";
 import { CheckoutsPanel } from "@/components/folga/CheckoutsPanel";
+import { HolidaysPanel } from "@/components/folga/HolidaysPanel";
 import { ScheduleGrid } from "@/components/folga/ScheduleGrid";
 import { UnlockDialog } from "@/components/folga/UnlockDialog";
 import { useAuth } from "@/components/LoginGate";
@@ -96,6 +97,7 @@ export default function Dashboard() {
         </div>
         <div className="no-print"><WorkloadsPanel workloads={workloads} onChange={load} /></div>
         <div className="no-print"><CheckoutsPanel checkouts={checkouts} onChange={load} /></div>
+        <div className="no-print"><HolidaysPanel onChange={load} /></div>
       </main>
     </div>
   );

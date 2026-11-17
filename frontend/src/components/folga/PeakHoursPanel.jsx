@@ -25,6 +25,7 @@ const readText = async (file) => {
 };
 
 const worksOn = (schedule, emp, day) => {
+  if ((schedule.closed_days || []).includes(day)) return false;
   if (emp.status === "ferias") return false;
   if ((schedule.vacation_days?.[emp.id] || []).includes(day)) return false;
   if ((schedule.sick_days?.[emp.id] || []).includes(day)) return false;
@@ -564,6 +565,12 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
         </div>
       </div>
 
+      {schedule.holidays?.[String(day)] && (
+        <p className="text-xs font-semibold text-[#4338CA] bg-[#EEF2FF] border border-[#C7D2FE] rounded-lg px-3 py-2">
+          Feriado: {schedule.holidays[String(day)].name} ·{" "}
+          {schedule.holidays[String(day)].closed ? "loja fechada, ninguém trabalha." : "loja aberta, quem trabalha recebe em dobro."}
+        </p>
+      )}
       {locked && (
         <p className="no-print text-xs text-[#B45309] bg-[#FFFBEB] border border-[#FCD34D] rounded-lg px-3 py-2">
           Este dia já passou: os horários estão bloqueados. Para alterar, desbloqueie com a senha do administrador.
