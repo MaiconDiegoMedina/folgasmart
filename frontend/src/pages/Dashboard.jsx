@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { http, errMsg, isoDate, mondayOf } from "@/lib/api";
-import { Header, PageTitle } from "@/components/folga/Header";
+import { PageTitle } from "@/components/folga/Header";
 import { AppRail, TABS } from "@/components/folga/AppRail";
 import { HomePanel } from "@/components/folga/HomePanel";
 import { CheckoutsBoard } from "@/components/folga/CheckoutsBoard";
@@ -116,8 +116,7 @@ export default function Dashboard() {
           {tab === "inicio" && <HomePanel employees={scheduled} schedule={schedule} movement={movement} week={week} onTab={setTab} />}
           {tab === "escala" && (
             <>
-              <Header employees={scheduled} movement={movement} schedule={schedule} generating={generating} onGenerate={generate} generateSector={activeSector} />
-              <ScheduleGrid employees={scheduled} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} workloads={workloads} checkouts={checkouts} sector={sector} onSectorChange={setSector} />
+              <ScheduleGrid employees={scheduled} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} workloads={workloads} checkouts={checkouts} sector={sector} onSectorChange={setSector} onGenerate={generate} generating={generating} generateSector={activeSector} />
             </>
           )}
           {tab === "funcionarios" && (
