@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Plus, Trash2, Loader2, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { http, errMsg, DAYS_SHORT } from "@/lib/api";
 import { dayMinutes, timesOf, times5x2Of } from "@/lib/workloadTimes";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageTitle } from "@/components/folga/Header";
+import { isIntermittent } from "@/lib/convocation";
 
 const pad = (n) => String(n).padStart(2, "0");
 export const fmtMinutes = (m) => (m ? `${Math.floor(m / 60)}h${m % 60 ? pad(m % 60) : ""}` : "—");
@@ -152,30 +153,35 @@ const groupDays = (times) => {
     .map((g) => ({ ...g, label: g.from === g.to ? DAY_NAMES[g.from] : `${DAYS_SHORT[g.from]} a ${DAYS_SHORT[g.to]}` }));
 };
 
-const Timeline = ({ t }) => {
+const BRK_BG = "repeating-linear-gradient(135deg,#E3DEF7 0 4px,#F2F0F8 4px 8px)";
+
+const Timeline = ({ t, estimated }) => {
   const [a, b] = [toM(t[0]), toM(t[t.length - 1])];
   const brk = t.length === 4 ? [toM(t[1]), toM(t[2])] : null;
-  const seg = (x, y, label) => (
-    <div className="absolute top-1 bottom-1 grid place-items-center overflow-hidden whitespace-nowrap rounded-lg bg-[#6D5BD0] text-[11px] font-bold text-white" style={{ left: tPct(x), width: `calc(${tWidth(x, y)} - 2px)` }}>
-      {label}
+  const seg = (x, y, label, short) => (
+    <div
+      className={`absolute top-1 bottom-1 flex items-center justify-center overflow-hidden whitespace-nowrap rounded-[9px] text-[11px] font-semibold text-white ${estimated ? "bg-[#9C8FE3]" : "bg-[#6D5BD0]"}`}
+      style={{ left: tPct(x), width: tWidth(x, y) }}
+    >
+      {y - x >= 200 ? label : short}
     </div>
   );
   return (
     <div className="relative h-[34px] rounded-xl bg-[#F2F0F8]">
       {brk ? (
         <>
-          {seg(a, brk[0], `${t[0]} – ${t[1]}`)}
+          {seg(a, brk[0], `${t[0]} – ${t[1]}`, t[0])}
           <div
             title={`Intervalo ${t[1]}–${t[2]}`}
-            className="absolute top-1 bottom-1 grid place-items-center overflow-hidden whitespace-nowrap rounded-lg text-[11px] font-semibold text-[#4B3DA8]"
-            style={{ left: tPct(brk[0]), width: tWidth(brk[0], brk[1]), background: "repeating-linear-gradient(135deg,rgba(124,106,224,.22) 0 4px,rgba(124,106,224,.08) 4px 8px)" }}
+            className="absolute top-1 bottom-1 flex items-center justify-center overflow-hidden whitespace-nowrap rounded-[9px] text-[11px] font-semibold text-[#4B3DA8]"
+            style={{ left: tPct(brk[0]), width: tWidth(brk[0], brk[1]), background: BRK_BG }}
           >
             {brk[1] - brk[0] >= 90 ? "intervalo" : ""}
           </div>
-          {seg(brk[1], b, `${t[2]} – ${t[3]}`)}
+          {seg(brk[1], b, `${t[2]} – ${t[3]}`, t[3])}
         </>
       ) : (
-        seg(a, b, `${t[0]} – ${t[1]}`)
+        seg(a, b, `${t[0]} – ${t[1]}`, `${t[0]} – ${t[1]}`)
       )}
     </div>
   );
@@ -184,6 +190,21 @@ const Timeline = ({ t }) => {
 const HOURS_AXIS = [5, 8, 11, 14, 17, 20, 23];
 const LIMIT = 44 * 60;
 const WEEK_CHIP = { ok: "bg-[#E3F5EC] text-[#1D6B45]", warn: "bg-[#FFF4D1] text-[#7A5500]", risk: "bg-[#FDE2E2] text-[#A12828]" };
+const CHIP = "inline-flex h-[26px] items-center whitespace-nowrap rounded-[13px] px-2.5 text-xs font-semibold";
+
+// Semana no 6x1: uma folga por semana, que pode cair em qualquer dia com horário
+const weekChip = (w) => {
+  const total = w.minutes.reduce((s, m) => s + m, 0);
+  const on = w.minutes.filter((m) => m > 0);
+  if (!on.length) return null;
+  const lo = total - Math.max(...on);
+  const hi = on.length < 7 ? total : total - Math.min(...on);
+  const lvl = hi <= LIMIT ? "ok" : lo <= LIMIT ? "warn" : "risk";
+  const txt = lo === hi ? fmtMinutes(lo) : `${fmtMinutes(lo)} a ${fmtMinutes(hi)}`;
+  return { lvl, text: `${txt} · ${lvl === "ok" ? "dentro do limite" : lvl === "warn" ? "passa de 44h conforme a folga" : "acima de 44h"}` };
+};
+
+const fiveChip = (m) => (m ? { lvl: m * 5 <= LIMIT ? "ok" : "risk", text: `${fmtMinutes(m * 5)} · ${m * 5 <= LIMIT ? "dentro do limite" : "acima de 44h"}` } : null);
 
 export const WorkloadsPanel = ({ workloads, employees = [], onChange }) => {
   const [editing, setEditing] = useState(null);
@@ -202,19 +223,75 @@ export const WorkloadsPanel = ({ workloads, employees = [], onChange }) => {
     }
   };
 
-  const people = (w) => employees.filter((e) => e.workload === w.id && e.status !== "inativo").length;
+  const usersOf = (w) => employees.filter((e) => e.workload === w.id && e.status !== "inativo");
   const editingW = editing?.id && workloads.find((w) => w.id === editing.id);
 
+  const cards = workloads.map((w) => {
+    const estimated = !w.times;
+    // Jornada antiga de 5x2 (só horas por dia): mostra um único horário para os 5 dias
+    const only5x2 = estimated && /5\s*[x×]\s*2/i.test(w.name);
+    const t5 = only5x2 ? times5x2Of(w) || timesOf(w).find(Boolean) : null;
+    const groups = only5x2 ? (t5 ? [{ from: 0, to: 4, t: t5, label: "5 dias" }] : []) : groupDays(timesOf(w));
+    const five = only5x2 ? null : w.times_5x2 || null;
+    const users = usersOf(w);
+    const onCall = users.length > 0 && users.every(isIntermittent);
+    return { w, estimated, only5x2, groups, five, users, onCall, wide: groups.length + (five ? 1 : 0) > 1 };
+  });
+
+  const Card = ({ c }) => {
+    const { w, estimated, groups, five, users, onCall, wide } = c;
+    const wk = onCall ? null : c.only5x2 ? fiveChip(dayMinutes(c.groups[0]?.t)) : weekChip(w);
+    return (
+      <article className="glass rounded-[26px] p-[22px]">
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <h2 className="mr-auto text-lg font-bold">{w.name}</h2>
+          {onCall && <span className={`${CHIP} bg-[#E0F2FE] text-[#0369A1]`}>por convocação</span>}
+          {wk && <span title="Horas na semana com uma folga (6x1)" className={`${CHIP} ${WEEK_CHIP[wk.lvl]}`}>{wk.text}</span>}
+          {estimated && <span title="Esta jornada ainda não tem o horário do ponto. O horário mostrado é estimado a partir das horas por dia." className={`${CHIP} bg-[#FFF4D1] text-[#7A5500]`}>horário estimado</span>}
+          {users.length > 0 && <span className={`${CHIP} bg-[#F2F0F8] text-[#3A3555]`}>{users.length} {users.length === 1 ? "pessoa" : "pessoas"}</span>}
+          <button onClick={() => edit(w)} aria-label={`Editar ${w.name}`} className="h-9 rounded-[18px] border border-[#E4E0F3] bg-white/80 px-3.5 text-[13px] font-semibold hover:border-[#17142E]">Editar</button>
+        </div>
+        <div className="grid grid-cols-[70px_minmax(0,1fr)] items-center gap-x-3.5 gap-y-2.5 sm:grid-cols-[110px_minmax(0,1fr)]">
+          {wide && (
+            <>
+              <span />
+              <div className="relative h-4 text-[11px] text-[#5E5880]">
+                {HOURS_AXIS.map((h) => (
+                  <span key={h} className="absolute -translate-x-1/2" style={{ left: tPct(h * 60) }}>{h}h</span>
+                ))}
+              </div>
+            </>
+          )}
+          {groups.map((g) => (
+            <Fragment key={`${g.from}-${g.to}`}>
+              <span className="text-[13px] font-semibold text-[#4A4566]">{groups.length === 1 && g.from === 0 && g.to === 6 ? "Todo dia" : g.label}</span>
+              <Timeline t={g.t} estimated={estimated} />
+            </Fragment>
+          ))}
+          {five && (
+            <>
+              <span className="text-[13px] font-semibold text-[#4A4566]" title="Horário de cada dia trabalhado quando o setor está em 5x2">5 dias (5x2)</span>
+              <Timeline t={five} estimated={estimated && !w.times_5x2} />
+            </>
+          )}
+          {groups.length === 0 && !five && <p className="col-span-2 text-sm text-[#5E5880]">Nenhum dia com horário. Clique em Editar.</p>}
+        </div>
+      </article>
+    );
+  };
+
   return (
-    <section data-testid="workloads-panel" className="space-y-5">
+    <section data-testid="workloads-panel" className="flex flex-col gap-5">
       <PageTitle
         eyebrow={`Horários do ponto · ${workloads.length} ${workloads.length === 1 ? "jornada cadastrada" : "jornadas cadastradas"}`}
         actions={
           <>
-            <span className="inline-flex items-center gap-1.5 text-xs text-[#4A4566]"><i className="h-3 w-3 rounded bg-[#6D5BD0]" />Trabalho</span>
-            <span className="inline-flex items-center gap-1.5 text-xs text-[#4A4566]"><i className="h-3 w-3 rounded bg-[#E6E1FA]" />Intervalo</span>
-            <Button onClick={() => setEditing({ ...NEW_FORM })} className="h-11 rounded-full bg-[#6D5BD0] px-[18px] text-white hover:bg-[#5B4BC4]">
-              <Plus className="mr-2 h-4 w-4" /> Nova jornada
+            <div className="flex gap-3.5 text-xs text-[#4A4566]">
+              <span className="inline-flex items-center gap-1.5"><i className="inline-block h-2.5 w-3.5 rounded-[3px] bg-[#6D5BD0]" />Trabalho</span>
+              <span className="inline-flex items-center gap-1.5"><i className="inline-block h-2.5 w-3.5 rounded-[3px] bg-[#E3DEF7]" />Intervalo</span>
+            </div>
+            <Button onClick={() => setEditing({ ...NEW_FORM })} className="h-11 rounded-[22px] bg-[#6D5BD0] px-[18px] text-white hover:bg-[#5B4BC4]">
+              <Plus className="mr-1 h-[18px] w-[18px]" /> Nova jornada
             </Button>
           </>
         }
@@ -222,84 +299,19 @@ export const WorkloadsPanel = ({ workloads, employees = [], onChange }) => {
         Jornadas de <em>trabalho</em>
       </PageTitle>
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-        {workloads.map((w) => {
-          const total = w.minutes.reduce((s, m) => s + m, 0);
-          const groups = w.times ? groupDays(w.times) : [];
-          const five = w.times_5x2;
-          const wide = groups.length + (five ? 1 : 0) > 1;
-          const n = people(w);
-          return (
-            <article key={w.id} className={`glass rounded-[26px] p-5 sm:p-6 ${wide ? "xl:col-span-2" : ""}`}>
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-lg font-bold">{w.name}</h3>
-                <div className="flex flex-wrap items-center gap-2">
-                  {total > 0 && (() => {
-                    // Semana no 6x1: uma folga por semana, que pode cair em qualquer dia com horário
-                    const on = w.minutes.filter((m) => m > 0);
-                    const lo = total - Math.max(...on);
-                    const hi = on.length < 7 ? total : total - Math.min(...on);
-                    const lvl = hi <= LIMIT ? "ok" : lo <= LIMIT ? "warn" : "risk";
-                    const txt = lo === hi ? fmtMinutes(lo) : `${fmtMinutes(lo)} a ${fmtMinutes(hi)}`;
-                    return (
-                      <span title="Horas na semana com uma folga (6x1). Varia conforme o dia da folga." className={`rounded-full px-2.5 py-1 text-xs font-semibold ${WEEK_CHIP[lvl]}`}>
-                        {txt} · {lvl === "ok" ? "dentro do limite" : lvl === "warn" ? "passa de 44h conforme a folga" : "acima de 44h"}
-                      </span>
-                    );
-                  })()}
-                  {w.minutes_5x2 > 0 && (
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${w.minutes_5x2 * 5 <= LIMIT ? WEEK_CHIP.ok : WEEK_CHIP.risk}`}>No 5×2 · {fmtMinutes(w.minutes_5x2 * 5)}</span>
-                  )}
-                  <span className="rounded-full bg-[#F2F0F8] px-2.5 py-1 text-xs font-semibold text-[#4A4566]">{n} {n === 1 ? "pessoa" : "pessoas"}</span>
-                  <button onClick={() => edit(w)} aria-label={`Editar ${w.name}`} className="h-9 rounded-full border border-[#E4E0F3] bg-white px-4 text-sm font-semibold hover:border-[#17142E]">Editar</button>
-                </div>
-              </div>
-              {!w.times ? (
-                <p className="rounded-xl border border-dashed border-[#F2CF6B] bg-[#FFF9E6] px-4 py-3 text-sm text-[#7A5500]">
-                  Sem horário do ponto: {DAYS_SHORT.map((d, i) => `${d} ${fmtMinutes(w.minutes[i])}`).join(" · ")}. Clique em Editar para preencher os horários.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {wide && (
-                    <div className="grid grid-cols-[110px_1fr] gap-3">
-                      <span />
-                      <div className="relative h-4 font-mono-data text-[11px] text-[#5E5880]">
-                        {HOURS_AXIS.map((h) => (
-                          <span key={h} className="absolute -translate-x-1/2" style={{ left: tPct(h * 60) }}>{h}h</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {groups.map((g) => (
-                    <div key={`${g.from}-${g.to}`} className="grid grid-cols-[110px_1fr] items-center gap-3">
-                      <span className="text-sm font-semibold text-[#3A3555]">{g.label}</span>
-                      <Timeline t={g.t} />
-                    </div>
-                  ))}
-                  {five && (
-                    <div className="grid grid-cols-[110px_1fr] items-center gap-3">
-                      <span className="text-sm font-semibold text-[#3A3555]" title="Horário de cada dia trabalhado quando o setor está em 5x2">No 5×2</span>
-                      <Timeline t={five} />
-                    </div>
-                  )}
-                  {groups.length === 0 && <p className="text-sm text-[#5E5880]">Nenhum dia com horário.</p>}
-                </div>
-              )}
-            </article>
-          );
-        })}
+      {cards.filter((c) => c.wide).map((c) => <Card key={c.w.id} c={c} />)}
+
+      <div className="grid gap-5" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(420px, 100%), 1fr))" }}>
+        {cards.filter((c) => !c.wide).map((c) => <Card key={c.w.id} c={c} />)}
         <button
           onClick={() => setEditing({ ...NEW_FORM })}
-          className="flex min-h-[170px] flex-col items-center justify-center gap-1 rounded-[26px] border-2 border-dashed border-[#C9BFFF] bg-white/40 p-6 text-center hover:bg-white/70"
+          className="flex min-h-[140px] flex-col items-center justify-center gap-2 rounded-[26px] border-2 border-dashed border-[#D6D0EE] bg-white/45 p-[22px] text-[15px] font-semibold text-[#4B3DA8] hover:bg-white/70"
         >
-          <Plus className="h-6 w-6 text-[#4B3DA8]" />
-          <span className="text-base font-bold text-[#4B3DA8]">Cadastrar nova jornada</span>
-          <span className="text-[13px] text-[#5E5880]">Entrada, intervalo e saída de cada dia</span>
+          <Plus className="h-[26px] w-[26px]" />
+          Cadastrar nova jornada
+          <span className="text-[13px] font-normal text-[#5E5880]">Entrada, intervalo e saída de cada dia</span>
         </button>
       </div>
-      <p className="text-xs text-[#5E5880]">
-        Os efetivos já entram na sub-aba de horários com o horário da sua jornada. Ajustes feitos lá valem só para aquele dia.
-      </p>
 
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[760px]">

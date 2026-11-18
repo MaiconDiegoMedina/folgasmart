@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { http, errMsg } from "@/lib/api";
 
 // Cadastro dos caixas (checkouts) que as operadoras vão operar
-export const CheckoutsPanel = ({ checkouts, onChange }) => {
+export const CheckoutsPanel = ({ checkouts, onChange, bare = false }) => {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -36,9 +36,13 @@ export const CheckoutsPanel = ({ checkouts, onChange }) => {
   };
 
   return (
-    <section data-testid="checkouts-panel" className="glass rounded-[26px] p-5 sm:p-6">
-      <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A85A3]">Frente de caixa</p>
-      <h3 className="font-display text-2xl font-bold tracking-tight mt-1 mb-4">Caixas</h3>
+    <section data-testid="checkouts-panel" className={bare ? "" : "glass rounded-[26px] p-5 sm:p-6"}>
+      {!bare && (
+        <>
+          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A85A3]">Frente de caixa</p>
+          <h3 className="font-display text-2xl font-bold tracking-tight mt-1 mb-4">Caixas</h3>
+        </>
+      )}
       <div className="flex flex-wrap gap-2 mb-4">
         {checkouts.length === 0 && <p className="text-sm text-[#8A85A3]">Nenhum caixa cadastrado.</p>}
         {checkouts.map((c) => (

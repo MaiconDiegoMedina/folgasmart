@@ -136,9 +136,7 @@ export default function Dashboard() {
           )}
           {tab === "caixas" && (
             <>
-              <PageTitle eyebrow="Frente de Caixa" actions={<WeekNav week={week} onChange={setWeek} />}>Quem fica em <em>cada caixa</em></PageTitle>
-              <CheckoutsBoard employees={scheduled} schedule={schedule} week={week} workloads={workloads} sectorModes={sectorModes} checkouts={checkouts} />
-              <div id="checkouts-panel"><CheckoutsPanel checkouts={checkouts} onChange={load} /></div>
+              <CheckoutsBoard employees={scheduled} schedule={schedule} week={week} onWeek={setWeek} workloads={workloads} sectorModes={sectorModes} checkouts={checkouts} onChange={load} />
             </>
           )}
           {tab === "feriados" && (
