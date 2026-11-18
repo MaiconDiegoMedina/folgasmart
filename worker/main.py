@@ -631,10 +631,15 @@ def sunday_alert(gender: str | None, current: str | None, history: List[str | No
 MAX_STREAK = 6
 
 
-def worked_days(schedule: Schedule, emp_id: str) -> List[bool] | None:
+def worked_days(schedule: Schedule, emp_id: str, assume_working: bool = False) -> List[bool] | None:
+    """Dias trabalhados na semana; None se a pessoa não está na escala.
+
+    assume_working: efetivo ativo que ainda não entrou na escala (setor não gerado, nenhum clique)
+    conta como trabalhando todos os dias, para o aviso de dias seguidos não deixar ninguém de fora.
+    """
     vacation = set(schedule.vacation_days.get(emp_id, [])) | set(schedule.sick_days.get(emp_id, []))
     closed = set(schedule.closed_days)
-    if emp_id not in schedule.off_days and not vacation:
+    if emp_id not in schedule.off_days and not vacation and not assume_working:
         accepted = {int(d) for d, c in schedule.convocations.get(emp_id, {}).items() if c.get("status") == "accepted"}
         return [day in accepted and day not in closed for day in range(7)] if accepted else None
     # EXTRA é computado como folga
@@ -652,12 +657,22 @@ def last_real_off(schedule: Schedule, emp_id: str) -> int | None:
     return offs[-1] if offs else -1
 
 
-def streak_violations(previous: Schedule | None, current: Schedule, emp_id: str) -> List[int]:
+def in_schedule_by_default(emp: Employee, schedule: Schedule) -> bool:
+    """Efetivo ativo, já contratado na semana, numa semana que chegou a ser escalada."""
+    if emp.contract == "intermitente" or emp.status not in ("ativo", "suspensao", "falta"):
+        return False
+    if emp.created_at[:10] > schedule.week:
+        return False  # entrou depois do início da semana
+    return schedule.generated_at is not None or bool(schedule.off_days)
+
+
+def streak_violations(previous: Schedule | None, current: Schedule, emp: Employee) -> List[int]:
     """Dias desta semana que passam do 6º dia seguido de trabalho."""
-    now = worked_days(current, emp_id)
+    now = worked_days(current, emp.id, in_schedule_by_default(emp, current))
     if now is None:
         return []
-    before = (worked_days(previous, emp_id) if previous else None) or [False] * 7
+    before = (worked_days(previous, emp.id, in_schedule_by_default(emp, previous))
+              if previous else None) or [False] * 7
     run, days = 0, []
     for index, worked in enumerate(before + now):
         run = run + 1 if worked else 0
@@ -679,7 +694,7 @@ async def with_alerts(request: Request, schedule: Schedule, employees: List[Empl
             emp.gender, sunday_of(schedule, emp.id), [sunday_of(h, emp.id) for h in history])
         if alert:
             schedule.cct_alerts[emp.id] = alert
-        streak = streak_violations(history[0] if history else None, schedule, emp.id)
+        streak = streak_violations(history[0] if history else None, schedule, emp)
         if streak:
             schedule.streak_alerts[emp.id] = streak
     return schedule
