@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { DAYS, weekDates, isoDate, http, errMsg } from "@/lib/api";
 import { peakHours } from "@/lib/hourlyReport";
@@ -50,15 +50,22 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
   const [filling, setFilling] = useState(null);
   const [dragId, setDragId] = useState(null);
   const [over, setOver] = useState(null);
+  const [ghost, setGhost] = useState(null);
+  const [swapAsk, setSwapAsk] = useState(null);
+  const dragRef = useRef(null);
+  const dropRef = useRef(null);
   const [manage, setManage] = useState(false);
 
   const loadAssign = useCallback(() => {
     http.get("/checkouts/assign/week", { params: { week } }).then(({ data }) => setAssign(data)).catch(() => setAssign({}));
   }, [week]);
+  const loadShifts = useCallback(() => {
+    http.get("/shifts/week", { params: { week } }).then(({ data }) => setShifts(data)).catch(() => setShifts({}));
+  }, [week]);
   useEffect(() => {
     loadAssign();
-    http.get("/shifts/week", { params: { week } }).then(({ data }) => setShifts(data)).catch(() => setShifts({}));
-  }, [week, loadAssign]);
+    loadShifts();
+  }, [week, loadAssign, loadShifts]);
   useEffect(() => {
     http.get("/hourly").then(({ data }) => setHourly(data || [])).catch(() => setHourly([]));
   }, []);
@@ -160,95 +167,172 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
   ];
   const LABEL = { ok: "Ok", warn: "Atenção", risk: "Risco" };
 
-  const dragProps = (o) => ({
-    draggable: true,
-    onDragStart: (e) => {
-      e.dataTransfer.setData("text/plain", o.emp.id);
-      e.dataTransfer.effectAllowed = "move";
-      setDragId(o.emp.id);
-    },
-    onDragEnd: () => {
-      setDragId(null);
-      setOver(null);
-    },
-  });
-  const dropProps = (target) => ({
-    onDragOver: (e) => {
-      if (!dragId) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      if (over !== target) setOver(target);
-    },
-    onDragLeave: () => setOver((v) => (v === target ? null : v)),
-    onDrop: (e) => {
-      e.preventDefault();
-      const id = e.dataTransfer.getData("text/plain") || dragId;
-      setDragId(null);
-      setOver(null);
-      if (id) allocate(id, target === "none" ? null : target);
-    },
-  });
   const isSelf = (c) => /self/i.test(c.name);
   const turnoOf = (o) => (o?.a == null ? null : o.a < 12 * 60 ? 0 : 1);
   const opOf = (id) => rows.flatMap((r) => r.ops).concat(loose).find((o) => o.emp.id === id);
   const caixaOf = (id) => (assign[String(day)] || {})[id] || null;
+  const caixaName = (id) => checkouts.find((c) => c.id === id)?.name || "caixa";
   const firstName = (o) => o.emp.name.split(" ")[0];
   const put = (employee_id, checkout_id) => http.put("/checkouts/assign", { week, day, employee_id, checkout_id });
 
-  // Solta numa vaga de turno: a vaga segue o horário de entrada da pessoa
-  const placeIn = async (id, caixa, slot) => {
-    const o = opOf(id);
-    await allocate(id, caixa);
-    const t = turnoOf(o);
-    if (o && t !== null && t !== slot) {
-      toast.info(`${firstName(o)} entra às ${o.shift[0]}, então fica no ${t + 1}º turno. Para colocá-la no ${slot + 1}º turno, mude o horário dela na sub-aba de horários da Escala.`);
-    }
-  };
-
-  // Solta uma operadora sobre outra: as duas trocam de caixa
-  const swap = async (aId, bId) => {
+  // Duas operadoras trocam de lugar. Em caixas diferentes, trocam de caixa.
+  // No mesmo caixa, a vaga segue o horário, então a troca é dos horários do dia (pede confirmação).
+  const swapWith = async (aId, bId) => {
     const a = opOf(aId);
     const b = opOf(bId);
+    if (!a || !b || aId === bId) return;
     const from = caixaOf(aId);
     const to = caixaOf(bId);
-    if (!a || !b || aId === bId) return;
     if (from === to) {
-      toast.info(`${firstName(a)} e ${firstName(b)} já estão no mesmo caixa. A vaga de cada uma segue o horário de entrada.`);
+      if (!a.shift || !b.shift) {
+        toast.info(`${firstName(a)} e ${firstName(b)} já estão no mesmo caixa.`);
+        return;
+      }
+      setSwapAsk({ a, b });
       return;
     }
     try {
       await put(aId, to);
       await put(bId, from);
-      toast.success(`${firstName(a)} e ${firstName(b)} trocaram de caixa`);
+      toast.success(
+        from
+          ? `${firstName(a)} e ${firstName(b)} trocaram de caixa`
+          : `${firstName(a)} entrou no ${caixaName(to)} no lugar de ${firstName(b)}, que ficou sem caixa`
+      );
     } catch (e) {
       toast.error(errMsg(e));
     }
     loadAssign();
   };
 
-  const stopDrop = (target, onDropId) => ({
-    onDragOver: (e) => {
-      if (!dragId) return;
-      e.preventDefault();
-      e.stopPropagation();
-      e.dataTransfer.dropEffect = "move";
-      if (over !== target) setOver(target);
+  const shiftBody = (s) => (s.length === 4 ? { start: s[0], break_start: s[1], break_end: s[2], end: s[3] } : { start: s[0], end: s[s.length - 1] });
+  const swapHours = async () => {
+    const { a, b } = swapAsk;
+    setSwapAsk(null);
+    try {
+      await http.put("/shifts", { week, day, employee_id: a.emp.id, ...shiftBody(b.shift) });
+      await http.put("/shifts", { week, day, employee_id: b.emp.id, ...shiftBody(a.shift) });
+      toast.success(`${firstName(a)} e ${firstName(b)} trocaram de horário em ${DAYS[day].toLowerCase()}`);
+    } catch (e) {
+      toast.error(errMsg(e));
+    }
+    loadShifts();
+  };
+
+  // Para onde a operadora foi solta: outra operadora, um caixa (ou vaga dele) ou "sem caixa"
+  const dropOn = async (id, target) => {
+    if (!id || !target) return;
+    if (target === "none") {
+      if (caixaOf(id)) allocate(id, null);
+      return;
+    }
+    const kind = target.slice(0, target.indexOf(":"));
+    let rest = target.slice(kind.length + 1);
+    let slot = null;
+    if (kind === "slot") {
+      slot = Number(rest.slice(rest.lastIndexOf(":") + 1));
+      rest = rest.slice(0, rest.lastIndexOf(":"));
+    }
+    if (kind === "op") {
+      if (rest !== id) swapWith(id, rest);
+      return;
+    }
+    const o = opOf(id);
+    if (!o) return;
+    const t = turnoOf(o);
+    const mismatch = slot !== null && t !== null && t !== slot;
+    const hint = () =>
+      toast.info(`${firstName(o)} entra às ${o.shift[0]}, então fica no ${t + 1}º turno. Para colocá-la no ${slot + 1}º turno, mude o horário dela na sub-aba de horários da Escala.`);
+    if (caixaOf(id) === rest) {
+      if (mismatch) hint();
+      return;
+    }
+    // Se já tem alguém no mesmo turno nesse caixa, as duas trocam de lugar em vez de empilhar
+    const row = rows.find((r) => r.id === rest);
+    const same = row?.ops.find((p) => p.emp.id !== id && (t === null || turnoOf(p) === null || turnoOf(p) === t));
+    if (same) {
+      swapWith(id, same.emp.id);
+      return;
+    }
+    await allocate(id, rest);
+    if (mismatch) hint();
+  };
+  dropRef.current = dropOn;
+
+  // Arrastar com mouse ou com o dedo (no celular: segure o cartão um instante e arraste)
+  const targetAt = (x, y) => document.elementFromPoint(x, y)?.closest("[data-drop]")?.getAttribute("data-drop") || null;
+  const beginDrag = (p) => {
+    p.live = true;
+    setDragId(p.id);
+    setGhost({ name: p.name, lvl: p.lvl, x: p.x, y: p.y });
+    setOver(targetAt(p.x, p.y));
+    if (p.touch && navigator.vibrate) navigator.vibrate(15);
+  };
+  const dragProps = (o) => ({
+    "data-drag": o.emp.id,
+    onPointerDown: (e) => {
+      if ((e.pointerType === "mouse" && e.button !== 0) || e.target.closest("button,select")) return;
+      if (e.pointerType === "mouse") e.preventDefault(); // evita selecionar texto e o arrastar nativo do navegador
+      if (dragRef.current?.timer) clearTimeout(dragRef.current.timer);
+      const p = { id: o.emp.id, name: o.emp.name, lvl: o.lvl, pid: e.pointerId, sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, touch: e.pointerType !== "mouse", live: false, timer: null };
+      dragRef.current = p;
+      if (p.touch) p.timer = setTimeout(() => dragRef.current === p && beginDrag(p), 280);
     },
-    onDragLeave: (e) => {
-      e.stopPropagation();
-      setOver((v) => (v === target ? null : v));
-    },
-    onDrop: (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const id = e.dataTransfer.getData("text/plain") || dragId;
-      setDragId(null);
-      setOver(null);
-      if (id) onDropId(id);
+    onDragStart: (e) => e.preventDefault(),
+    onContextMenu: (e) => {
+      if (dragRef.current) e.preventDefault();
     },
   });
-  const tileDrop = (o) => stopDrop(`op:${o.emp.id}`, (id) => id !== o.emp.id && swap(id, o.emp.id));
-  const slotDrop = (caixa, slot) => stopDrop(`slot:${caixa}:${slot}`, (id) => placeIn(id, caixa, slot));
+  const dropAt = (target) => ({ "data-drop": target });
+
+  useEffect(() => {
+    const end = () => {
+      const p = dragRef.current;
+      if (p?.timer) clearTimeout(p.timer);
+      dragRef.current = null;
+      setDragId(null);
+      setGhost(null);
+      setOver(null);
+    };
+    const move = (e) => {
+      const p = dragRef.current;
+      if (!p || e.pointerId !== p.pid) return;
+      p.x = e.clientX;
+      p.y = e.clientY;
+      if (!p.live) {
+        if (Math.hypot(p.x - p.sx, p.y - p.sy) < 6) return;
+        if (p.touch) return end(); // deslizou sem segurar: é rolagem da tela
+        beginDrag(p);
+      }
+      setGhost((g) => g && { ...g, x: p.x, y: p.y });
+      const t = targetAt(p.x, p.y);
+      setOver((v) => (v === t ? v : t));
+      if (p.y < 70) window.scrollBy(0, -14);
+      else if (p.y > window.innerHeight - 70) window.scrollBy(0, 14);
+    };
+    const up = (e) => {
+      const p = dragRef.current;
+      if (!p || e.pointerId !== p.pid) return;
+      const t = p.live ? targetAt(e.clientX, e.clientY) : null;
+      const live = p.live;
+      end();
+      if (live) dropRef.current(p.id, t);
+    };
+    const block = (e) => {
+      if (dragRef.current?.live) e.preventDefault();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", end);
+    window.addEventListener("touchmove", block, { passive: false });
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", end);
+      window.removeEventListener("touchmove", block);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Linha "Sem caixa": cada pessoa numa faixa para as barras não ficarem umas sobre as outras
   const lanes = [];
@@ -400,8 +484,8 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
             return (
               <div
                 key={r.id}
-                {...dropProps(r.id)}
-                className={`flex flex-col gap-3.5 rounded-[22px] border p-[18px] shadow-[0_10px_30px_-20px_rgba(70,50,160,0.25)] transition ${dark ? "border-[#17142E] bg-[#17142E] text-white" : "border-white bg-white/80"} ${over === r.id ? "ring-2 ring-[#6D5BD0] ring-offset-2" : ""}`}
+                {...dropAt(`caixa:${r.id}`)}
+                className={`flex flex-col gap-3.5 rounded-[22px] border p-[18px] shadow-[0_10px_30px_-20px_rgba(70,50,160,0.25)] transition ${dark ? "border-[#17142E] bg-[#17142E] text-white" : "border-white bg-white/80"} ${over === `caixa:${r.id}` ? "ring-2 ring-[#6D5BD0] ring-offset-2" : ""}`}
               >
                 <div className="flex items-center justify-between">
                   <h3 className="m-0 font-display text-lg font-semibold">{r.name}</h3>
@@ -415,9 +499,9 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                       <div
                         key={o.emp.id}
                         {...dragProps(o)}
-                        {...tileDrop(o, r.id)}
-                        title={`${o.emp.name} · ${o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]}` : "sem horário"} · ${o.note}. Arraste para outro caixa ou solte sobre outra operadora para trocar as duas.`}
-                        className={`group relative flex cursor-grab items-start gap-2.5 rounded-[14px] border-[1.5px] p-2 pr-6 text-[13px] font-semibold text-[#1B1830] transition active:cursor-grabbing ${dragId === o.emp.id ? "opacity-40" : ""} ${over === `op:${o.emp.id}` ? "ring-2 ring-[#6D5BD0]" : ""}`}
+                        {...dropAt(`op:${o.emp.id}`)}
+                        title={`${o.emp.name} · ${o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]}` : "sem horário"} · ${o.note}. Arraste para outro caixa ou solte sobre outra operadora para trocar as duas. No celular, segure o cartão um instante e arraste.`}
+                        className={`group relative flex cursor-grab select-none items-start gap-2.5 [-webkit-touch-callout:none] rounded-[14px] border-[1.5px] p-2 pr-6 text-[13px] font-semibold text-[#1B1830] transition active:cursor-grabbing ${dragId === o.emp.id ? "opacity-40" : ""} ${over === `op:${o.emp.id}` ? "ring-2 ring-[#6D5BD0]" : ""}`}
                         style={LVL[o.lvl].tile}
                       >
                         <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[11px] font-bold" style={LVL[o.lvl].avatar}>{initials(o.emp.name)}</div>
@@ -459,7 +543,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                         aria-label={`Escolher operadora para o ${si + 1}º turno do ${r.name}`}
                         defaultValue=""
                         onBlur={() => setFilling(null)}
-                        onChange={(e) => e.target.value && placeIn(e.target.value, r.id, si)}
+                        onChange={(e) => e.target.value && dropOn(e.target.value, `slot:${r.id}:${si}`)}
                         className="min-h-[46px] rounded-[14px] border-[1.5px] border-[#6D5BD0] bg-white px-2 text-[13px] text-[#1B1830]"
                       >
                         <option value="" disabled>{si + 1}º turno: quem fica?</option>
@@ -468,7 +552,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                     ) : (
                       <button
                         key={`slot${si}`}
-                        {...slotDrop(r.id, si)}
+                        {...dropAt(`slot:${r.id}:${si}`)}
                         disabled={!loose.length && !dragId}
                         onClick={() => setFilling(`${r.id}:${si}`)}
                         title={loose.length ? `Escolher quem fica no ${si + 1}º turno` : "Arraste uma operadora de outro caixa para cá"}
@@ -517,7 +601,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
               ))
             )}
           </div>
-          <div {...dropProps("none")} className={`glass rounded-[26px] p-[22px] transition ${over === "none" ? "ring-2 ring-[#6D5BD0]" : ""}`}>
+          <div {...dropAt("none")} className={`glass rounded-[26px] p-[22px] transition ${over === "none" ? "ring-2 ring-[#6D5BD0]" : ""}`}>
             <h2 className="mb-1 text-base font-bold">Trabalhando sem caixa</h2>
             <p className="mb-3.5 text-xs text-[#5E5880]">Arraste para um caixa, ou solte aqui para tirar do caixa.</p>
             {loose.length === 0 ? (
@@ -525,7 +609,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
             ) : (
               <div className="flex flex-col gap-3">
                 {loose.map((o) => (
-                  <div key={o.emp.id} {...dragProps(o)} className={`flex cursor-grab items-center gap-2.5 text-sm font-semibold active:cursor-grabbing ${dragId === o.emp.id ? "opacity-40" : ""}`}>
+                  <div key={o.emp.id} {...dragProps(o)} className={`flex cursor-grab select-none items-center gap-2.5 text-sm font-semibold active:cursor-grabbing [-webkit-touch-callout:none] ${dragId === o.emp.id ? "opacity-40" : ""}`}>
                     <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#E6E1FA] text-xs font-bold text-[#4B3DA8]">{initials(o.emp.name)}</div>
                     <div className="min-w-0 flex-1">
                       <span className="block truncate">{o.emp.name}</span>
@@ -546,6 +630,39 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
           </div>
         </aside>
       </div>
+
+      {ghost && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed z-[100] flex items-center gap-2 rounded-[14px] border-[1.5px] px-2.5 py-1.5 text-[13px] font-semibold text-[#1B1830] shadow-[0_14px_30px_-10px_rgba(40,30,110,0.45)]"
+          style={{ left: ghost.x, top: ghost.y, transform: "translate(-50%, -130%) rotate(-2deg)", ...LVL[ghost.lvl].tile }}
+        >
+          <span className="grid h-7 w-7 place-items-center rounded-full text-[10px] font-bold" style={LVL[ghost.lvl].avatar}>{initials(ghost.name)}</span>
+          {ghost.name.split(" ")[0]}
+        </div>
+      )}
+
+      <Dialog open={!!swapAsk} onOpenChange={(v) => !v && setSwapAsk(null)}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle>Trocar os horários?</DialogTitle>
+            <DialogDescription>
+              {swapAsk && `${firstName(swapAsk.a)} e ${firstName(swapAsk.b)} estão no mesmo caixa. A vaga de cada uma segue o horário de entrada, então para trocar de posição elas trocam os horários de ${DAYS[day].toLowerCase()}.`}
+            </DialogDescription>
+          </DialogHeader>
+          {swapAsk && (
+            <div className="flex flex-col gap-1.5 rounded-xl bg-[#F3F1FA] p-3 text-sm">
+              <span><b>{firstName(swapAsk.a)}</b>: {swapAsk.a.shift[0]}–{swapAsk.a.shift[swapAsk.a.shift.length - 1]} passa para {swapAsk.b.shift[0]}–{swapAsk.b.shift[swapAsk.b.shift.length - 1]}</span>
+              <span><b>{firstName(swapAsk.b)}</b>: {swapAsk.b.shift[0]}–{swapAsk.b.shift[swapAsk.b.shift.length - 1]} passa para {swapAsk.a.shift[0]}–{swapAsk.a.shift[swapAsk.a.shift.length - 1]}</span>
+              <span className="text-xs text-[#5E5880]">Confira o descanso entre um dia e outro (11h) depois da troca.</span>
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setSwapAsk(null)} className="h-10 rounded-[20px] border border-[#E4E0F3] bg-white px-4 text-sm font-semibold text-[#1B1830]">Cancelar</button>
+            <button onClick={swapHours} className="h-10 rounded-[20px] bg-[#17142E] px-4 text-sm font-semibold text-white">Trocar horários</button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={manage} onOpenChange={setManage}>
         <DialogContent className="sm:max-w-[560px]">
