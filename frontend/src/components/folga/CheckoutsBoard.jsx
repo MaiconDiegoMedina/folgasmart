@@ -46,6 +46,10 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
   const [shifts, setShifts] = useState({});
   const [hourly, setHourly] = useState([]);
   const [picking, setPicking] = useState(null);
+  const [moving, setMoving] = useState(null);
+  const [filling, setFilling] = useState(null);
+  const [dragId, setDragId] = useState(null);
+  const [over, setOver] = useState(null);
   const [manage, setManage] = useState(false);
 
   const loadAssign = useCallback(() => {
@@ -61,6 +65,8 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
 
   const allocate = async (employee_id, checkout_id) => {
     setPicking(null);
+    setMoving(null);
+    setFilling(null);
     try {
       await http.put("/checkouts/assign", { week, day, employee_id, checkout_id });
       loadAssign();
@@ -153,6 +159,44 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
     ...(peak ? [{ name: `Pico ${peakLabel}`, st: peak }] : []),
   ];
   const LABEL = { ok: "Ok", warn: "Atenção", risk: "Risco" };
+
+  const dragProps = (o) => ({
+    draggable: true,
+    onDragStart: (e) => {
+      e.dataTransfer.setData("text/plain", o.emp.id);
+      e.dataTransfer.effectAllowed = "move";
+      setDragId(o.emp.id);
+    },
+    onDragEnd: () => {
+      setDragId(null);
+      setOver(null);
+    },
+  });
+  const dropProps = (target) => ({
+    onDragOver: (e) => {
+      if (!dragId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      if (over !== target) setOver(target);
+    },
+    onDragLeave: () => setOver((v) => (v === target ? null : v)),
+    onDrop: (e) => {
+      e.preventDefault();
+      const id = e.dataTransfer.getData("text/plain") || dragId;
+      setDragId(null);
+      setOver(null);
+      if (id) allocate(id, target === "none" ? null : target);
+    },
+  });
+  const isSelf = (c) => /self/i.test(c.name);
+
+  // Linha "Sem caixa": cada pessoa numa faixa para as barras não ficarem umas sobre as outras
+  const lanes = [];
+  loose.filter(visible).sort((x, y) => x.a - y.a).forEach((o) => {
+    const lane = lanes.find((l) => l[l.length - 1].b <= o.a);
+    if (lane) lane.push(o);
+    else lanes.push([o]);
+  });
 
   const Bar = ({ o, where }) =>
     !visible(o) ? null : (
@@ -255,7 +299,11 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
               {loose.length > 0 && (
                 <div className="grid grid-cols-[96px_1fr] items-center gap-2.5">
                   <div className="font-display text-[13px] font-semibold">Sem caixa<small className="block font-sans text-[11px] font-medium text-[#5E5880]">{loose.length} {loose.length === 1 ? "pessoa" : "pessoas"}</small></div>
-                  <div className="relative h-[34px] rounded-xl border border-dashed border-[#D6D0EE]">{loose.map((o) => <Bar key={o.emp.id} o={o} where="sem caixa" />)}</div>
+                  <div className="flex flex-col gap-1">
+                    {(lanes.length ? lanes : [[]]).map((l, i) => (
+                      <div key={i} className="relative h-[34px] rounded-xl border border-dashed border-[#D6D0EE]">{l.map((o) => <Bar key={o.emp.id} o={o} where="sem caixa" />)}</div>
+                    ))}
+                  </div>
                 </div>
               )}
               <div className="mt-[18px] grid grid-cols-[96px_1fr] items-end gap-2.5">
@@ -285,34 +333,91 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
 
       <div className="flex flex-wrap items-start gap-5">
         <section className="grid min-w-0 gap-4" style={{ flex: "3 1 600px", gridTemplateColumns: "repeat(auto-fill, minmax(min(330px, 100%), 1fr))" }}>
-          {rows.map((r) => (
-            <div key={r.id} className="flex flex-col gap-3.5 rounded-[22px] border border-white bg-white/80 p-[18px] shadow-[0_10px_30px_-20px_rgba(70,50,160,0.25)]">
-              <div className="flex items-center justify-between">
-                <h3 className="m-0 font-display text-lg font-semibold">{r.name}</h3>
-                <span className={CHIP} style={r.ops.length >= 2 ? TONE.ok : r.ops.length === 1 ? TONE.warn : TONE.none}>
-                  {r.ops.length >= 2 ? `Aberto · ${r.ops.length} turnos` : r.ops.length === 1 ? "Aberto · 1 turno" : "Livre"}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 items-start gap-2.5">
-                {r.ops.map((o) => (
-                  <div key={o.emp.id} title={`${o.emp.name} · ${o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]}` : "sem horário"} · ${o.note}`} className="flex items-start gap-2.5 rounded-[14px] border-[1.5px] p-2 text-[13px] font-semibold" style={LVL[o.lvl].tile}>
-                    <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[11px] font-bold" style={LVL[o.lvl].avatar}>{initials(o.emp.name)}</div>
-                    <div className="min-w-0">
-                      <span className="block truncate">{o.emp.name}</span>
-                      <small className="block text-xs font-medium text-[#5E5880]">{o.daily}</small>
-                      <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A85A3]">{o.contract}</span>
-                      <span className="mt-1 block text-[11px] font-bold" style={{ color: LVL[o.lvl].ink }}>{o.lvl === "ok" ? "Na jornada" : o.lvl === "warn" ? "Extra" : "+6 dias"}</span>
+          {rows.map((r) => {
+            const dark = isSelf(r);
+            return (
+              <div
+                key={r.id}
+                {...dropProps(r.id)}
+                className={`flex flex-col gap-3.5 rounded-[22px] border p-[18px] shadow-[0_10px_30px_-20px_rgba(70,50,160,0.25)] transition ${dark ? "border-[#17142E] bg-[#17142E] text-white" : "border-white bg-white/80"} ${over === r.id ? "ring-2 ring-[#6D5BD0] ring-offset-2" : ""}`}
+              >
+                <div className="flex items-center justify-between">
+                  <h3 className="m-0 font-display text-lg font-semibold">{r.name}</h3>
+                  <span className={CHIP} style={dark ? { background: "#3A3463", color: "#E9E6F8" } : r.ops.length >= 2 ? TONE.ok : r.ops.length === 1 ? TONE.warn : TONE.none}>
+                    {r.ops.length >= 2 ? `Aberto · ${r.ops.length} turnos` : r.ops.length === 1 ? "Aberto · 1 turno" : "Livre"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 items-start gap-2.5">
+                  {r.ops.map((o) => (
+                    <div
+                      key={o.emp.id}
+                      {...dragProps(o)}
+                      title={`${o.emp.name} · ${o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]}` : "sem horário"} · ${o.note}. Arraste para outro caixa.`}
+                      className={`group relative flex cursor-grab items-start gap-2.5 rounded-[14px] border-[1.5px] p-2 pr-6 text-[13px] font-semibold text-[#1B1830] active:cursor-grabbing ${dragId === o.emp.id ? "opacity-40" : ""}`}
+                      style={LVL[o.lvl].tile}
+                    >
+                      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[11px] font-bold" style={LVL[o.lvl].avatar}>{initials(o.emp.name)}</div>
+                      <div className="min-w-0">
+                        <span className="block truncate">{o.emp.name}</span>
+                        <small className="block text-xs font-medium text-[#5E5880]">{o.daily}</small>
+                        <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A85A3]">{o.contract}</span>
+                        {moving === o.emp.id ? (
+                          <select
+                            autoFocus
+                            aria-label={`Trocar o caixa de ${o.emp.name}`}
+                            defaultValue={r.id}
+                            onBlur={() => setMoving(null)}
+                            onChange={(e) => e.target.value !== r.id && allocate(o.emp.id, e.target.value)}
+                            className="mt-1 h-7 w-full rounded-lg border border-[#E4E0F3] bg-white px-1 text-[11px]"
+                          >
+                            {checkouts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </select>
+                        ) : (
+                          <span className="mt-1 flex items-center gap-2">
+                            <span className="text-[11px] font-bold" style={{ color: LVL[o.lvl].ink }}>{o.lvl === "ok" ? "Na jornada" : o.lvl === "warn" ? "Extra" : "+6 dias"}</span>
+                            <button onClick={() => setMoving(o.emp.id)} className="text-[11px] font-semibold text-[#5B4BC4] hover:underline">Trocar</button>
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => allocate(o.emp.id, null)}
+                        aria-label={`Tirar ${o.emp.name} do ${r.name}`}
+                        title="Tirar do caixa"
+                        className="absolute right-1 top-1 grid h-6 w-6 place-items-center rounded-full text-[#8A85A3] hover:bg-white hover:text-[#A12828]"
+                      >
+                        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                      </button>
                     </div>
-                  </div>
-                ))}
-                {r.ops.length < 2 && (
-                  <div className={`flex min-h-[46px] items-center justify-center gap-1.5 self-stretch rounded-[14px] border-[1.5px] border-dashed border-[#D6D0EE] px-2 text-center text-[13px] font-semibold text-[#4B3DA8] ${r.ops.length === 0 ? "col-span-2" : ""}`}>
-                    {loose.length ? "Use \"Alocar\" ao lado" : r.ops.length === 0 ? "Caixa livre" : "Segundo turno livre"}
-                  </div>
-                )}
+                  ))}
+                  {r.ops.length < 2 && (
+                    filling === r.id ? (
+                      <select
+                        autoFocus
+                        aria-label={`Escolher operadora para ${r.name}`}
+                        defaultValue=""
+                        onBlur={() => setFilling(null)}
+                        onChange={(e) => e.target.value && allocate(e.target.value, r.id)}
+                        className={`h-[46px] rounded-[14px] border-[1.5px] border-[#6D5BD0] bg-white px-2 text-[13px] text-[#1B1830] ${r.ops.length === 0 ? "col-span-2" : ""}`}
+                      >
+                        <option value="" disabled>Quem fica neste caixa?</option>
+                        {loose.map((o) => <option key={o.emp.id} value={o.emp.id}>{o.emp.name}{o.shift ? ` · ${o.shift[0]}–${o.shift[o.shift.length - 1]}` : ""}</option>)}
+                      </select>
+                    ) : (
+                      <button
+                        disabled={!loose.length}
+                        onClick={() => setFilling(r.id)}
+                        title={loose.length ? "Escolher quem fica neste caixa" : "Todo mundo do caixa já está alocado. Arraste de outro caixa para trocar."}
+                        className={`flex min-h-[46px] items-center justify-center gap-1.5 self-stretch rounded-[14px] border-[1.5px] border-dashed px-2 text-center text-[13px] font-semibold disabled:cursor-default ${dark ? "border-[#3A3463] text-[#C9C4E6]" : "border-[#D6D0EE] text-[#4B3DA8] enabled:hover:bg-[#F3F1FA]"} ${r.ops.length === 0 ? "col-span-2" : ""}`}
+                      >
+                        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+                        {loose.length ? "Escolher operadora" : r.ops.length === 0 ? "Caixa livre" : "Segundo turno livre"}
+                      </button>
+                    )
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </section>
 
         <aside className="flex min-w-0 flex-col gap-4" style={{ flex: "1 1 300px" }}>
@@ -344,14 +449,15 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
               ))
             )}
           </div>
-          <div className="glass rounded-[26px] p-[22px]">
-            <h2 className="mb-3.5 text-base font-bold">Trabalhando sem caixa</h2>
+          <div {...dropProps("none")} className={`glass rounded-[26px] p-[22px] transition ${over === "none" ? "ring-2 ring-[#6D5BD0]" : ""}`}>
+            <h2 className="mb-1 text-base font-bold">Trabalhando sem caixa</h2>
+            <p className="mb-3.5 text-xs text-[#5E5880]">Arraste para um caixa, ou solte aqui para tirar do caixa.</p>
             {loose.length === 0 ? (
               <p className="m-0 text-[13px] text-[#5E5880]">Todo mundo do caixa que trabalha neste dia já tem um caixa.</p>
             ) : (
               <div className="flex flex-col gap-3">
                 {loose.map((o) => (
-                  <div key={o.emp.id} className="flex items-center gap-2.5 text-sm font-semibold">
+                  <div key={o.emp.id} {...dragProps(o)} className={`flex cursor-grab items-center gap-2.5 text-sm font-semibold active:cursor-grabbing ${dragId === o.emp.id ? "opacity-40" : ""}`}>
                     <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#E6E1FA] text-xs font-bold text-[#4B3DA8]">{initials(o.emp.name)}</div>
                     <div className="min-w-0 flex-1">
                       <span className="block truncate">{o.emp.name}</span>

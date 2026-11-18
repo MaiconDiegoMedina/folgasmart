@@ -232,7 +232,7 @@ export const WorkloadsPanel = ({ workloads, employees = [], onChange }) => {
     const only5x2 = estimated && /5\s*[x×]\s*2/i.test(w.name);
     const t5 = only5x2 ? times5x2Of(w) || timesOf(w).find(Boolean) : null;
     const groups = only5x2 ? (t5 ? [{ from: 0, to: 4, t: t5, label: "5 dias" }] : []) : groupDays(timesOf(w));
-    const five = only5x2 ? null : w.times_5x2 || null;
+    const five = null; // o horário do 5x2 fica no editor, como na prévia
     const users = usersOf(w);
     const onCall = users.length > 0 && users.every(isIntermittent);
     return { w, estimated, only5x2, groups, five, users, onCall, wide: groups.length + (five ? 1 : 0) > 1 };
