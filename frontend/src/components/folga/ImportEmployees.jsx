@@ -74,13 +74,13 @@ export const ImportEmployees = ({ workloads, onDone }) => {
 
   return (
     <>
-      <Button data-testid="btn-import-employees" size="sm" variant="outline" onClick={() => fileRef.current.click()} className="rounded-full">
-        <FileUp className="h-4 w-4 mr-1" /> Importar do cartão ponto
+      <Button data-testid="btn-import-employees" variant="outline" onClick={() => fileRef.current.click()} className="h-11 rounded-full border-[#E4E0F3] bg-white/80 px-[18px]">
+        <FileUp className="h-4 w-4 mr-2" /> Importar do ponto
       </Button>
       <input ref={fileRef} type="file" accept=".csv,.txt,text/csv" className="hidden" onChange={(e) => onFile(e.target.files[0])} />
 
       {data && (
-        <div data-testid="import-employees-preview" className="basis-full mt-3 rounded-xl border border-[#E4E0F3] bg-[#F3F1FA] p-4 space-y-3">
+        <div data-testid="import-employees-preview" className="basis-full w-full mt-3 rounded-xl border border-[#E4E0F3] bg-[#F3F1FA] p-4 space-y-3">
           <p className="text-sm font-bold">Arquivo com {data.rows.length} linha(s). Indique de qual coluna vem cada informação:</p>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
             {FIELDS.map((f) => (

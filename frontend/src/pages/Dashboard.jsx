@@ -121,8 +121,7 @@ export default function Dashboard() {
           )}
           {tab === "funcionarios" && (
             <>
-              <PageTitle eyebrow={`${employees.length} cadastrados · ${scheduled.length} na escala`}>Quem faz parte <em>da equipe</em></PageTitle>
-              <EmployeesPanel employees={employees} workloads={workloads} vacations={vacations} onChange={load} />
+              <EmployeesPanel employees={employees} workloads={workloads} vacations={vacations} onChange={load} schedule={schedule} week={week} sectorModes={sectorModes} />
             </>
           )}
           {tab === "jornadas" && (

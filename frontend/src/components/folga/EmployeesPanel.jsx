@@ -1,9 +1,12 @@
 import { useState } from "react";
-import { Plus, Trash2, Loader2, Search, Pencil, BadgeCheck } from "lucide-react";
+import { Plus, Trash2, Loader2, Search, Pencil, BadgeCheck, MoreHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { http, errMsg, isoDate } from "@/lib/api";
+import { http, errMsg, isoDate, addDays, parseIso, weekDates, DAYS_SHORT, OFFS_PER_MODE } from "@/lib/api";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { PageTitle } from "@/components/folga/Header";
+import { isIntermittent, acceptedOn } from "@/lib/convocation";
 import { ImportEmployees } from "@/components/folga/ImportEmployees";
 import { VacationDialog, fmtDate } from "@/components/folga/VacationDialog";
 import { RoleDialog, isTrial } from "@/components/folga/RoleDialog";
@@ -72,33 +75,78 @@ const EmployeeForm = ({ sectors, roles, workloads, onSaved }) => {
   );
 };
 
-export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onChange }) => {
+const OK = "bg-[#E3F5EC] text-[#1D6B45]";
+const WARN = "bg-[#FFF4D1] text-[#7A5500]";
+const RISK = "bg-[#FDE2E2] text-[#A12828]";
+const Chip = ({ className = "", children, title }) => (
+  <span title={title} className={`inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-xs font-semibold ${className}`}>{children}</span>
+);
+const initials = (n) => n.split(" ").filter(Boolean).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+const fem = (e) => e.gender === "F";
+
+const Stat = ({ label, value, tone = "", active, onClick }) => (
+  <button onClick={onClick} className={`rounded-[26px] border p-5 text-left transition ${tone || "glass"} ${active ? "ring-2 ring-[#6D5BD0]" : ""}`}>
+    <p className="text-[13px] font-semibold opacity-90">{label}</p>
+    <p className="mt-2 font-display text-[34px] font-semibold leading-none tracking-tight">{value}</p>
+  </button>
+);
+
+// Equipe em cartões: situação, vínculo, jornada e a folga da semana
+export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onChange, schedule = {}, week, sectorModes = {} }) => {
   const sectors = [...new Set(employees.map((e) => e.sector))];
   const roles = [...new Set(employees.map((e) => e.role))].sort((a, b) => a.localeCompare(b, "pt-BR"));
   const [roleFor, setRoleFor] = useState(null);
   const [vacationFor, setVacationFor] = useState(null);
   const [leaveKind, setLeaveKind] = useState("ferias");
-  const openLeave = (emp, kind) => { setLeaveKind(kind); setVacationFor(emp); };
+  const [editFor, setEditFor] = useState(null);
+  const [adding, setAdding] = useState(false);
+  const [sector, setSector] = useState("all");
+  const [statFilter, setStatFilter] = useState(null);
+  const openLeave = (emp, kind) => { setEditFor(null); setLeaveKind(kind); setVacationFor(emp); };
   const [query, setQuery] = useState("");
   const q = fold(query.trim());
+  const today = isoDate(new Date());
+  const dates = week ? weekDates(week) : [];
+  const upcoming = (emp) => vacations.filter((v) => v.employee_id === emp.id && v.end >= today);
+  const current = (emp) => vacations.find((v) => v.employee_id === emp.id && v.start <= today && v.end >= today);
+  const away = (e) => e.status === "ferias" || e.status === "atestado" || !!current(e);
+  const modeOf = (s) => {
+    const used = Object.entries(schedule.sector_modes || {}).find(([k]) => k.toLowerCase() === (s || "").toLowerCase());
+    return used?.[1] || sectorModes[(s || "").toLowerCase()] || "6x1";
+  };
+  const offsOf = (e) => (schedule.off_days?.[e.id] || []).filter((d) => !(schedule.extra_days?.[e.id] || []).includes(d));
+  const weekVacation = (e) => (schedule.vacation_days?.[e.id] || []).length > 0;
+  const noOff = (e) => e.status !== "inativo" && !isIntermittent(e) && !away(e) && !weekVacation(e) && !!schedule.generated_at && offsOf(e).length < OFFS_PER_MODE[modeOf(e.sector)];
+  const streakDays = (e) => schedule.streak_alerts?.[e.id] || [];
+  const active = employees.filter((e) => e.status !== "inativo");
+
+  const STATS = [
+    { id: "efetivo", label: "Efetivos", test: (e) => e.status !== "inativo" && !isIntermittent(e) },
+    { id: "intermitente", label: "Intermitentes", test: (e) => e.status !== "inativo" && isIntermittent(e) },
+    { id: "away", label: "De férias ou atestado", test: (e) => e.status !== "inativo" && away(e) },
+    { id: "inativo", label: "Inativos", test: (e) => e.status === "inativo" },
+    { id: "nooff", label: "Sem folga na semana", test: noOff, risk: true },
+  ];
+  const statTest = STATS.find((s) => s.id === statFilter)?.test || (() => true);
   const list = employees
+    .filter((e) => sector === "all" || e.sector === sector)
+    .filter(statTest)
     .filter((e) => !q || fold(`${e.name} ${e.role} ${e.sector}`).includes(q))
     .sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" }));
-  const today = isoDate(new Date());
-  // Férias em andamento ou futuras, para mostrar embaixo do nome
-  const upcoming = (emp) => vacations.filter((v) => v.employee_id === emp.id && v.end >= today);
 
   const remove = async (emp) => {
+    if (!window.confirm(`Excluir ${emp.name}? Essa ação não pode ser desfeita. Para tirar só da escala, use o status Inativo.`)) return;
     try {
       await http.delete(`/employees/${emp.id}`);
       toast.success(`${emp.name} removido`);
+      setEditFor(null);
       onChange();
     } catch (err) {
       toast.error(errMsg(err));
     }
   };
 
-  // Atualiza status (Ativo / Férias / Suspensão) ou sexo, sempre enviando todos os campos
+  // Atualiza status, sexo, jornada ou contrato, sempre enviando todos os campos
   const update = async (emp, patch, message) => {
     try {
       await http.put(`/employees/${emp.id}`, {
@@ -118,123 +166,233 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
     }
   };
 
+  const footer = (e) => {
+    const v = current(e);
+    if (v) return ["Volta", fmtDate(isoDate(addDays(parseIso(v.end), 1))).slice(0, 5)];
+    if (e.status === "inativo") return ["Fora da escala", "—"];
+    if (isIntermittent(e)) {
+      const n = DAYS_SHORT.filter((_, d) => acceptedOn(schedule, e.id, d)).length;
+      return [`${fem(e) ? "Convocada" : "Convocado"} esta semana`, `${n} ${n === 1 ? "dia" : "dias"}`];
+    }
+    if (weekVacation(e)) return ["Folga nesta semana", "Férias"];
+    if (!schedule.generated_at) return ["Folga nesta semana", "escala não gerada"];
+    const offs = offsOf(e);
+    if (!offs.length) return ["Folga nesta semana", "Sem folga", true];
+    return ["Folga nesta semana", offs.map((d) => `${DAYS_SHORT[d]} ${dates[d] ? dates[d].getDate() : ""}`.trim()).join(", ")];
+  };
+
+  // Sempre a versão mais nova do funcionário que está sendo editado
+  const editing = editFor && employees.find((x) => x.id === editFor.id);
+  const field = `${selectCls} h-10 w-full text-sm`;
+
   return (
-    <section data-testid="employees-panel" className="glass rounded-[26px] p-5 sm:p-6 h-full">
-      <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A85A3]">Equipe</p>
-      <div className="flex flex-wrap items-center justify-between gap-2 mt-1 mb-4">
-        <h3 className="font-display text-2xl font-bold tracking-tight">Funcionários</h3>
-        <ImportEmployees workloads={workloads} onDone={onChange} />
+    <section data-testid="employees-panel" className="space-y-5">
+      <PageTitle
+        eyebrow={`Equipe · ${active.length} ativos`}
+        actions={
+          <>
+            {employees.length > 0 && (
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5E5880]" />
+                <input
+                  data-testid="input-employee-search"
+                  placeholder="Buscar por nome, cargo ou setor"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  className="h-11 w-[280px] max-w-full rounded-full border border-[#E4E0F3] bg-white/80 pl-10 pr-4 text-sm outline-none focus:border-[#6D5BD0]"
+                />
+              </div>
+            )}
+            <ImportEmployees workloads={workloads} onDone={onChange} />
+            <Button data-testid="btn-new-employee" onClick={() => setAdding(true)} className="h-11 rounded-full bg-[#6D5BD0] px-[18px] text-white hover:bg-[#5B4BC4]">
+              <Plus className="mr-2 h-4 w-4" /> Novo funcionário
+            </Button>
+          </>
+        }
+      >
+        Sua <em>equipe</em>
+      </PageTitle>
+
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
+        {STATS.map((s) => {
+          const n = employees.filter(s.test).length;
+          return (
+            <Stat
+              key={s.id}
+              label={s.label}
+              value={n}
+              active={statFilter === s.id}
+              onClick={() => setStatFilter(statFilter === s.id ? null : s.id)}
+              tone={s.risk ? (n ? "bg-[#FDE2E2] border-[#EE9A9A] text-[#A12828]" : "bg-[#E3F5EC] border-[#8FD0AE] text-[#1D6B45]") : ""}
+            />
+          );
+        })}
       </div>
-      <EmployeeForm sectors={sectors} roles={roles} workloads={workloads} onSaved={onChange} />
-      {employees.length > 0 && (
-        <div className="relative mt-5">
-          <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#8A85A3]" />
-          <Input
-            data-testid="input-employee-search"
-            placeholder={`Procurar entre ${employees.length} funcionários (nome, cargo ou setor)`}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="pl-9"
-          />
-        </div>
-      )}
-      <ul data-testid="employee-list" className="mt-2 divide-y divide-[#EEEBFB] max-h-96 overflow-y-auto">
-        {employees.length === 0 && <li className="py-6 text-sm text-center text-[#8A85A3]">Nenhum funcionário cadastrado.</li>}
-        {employees.length > 0 && list.length === 0 && <li className="py-6 text-sm text-center text-[#8A85A3]">Nenhum funcionário encontrado para "{query}".</li>}
-        {list.map((e) => (
-          <li key={e.id} data-testid={`employee-item-${e.id}`} className={`py-2.5 flex items-center justify-between gap-3 ${e.status === "inativo" ? "opacity-50" : ""}`}>
-            <div className="min-w-[140px] flex-1">
-              <p className="text-sm font-semibold truncate flex items-center gap-1.5">
-                {e.name}
-                {isTrial(e) && <span className="text-[9px] bg-[#FFF4D1] text-[#7A5500] font-bold px-1.5 py-0.5 rounded">TESTE</span>}
-              </p>
-              <p className="text-xs text-[#8A85A3] flex items-center gap-1 min-w-0">
-                <span className="truncate">{e.role} · <span className="text-[#5E5880]">{e.sector}</span></span>
-                {isTrial(e) ? (
-                  <button
-                    data-testid={`btn-approve-${e.id}`}
-                    onClick={() => setRoleFor(e)}
-                    className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold text-[#1D6B45] bg-[#F0FAF4] border border-[#8FD0AE] rounded px-1.5 py-0.5 hover:bg-[#E3F5EC]"
-                  >
-                    <BadgeCheck className="h-3 w-3" /> Aprovar
-                  </button>
-                ) : (
-                  <button onClick={() => setRoleFor(e)} aria-label={`Trocar cargo e setor de ${e.name}`} title="Trocar cargo e setor" className="shrink-0 p-0.5 rounded text-[#B9B2DA] hover:text-[#17142E]">
-                    <Pencil className="h-3 w-3" />
-                  </button>
-                )}
-              </p>
-              {upcoming(e).map((v) => (
-                <button
-                  key={v.id}
-                  onClick={() => openLeave(e, v.kind || "ferias")}
-                  className={`block text-[10px] font-semibold rounded px-1.5 py-0.5 mt-0.5 ${
-                    v.kind === "atestado" ? "text-[#0F766E] bg-[#F0FDFA] hover:bg-[#CCFBF1]" : "text-[#475569] bg-[#F1F5F9] hover:bg-[#E2E8F0]"
-                  }`}
-                >
-                  {v.kind === "atestado" ? "Atestado" : "Férias"} {fmtDate(v.start)} a {fmtDate(v.end)}
-                </button>
-              ))}
-            </div>
-            
-            <select
-              aria-label="Sexo"
-              value={e.gender || ""}
-              onChange={(evt) => update(e, { gender: evt.target.value || null }, `Sexo de ${e.name} atualizado`)}
-              className={`${selectCls} ${!e.gender ? "border-[#F2CF6B] bg-[#FFF9E6]" : ""}`}
-              title={!e.gender ? "Informe o sexo para aplicar a regra de domingos da CCT" : undefined}
-            >
-              <option value="">Sexo?</option>
-              <option value="M">Masc.</option>
-              <option value="F">Fem.</option>
-            </select>
 
-            <select
-              aria-label="Jornada"
-              value={e.workload || ""}
-              onChange={(evt) => update(e, { workload: evt.target.value || null }, `Jornada de ${e.name} atualizada`)}
-              className={`${selectCls} ${!e.workload ? "border-[#F2CF6B] bg-[#FFF9E6]" : ""}`}
-              title={workloads.find((w) => w.id === e.workload)?.name || "Informe a jornada"}
-            >
-              <option value="">Jornada?</option>
-              {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-            </select>
-
-            <select
-              aria-label="Contrato"
-              value={e.contract || "efetivo"}
-              onChange={(evt) => update(e, { contract: evt.target.value }, `Contrato de ${e.name} atualizado`)}
-              className={selectCls}
-            >
-              <option value="efetivo">Efetivo</option>
-              <option value="intermitente">Interm.</option>
-            </select>
-
-            <select
-              aria-label="Status"
-              value={e.status || "ativo"}
-              onChange={(evt) =>
-                evt.target.value === "ferias" || evt.target.value === "atestado"
-                  ? openLeave(e, evt.target.value) // Férias e atestado: abre a janela para informar o período
-                  : update(e, { status: evt.target.value }, `Status de ${e.name} atualizado para ${evt.target.value}`)
-              }
-              className={selectCls}
-            >
-              <option value="ativo">Ativo</option>
-              <option value="ferias">{e.status === "ferias" ? "Férias (semana toda)" : "Férias…"}</option>
-              <option value="atestado">Atestado…</option>
-              {/* Suspensão e falta agora são marcadas direto na escala; opções só para cadastros antigos */}
-              {e.status === "suspensao" && <option value="suspensao">Suspensão</option>}
-              {e.status === "falta" && <option value="falta">Falta</option>}
-              <option value="inativo">Inativo</option>
-            </select>
-
-            <button data-testid={`btn-delete-employee-${e.id}`} onClick={() => remove(e)} className="p-2 rounded-lg text-[#8A85A3] hover:bg-[#FDECEC] hover:text-[#C93C3C] transition-colors">
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </li>
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Setor">
+        {["all", ...[...sectors].sort((a, b) => a.localeCompare(b, "pt-BR"))].map((s) => (
+          <button
+            key={s}
+            onClick={() => setSector(s)}
+            className={`h-[38px] rounded-full border px-4 text-sm font-medium ${sector === s ? "border-[#17142E] bg-[#17142E] text-white" : "border-[#E4E0F3] bg-white/75 text-[#3A3555] hover:border-[#17142E]"}`}
+          >
+            {s === "all" ? "Todos" : s} <span className="opacity-60">{s === "all" ? employees.length : employees.filter((e) => e.sector === s).length}</span>
+          </button>
         ))}
+        {statFilter && (
+          <button onClick={() => setStatFilter(null)} className="h-[38px] rounded-full border border-dashed border-[#B9B2DA] px-4 text-sm font-medium text-[#4B3DA8]">
+            Mostrando: {STATS.find((s) => s.id === statFilter).label} · limpar
+          </button>
+        )}
+      </div>
+
+      <ul data-testid="employee-list" className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
+        {employees.length === 0 && <li className="glass rounded-[26px] p-8 text-center text-sm text-[#5E5880] md:col-span-2 2xl:col-span-3">Nenhum funcionário cadastrado. Clique em <b>Novo funcionário</b> ou importe do ponto.</li>}
+        {employees.length > 0 && list.length === 0 && <li className="glass rounded-[26px] p-8 text-center text-sm text-[#5E5880] md:col-span-2 2xl:col-span-3">Ninguém encontrado com esses filtros.</li>}
+        {list.map((e) => {
+          const v = current(e);
+          const streak = streakDays(e);
+          const risk = streak.length > 0 || noOff(e);
+          const wl = workloads.find((w) => w.id === e.workload);
+          const [label, value, bad] = footer(e);
+          const sick = v?.kind === "atestado" || e.status === "atestado";
+          const avatar = risk ? RISK : sick ? "bg-[#E8EEF7] text-[#34507A]" : v || e.status === "ferias" ? "bg-[#E6F2F1] text-[#2E5F5B]" : "bg-[#E6E1FA] text-[#4B3DA8]";
+          return (
+            <li
+              key={e.id}
+              data-testid={`employee-item-${e.id}`}
+              className={`flex flex-col rounded-[26px] border p-5 shadow-[0_10px_30px_-20px_rgba(70,50,160,0.25)] ${risk ? "border-[#EE9A9A] bg-[#FDE2E2]/80" : "border-white bg-white/80"} ${e.status === "inativo" ? "opacity-55" : ""}`}
+            >
+              <div className="flex items-start gap-3.5">
+                <span className={`grid h-[52px] w-[52px] shrink-0 place-items-center rounded-2xl text-base font-bold ${avatar}`}>{initials(e.name)}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="flex flex-wrap items-center gap-1.5 text-[17px] font-semibold leading-tight">
+                    {e.name}
+                    {isTrial(e) && <span className="rounded bg-[#FFF4D1] px-1.5 py-0.5 text-[9px] font-bold text-[#7A5500]">TESTE</span>}
+                  </p>
+                  <p className="mt-0.5 text-[13px] text-[#5E5880]">{e.role} · {e.sector}</p>
+                </div>
+                <button onClick={() => setEditFor(e)} aria-label={`Opções de ${e.name}`} title="Editar" className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[#E4E0F3] bg-white text-[#3A3555] hover:border-[#17142E]">
+                  <MoreHorizontal className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-1.5">
+                {e.status === "inativo" ? (
+                  <Chip className="bg-[#F2F0F8] text-[#5E5880]">Inativo</Chip>
+                ) : v ? (
+                  <Chip className={sick ? "bg-[#E8EEF7] text-[#34507A]" : "bg-[#E6F2F1] text-[#2E5F5B]"}>
+                    <i className={`h-1.5 w-1.5 rounded-full ${sick ? "bg-[#34507A]" : "bg-[#2E5F5B]"}`} />{sick ? "Atestado" : "Férias"} até {fmtDate(v.end).slice(0, 5)}
+                  </Chip>
+                ) : (
+                  <Chip className={OK}><i className="h-1.5 w-1.5 rounded-full bg-[#2E9E66]" />{fem(e) ? "Ativa" : "Ativo"}</Chip>
+                )}
+                <Chip className={isIntermittent(e) ? "bg-[#E0F2FE] text-[#0369A1]" : "bg-[#EEEBFB] text-[#4B3DA8]"}>
+                  {isIntermittent(e) ? "Intermitente" : fem(e) ? "Efetiva" : "Efetivo"}
+                </Chip>
+                {wl ? <Chip className="bg-[#F2F0F8] text-[#3A3555]">{wl.name}</Chip> : <Chip className={WARN} title="Informe a jornada">Sem jornada</Chip>}
+                {!e.gender && <Chip className={WARN} title="Informe o sexo para a regra de domingos da CCT">Sexo?</Chip>}
+                {streak.length > 0 && <Chip className="bg-white/70 text-[#A12828]">Risco · +6 DIAS {streak.map((d) => `no ${DAYS_SHORT[d].toLowerCase()} ${dates[d] ? dates[d].getDate() : ""}`).join(", ")}</Chip>}
+                {upcoming(e).filter((x) => x !== v).map((x) => (
+                  <button key={x.id} onClick={() => openLeave(e, x.kind || "ferias")} className="inline-flex h-6 items-center rounded-full bg-[#F2F0F8] px-2.5 text-xs font-semibold text-[#5E5880] hover:bg-[#EEEBFB]">
+                    {x.kind === "atestado" ? "Atestado" : "Férias"} {fmtDate(x.start).slice(0, 5)}–{fmtDate(x.end).slice(0, 5)}
+                  </button>
+                ))}
+              </div>
+              <div className="flex-1" />
+              <div className={`mt-4 flex items-center justify-between border-t pt-3 text-[13px] ${risk ? "border-[#EE9A9A]/60" : "border-[#EEEBFB]"}`}>
+                <span className="text-[#5E5880]">{label}</span>
+                <b className={`font-semibold ${bad ? "text-[#A12828]" : "text-[#1B1830]"}`}>{value}</b>
+              </div>
+            </li>
+          );
+        })}
       </ul>
+
+      <Dialog open={adding} onOpenChange={setAdding}>
+        <DialogContent className="sm:max-w-[640px]">
+          <DialogHeader>
+            <DialogTitle>Novo funcionário</DialogTitle>
+            <DialogDescription>Depois de adicionar, clique em Gerar escala para recalcular as folgas.</DialogDescription>
+          </DialogHeader>
+          <EmployeeForm sectors={sectors} roles={roles} workloads={workloads} onSaved={() => { setAdding(false); onChange(); }} />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditFor(null)}>
+        <DialogContent className="sm:max-w-[540px]">
+          {editing && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{editing.name}</DialogTitle>
+                <DialogDescription>{editing.role} · {editing.sector}</DialogDescription>
+              </DialogHeader>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="space-y-1 text-xs font-semibold text-[#5E5880]">
+                  <span>Status</span>
+                  <select
+                    aria-label="Status"
+                    value={editing.status || "ativo"}
+                    onChange={(evt) =>
+                      evt.target.value === "ferias" || evt.target.value === "atestado"
+                        ? openLeave(editing, evt.target.value) // Férias e atestado: abre a janela para informar o período
+                        : update(editing, { status: evt.target.value }, `Status de ${editing.name} atualizado para ${evt.target.value}`)
+                    }
+                    className={field}
+                  >
+                    <option value="ativo">Ativo</option>
+                    <option value="ferias">{editing.status === "ferias" ? "Férias (semana toda)" : "Férias…"}</option>
+                    <option value="atestado">Atestado…</option>
+                    {editing.status === "suspensao" && <option value="suspensao">Suspensão</option>}
+                    {editing.status === "falta" && <option value="falta">Falta</option>}
+                    <option value="inativo">Inativo</option>
+                  </select>
+                </label>
+                <label className="space-y-1 text-xs font-semibold text-[#5E5880]">
+                  <span>Contrato</span>
+                  <select aria-label="Contrato" value={editing.contract || "efetivo"} onChange={(evt) => update(editing, { contract: evt.target.value }, `Contrato de ${editing.name} atualizado`)} className={field}>
+                    <option value="efetivo">Efetivo</option>
+                    <option value="intermitente">Intermitente</option>
+                  </select>
+                </label>
+                <label className="space-y-1 text-xs font-semibold text-[#5E5880]">
+                  <span>Jornada</span>
+                  <select aria-label="Jornada" value={editing.workload || ""} onChange={(evt) => update(editing, { workload: evt.target.value || null }, `Jornada de ${editing.name} atualizada`)} className={`${field} ${!editing.workload ? "border-[#F2CF6B] bg-[#FFF9E6]" : ""}`}>
+                    <option value="">Jornada?</option>
+                    {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+                </label>
+                <label className="space-y-1 text-xs font-semibold text-[#5E5880]">
+                  <span>Sexo (domingos da CCT)</span>
+                  <select aria-label="Sexo" value={editing.gender || ""} onChange={(evt) => update(editing, { gender: evt.target.value || null }, `Sexo de ${editing.name} atualizado`)} className={`${field} ${!editing.gender ? "border-[#F2CF6B] bg-[#FFF9E6]" : ""}`}>
+                    <option value="">Sexo?</option>
+                    <option value="M">Masculino</option>
+                    <option value="F">Feminino</option>
+                  </select>
+                </label>
+              </div>
+              <div className="flex flex-wrap justify-between gap-2 pt-2">
+                <div className="flex flex-wrap gap-2">
+                  {isTrial(editing) ? (
+                    <Button data-testid={`btn-approve-${editing.id}`} variant="outline" onClick={() => setRoleFor(editing)} className="rounded-full border-[#8FD0AE] text-[#1D6B45]">
+                      <BadgeCheck className="mr-1.5 h-4 w-4" /> Aprovar
+                    </Button>
+                  ) : (
+                    <Button variant="outline" onClick={() => setRoleFor(editing)} className="rounded-full">
+                      <Pencil className="mr-1.5 h-4 w-4" /> Trocar cargo e setor
+                    </Button>
+                  )}
+                  <Button variant="outline" onClick={() => openLeave(editing, "ferias")} className="rounded-full">Férias</Button>
+                  <Button variant="outline" onClick={() => openLeave(editing, "atestado")} className="rounded-full">Atestado</Button>
+                </div>
+                <Button data-testid={`btn-delete-employee-${editing.id}`} variant="outline" onClick={() => remove(editing)} className="rounded-full text-[#A12828] hover:bg-[#FDECEC]">
+                  <Trash2 className="mr-1.5 h-4 w-4" /> Excluir
+                </Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
       <RoleDialog
         employee={roleFor}
         employees={employees}
