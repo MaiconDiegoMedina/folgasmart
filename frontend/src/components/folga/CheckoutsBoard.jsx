@@ -189,6 +189,66 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
     },
   });
   const isSelf = (c) => /self/i.test(c.name);
+  const turnoOf = (o) => (o?.a == null ? null : o.a < 12 * 60 ? 0 : 1);
+  const opOf = (id) => rows.flatMap((r) => r.ops).concat(loose).find((o) => o.emp.id === id);
+  const caixaOf = (id) => (assign[String(day)] || {})[id] || null;
+  const firstName = (o) => o.emp.name.split(" ")[0];
+  const put = (employee_id, checkout_id) => http.put("/checkouts/assign", { week, day, employee_id, checkout_id });
+
+  // Solta numa vaga de turno: a vaga segue o horário de entrada da pessoa
+  const placeIn = async (id, caixa, slot) => {
+    const o = opOf(id);
+    await allocate(id, caixa);
+    const t = turnoOf(o);
+    if (o && t !== null && t !== slot) {
+      toast.info(`${firstName(o)} entra às ${o.shift[0]}, então fica no ${t + 1}º turno. Para colocá-la no ${slot + 1}º turno, mude o horário dela na sub-aba de horários da Escala.`);
+    }
+  };
+
+  // Solta uma operadora sobre outra: as duas trocam de caixa
+  const swap = async (aId, bId) => {
+    const a = opOf(aId);
+    const b = opOf(bId);
+    const from = caixaOf(aId);
+    const to = caixaOf(bId);
+    if (!a || !b || aId === bId) return;
+    if (from === to) {
+      toast.info(`${firstName(a)} e ${firstName(b)} já estão no mesmo caixa. A vaga de cada uma segue o horário de entrada.`);
+      return;
+    }
+    try {
+      await put(aId, to);
+      await put(bId, from);
+      toast.success(`${firstName(a)} e ${firstName(b)} trocaram de caixa`);
+    } catch (e) {
+      toast.error(errMsg(e));
+    }
+    loadAssign();
+  };
+
+  const stopDrop = (target, onDropId) => ({
+    onDragOver: (e) => {
+      if (!dragId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = "move";
+      if (over !== target) setOver(target);
+    },
+    onDragLeave: (e) => {
+      e.stopPropagation();
+      setOver((v) => (v === target ? null : v));
+    },
+    onDrop: (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const id = e.dataTransfer.getData("text/plain") || dragId;
+      setDragId(null);
+      setOver(null);
+      if (id) onDropId(id);
+    },
+  });
+  const tileDrop = (o) => stopDrop(`op:${o.emp.id}`, (id) => id !== o.emp.id && swap(id, o.emp.id));
+  const slotDrop = (caixa, slot) => stopDrop(`slot:${caixa}:${slot}`, (id) => placeIn(id, caixa, slot));
 
   // Linha "Sem caixa": cada pessoa numa faixa para as barras não ficarem umas sobre as outras
   const lanes = [];
@@ -335,6 +395,8 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
         <section className="grid min-w-0 gap-4" style={{ flex: "3 1 600px", gridTemplateColumns: "repeat(auto-fill, minmax(min(330px, 100%), 1fr))" }}>
           {rows.map((r) => {
             const dark = isSelf(r);
+            // Duas vagas por caixa: 1º turno (entra antes das 12h) e 2º turno (entra a partir das 12h)
+            const slots = r.ops.length >= 2 ? r.ops : r.ops.length === 1 ? (turnoOf(r.ops[0]) === 1 ? [null, r.ops[0]] : [r.ops[0], null]) : [null, null];
             return (
               <div
                 key={r.id}
@@ -344,73 +406,79 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                 <div className="flex items-center justify-between">
                   <h3 className="m-0 font-display text-lg font-semibold">{r.name}</h3>
                   <span className={CHIP} style={dark ? { background: "#3A3463", color: "#E9E6F8" } : r.ops.length >= 2 ? TONE.ok : r.ops.length === 1 ? TONE.warn : TONE.none}>
-                    {r.ops.length >= 2 ? `Aberto · ${r.ops.length} turnos` : r.ops.length === 1 ? "Aberto · 1 turno" : "Livre"}
+                    {r.ops.length >= 2 ? `Aberto · ${r.ops.length} turnos` : r.ops.length === 1 ? `Aberto · só ${turnoOf(r.ops[0]) === 1 ? "2º" : "1º"} turno` : "Livre"}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 items-start gap-2.5">
-                  {r.ops.map((o) => (
-                    <div
-                      key={o.emp.id}
-                      {...dragProps(o)}
-                      title={`${o.emp.name} · ${o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]}` : "sem horário"} · ${o.note}. Arraste para outro caixa.`}
-                      className={`group relative flex cursor-grab items-start gap-2.5 rounded-[14px] border-[1.5px] p-2 pr-6 text-[13px] font-semibold text-[#1B1830] active:cursor-grabbing ${dragId === o.emp.id ? "opacity-40" : ""}`}
-                      style={LVL[o.lvl].tile}
-                    >
-                      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[11px] font-bold" style={LVL[o.lvl].avatar}>{initials(o.emp.name)}</div>
-                      <div className="min-w-0">
-                        <span className="block truncate">{o.emp.name}</span>
-                        <small className="block text-xs font-medium text-[#5E5880]">{o.daily}</small>
-                        <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A85A3]">{o.contract}</span>
-                        {moving === o.emp.id ? (
-                          <select
-                            autoFocus
-                            aria-label={`Trocar o caixa de ${o.emp.name}`}
-                            defaultValue={r.id}
-                            onBlur={() => setMoving(null)}
-                            onChange={(e) => e.target.value !== r.id && allocate(o.emp.id, e.target.value)}
-                            className="mt-1 h-7 w-full rounded-lg border border-[#E4E0F3] bg-white px-1 text-[11px]"
-                          >
-                            {checkouts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                          </select>
-                        ) : (
-                          <span className="mt-1 flex items-center gap-2">
-                            <span className="text-[11px] font-bold" style={{ color: LVL[o.lvl].ink }}>{o.lvl === "ok" ? "Na jornada" : o.lvl === "warn" ? "Extra" : "+6 dias"}</span>
-                            <button onClick={() => setMoving(o.emp.id)} className="text-[11px] font-semibold text-[#5B4BC4] hover:underline">Trocar</button>
-                          </span>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => allocate(o.emp.id, null)}
-                        aria-label={`Tirar ${o.emp.name} do ${r.name}`}
-                        title="Tirar do caixa"
-                        className="absolute right-1 top-1 grid h-6 w-6 place-items-center rounded-full text-[#8A85A3] hover:bg-white hover:text-[#A12828]"
+                <div className="grid grid-cols-2 items-stretch gap-2.5">
+                  {slots.map((o, si) =>
+                    o ? (
+                      <div
+                        key={o.emp.id}
+                        {...dragProps(o)}
+                        {...tileDrop(o, r.id)}
+                        title={`${o.emp.name} · ${o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]}` : "sem horário"} · ${o.note}. Arraste para outro caixa ou solte sobre outra operadora para trocar as duas.`}
+                        className={`group relative flex cursor-grab items-start gap-2.5 rounded-[14px] border-[1.5px] p-2 pr-6 text-[13px] font-semibold text-[#1B1830] transition active:cursor-grabbing ${dragId === o.emp.id ? "opacity-40" : ""} ${over === `op:${o.emp.id}` ? "ring-2 ring-[#6D5BD0]" : ""}`}
+                        style={LVL[o.lvl].tile}
                       >
-                        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
-                      </button>
-                    </div>
-                  ))}
-                  {r.ops.length < 2 && (
-                    filling === r.id ? (
+                        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[11px] font-bold" style={LVL[o.lvl].avatar}>{initials(o.emp.name)}</div>
+                        <div className="min-w-0">
+                          <span className="block truncate">{o.emp.name}</span>
+                          <small className="block text-xs font-medium text-[#5E5880]">{o.daily}{o.shift ? ` · ${o.shift[0]}` : ""}</small>
+                          <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A85A3]">{o.contract}</span>
+                          {moving === o.emp.id ? (
+                            <select
+                              autoFocus
+                              aria-label={`Trocar o caixa de ${o.emp.name}`}
+                              defaultValue={r.id}
+                              onBlur={() => setMoving(null)}
+                              onChange={(e) => e.target.value !== r.id && allocate(o.emp.id, e.target.value)}
+                              className="mt-1 h-7 w-full rounded-lg border border-[#E4E0F3] bg-white px-1 text-[11px]"
+                            >
+                              {checkouts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                          ) : (
+                            <span className="mt-1 flex items-center gap-2">
+                              <span className="text-[11px] font-bold" style={{ color: LVL[o.lvl].ink }}>{o.lvl === "ok" ? "Na jornada" : o.lvl === "warn" ? "Extra" : "+6 dias"}</span>
+                              <button onClick={() => setMoving(o.emp.id)} className="text-[11px] font-semibold text-[#5B4BC4] hover:underline">Trocar</button>
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => allocate(o.emp.id, null)}
+                          aria-label={`Tirar ${o.emp.name} do ${r.name}`}
+                          title="Tirar do caixa"
+                          className="absolute right-1 top-1 grid h-6 w-6 place-items-center rounded-full text-[#8A85A3] hover:bg-white hover:text-[#A12828]"
+                        >
+                          <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                        </button>
+                      </div>
+                    ) : filling === `${r.id}:${si}` ? (
                       <select
+                        key={`slot${si}`}
                         autoFocus
-                        aria-label={`Escolher operadora para ${r.name}`}
+                        aria-label={`Escolher operadora para o ${si + 1}º turno do ${r.name}`}
                         defaultValue=""
                         onBlur={() => setFilling(null)}
-                        onChange={(e) => e.target.value && allocate(e.target.value, r.id)}
-                        className={`h-[46px] rounded-[14px] border-[1.5px] border-[#6D5BD0] bg-white px-2 text-[13px] text-[#1B1830] ${r.ops.length === 0 ? "col-span-2" : ""}`}
+                        onChange={(e) => e.target.value && placeIn(e.target.value, r.id, si)}
+                        className="min-h-[46px] rounded-[14px] border-[1.5px] border-[#6D5BD0] bg-white px-2 text-[13px] text-[#1B1830]"
                       >
-                        <option value="" disabled>Quem fica neste caixa?</option>
-                        {loose.map((o) => <option key={o.emp.id} value={o.emp.id}>{o.emp.name}{o.shift ? ` · ${o.shift[0]}–${o.shift[o.shift.length - 1]}` : ""}</option>)}
+                        <option value="" disabled>{si + 1}º turno: quem fica?</option>
+                        {loose.map((x) => <option key={x.emp.id} value={x.emp.id}>{x.emp.name}{x.shift ? ` · ${x.shift[0]}–${x.shift[x.shift.length - 1]}` : ""}</option>)}
                       </select>
                     ) : (
                       <button
-                        disabled={!loose.length}
-                        onClick={() => setFilling(r.id)}
-                        title={loose.length ? "Escolher quem fica neste caixa" : "Todo mundo do caixa já está alocado. Arraste de outro caixa para trocar."}
-                        className={`flex min-h-[46px] items-center justify-center gap-1.5 self-stretch rounded-[14px] border-[1.5px] border-dashed px-2 text-center text-[13px] font-semibold disabled:cursor-default ${dark ? "border-[#3A3463] text-[#C9C4E6]" : "border-[#D6D0EE] text-[#4B3DA8] enabled:hover:bg-[#F3F1FA]"} ${r.ops.length === 0 ? "col-span-2" : ""}`}
+                        key={`slot${si}`}
+                        {...slotDrop(r.id, si)}
+                        disabled={!loose.length && !dragId}
+                        onClick={() => setFilling(`${r.id}:${si}`)}
+                        title={loose.length ? `Escolher quem fica no ${si + 1}º turno` : "Arraste uma operadora de outro caixa para cá"}
+                        className={`flex min-h-[46px] flex-col items-center justify-center self-stretch rounded-[14px] border-[1.5px] border-dashed px-2 text-center text-[13px] font-semibold transition disabled:cursor-default ${dark ? "border-[#3A3463] text-[#C9C4E6]" : "border-[#D6D0EE] text-[#4B3DA8] enabled:hover:bg-[#F3F1FA]"} ${over === `slot:${r.id}:${si}` ? "border-solid border-[#6D5BD0] bg-[#EEEBFB]" : ""}`}
                       >
-                        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
-                        {loose.length ? "Escolher operadora" : r.ops.length === 0 ? "Caixa livre" : "Segundo turno livre"}
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.04em] opacity-70">{si + 1}º turno livre</span>
+                        <span className="inline-flex items-center gap-1">
+                          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+                          {loose.length ? "Escolher operadora" : "Solte aqui"}
+                        </span>
                       </button>
                     )
                   )}
