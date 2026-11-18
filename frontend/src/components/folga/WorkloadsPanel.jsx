@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { Plus, Trash2, Loader2, Pencil, Copy } from "lucide-react";
+import { Plus, Trash2, Loader2, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { http, errMsg, DAYS_SHORT } from "@/lib/api";
 import { dayMinutes, timesOf, times5x2Of } from "@/lib/workloadTimes";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { PageTitle } from "@/components/folga/Header";
 
 const pad = (n) => String(n).padStart(2, "0");
 export const fmtMinutes = (m) => (m ? `${Math.floor(m / 60)}h${m % 60 ? pad(m % 60) : ""}` : "—");
@@ -82,7 +84,7 @@ const Editor = ({ initial, onCancel, onSaved }) => {
   };
 
   return (
-    <div data-testid="workload-editor" className="rounded-xl border border-[#E4E0F3] bg-[#F3F1FA] p-4 space-y-3">
+    <div data-testid="workload-editor" className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <Input placeholder="Nome da jornada (ex.: 8h seg–sex + 4h sáb)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="h-9 max-w-sm bg-white" />
         <span className="text-xs text-[#5E5880]">Total na semana: <b className="font-mono-data">{fmtMinutes(total)}</b></span>
@@ -128,17 +130,62 @@ const Editor = ({ initial, onCancel, onSaved }) => {
   );
 };
 
-const Span = ({ t }) =>
-  !t ? (
-    <span className="text-[#B9B2DA]">—</span>
-  ) : (
-    <>
-      <span className="block">{t[0]}–{t[t.length - 1]}</span>
-      {t.length === 4 && <span className="block text-[10px] text-[#0369A1]">int. {t[1]}–{t[2]}</span>}
-    </>
-  );
+const T_START = 5 * 60;
+const T_END = 23 * 60;
+const T_SPAN = T_END - T_START;
+const tPct = (m) => `${(((Math.min(Math.max(m, T_START), T_END) - T_START) / T_SPAN) * 100).toFixed(2)}%`;
+const tWidth = (a, b) => `${(((Math.min(b, T_END) - Math.max(a, T_START)) / T_SPAN) * 100).toFixed(2)}%`;
+const toM = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+const DAY_NAMES = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
 
-export const WorkloadsPanel = ({ workloads, onChange }) => {
+// Junta dias seguidos com o mesmo horário: "Seg a Sex", "Sábado"
+const groupDays = (times) => {
+  const groups = [];
+  times.forEach((t, d) => {
+    const key = JSON.stringify(t || null);
+    const last = groups[groups.length - 1];
+    if (last && last.key === key && last.to === d - 1) last.to = d;
+    else groups.push({ key, t, from: d, to: d });
+  });
+  return groups
+    .filter((g) => g.t)
+    .map((g) => ({ ...g, label: g.from === g.to ? DAY_NAMES[g.from] : `${DAYS_SHORT[g.from]} a ${DAYS_SHORT[g.to]}` }));
+};
+
+const Timeline = ({ t }) => {
+  const [a, b] = [toM(t[0]), toM(t[t.length - 1])];
+  const brk = t.length === 4 ? [toM(t[1]), toM(t[2])] : null;
+  const seg = (x, y, label) => (
+    <div className="absolute top-1 bottom-1 grid place-items-center overflow-hidden whitespace-nowrap rounded-lg bg-[#6D5BD0] text-[11px] font-bold text-white" style={{ left: tPct(x), width: `calc(${tWidth(x, y)} - 2px)` }}>
+      {label}
+    </div>
+  );
+  return (
+    <div className="relative h-[34px] rounded-xl bg-[#F2F0F8]">
+      {brk ? (
+        <>
+          {seg(a, brk[0], `${t[0]} – ${t[1]}`)}
+          <div
+            title={`Intervalo ${t[1]}–${t[2]}`}
+            className="absolute top-1 bottom-1 grid place-items-center overflow-hidden whitespace-nowrap rounded-lg text-[11px] font-semibold text-[#4B3DA8]"
+            style={{ left: tPct(brk[0]), width: tWidth(brk[0], brk[1]), background: "repeating-linear-gradient(135deg,rgba(124,106,224,.22) 0 4px,rgba(124,106,224,.08) 4px 8px)" }}
+          >
+            {brk[1] - brk[0] >= 90 ? "intervalo" : ""}
+          </div>
+          {seg(brk[1], b, `${t[2]} – ${t[3]}`)}
+        </>
+      ) : (
+        seg(a, b, `${t[0]} – ${t[1]}`)
+      )}
+    </div>
+  );
+};
+
+const HOURS_AXIS = [5, 8, 11, 14, 17, 20, 23];
+const LIMIT = 44 * 60;
+const WEEK_CHIP = { ok: "bg-[#E3F5EC] text-[#1D6B45]", warn: "bg-[#FFF4D1] text-[#7A5500]", risk: "bg-[#FDE2E2] text-[#A12828]" };
+
+export const WorkloadsPanel = ({ workloads, employees = [], onChange }) => {
   const [editing, setEditing] = useState(null);
 
   const edit = (w) =>
@@ -148,72 +195,126 @@ export const WorkloadsPanel = ({ workloads, onChange }) => {
     if (!window.confirm(`Excluir a jornada "${w.name}"? Quem usa essa jornada ficará sem jornada definida.`)) return;
     try {
       await http.delete(`/workloads/${w.id}`);
+      setEditing(null);
       onChange();
     } catch (err) {
       toast.error(errMsg(err));
     }
   };
 
+  const people = (w) => employees.filter((e) => e.workload === w.id && e.status !== "inativo").length;
+  const editingW = editing?.id && workloads.find((w) => w.id === editing.id);
+
   return (
-    <section data-testid="workloads-panel" className="glass rounded-[26px] p-5 sm:p-6">
-      <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
-        <div>
-          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A85A3]">Jornadas</p>
-          <h3 className="font-display text-2xl font-bold tracking-tight mt-1">Horários do ponto</h3>
-        </div>
-        {!editing && (
-          <Button size="sm" onClick={() => setEditing({ ...NEW_FORM })} className="bg-[#17142E] hover:bg-[#2A2550] text-white">
-            <Plus className="h-4 w-4 mr-1" /> Nova jornada
-          </Button>
-        )}
-      </div>
+    <section data-testid="workloads-panel" className="space-y-5">
+      <PageTitle
+        eyebrow={`Horários do ponto · ${workloads.length} ${workloads.length === 1 ? "jornada cadastrada" : "jornadas cadastradas"}`}
+        actions={
+          <>
+            <span className="inline-flex items-center gap-1.5 text-xs text-[#4A4566]"><i className="h-3 w-3 rounded bg-[#6D5BD0]" />Trabalho</span>
+            <span className="inline-flex items-center gap-1.5 text-xs text-[#4A4566]"><i className="h-3 w-3 rounded bg-[#E6E1FA]" />Intervalo</span>
+            <Button onClick={() => setEditing({ ...NEW_FORM })} className="h-11 rounded-full bg-[#6D5BD0] px-[18px] text-white hover:bg-[#5B4BC4]">
+              <Plus className="mr-2 h-4 w-4" /> Nova jornada
+            </Button>
+          </>
+        }
+      >
+        Jornadas de <em>trabalho</em>
+      </PageTitle>
 
-      {editing && (
-        <div className="mb-4">
-          <Editor key={editing.id || "new"} initial={editing} onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); onChange(); }} />
-        </div>
-      )}
-
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[11px] uppercase tracking-wider text-[#8A85A3]">
-              <th className="text-left font-semibold pb-2 pr-3">Jornada</th>
-              {DAYS_SHORT.map((d) => <th key={d} className="font-semibold pb-2 px-1 min-w-[84px]">{d}</th>)}
-              <th className="font-semibold pb-2 px-1" title="Horário de cada dia trabalhado quando o setor está em 5x2">No 5x2</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {workloads.map((w) => (
-              <tr key={w.id} className="border-t border-[#EEEBFB] align-top">
-                <td className="py-2 pr-3">
-                  <p className="font-semibold">{w.name}</p>
-                  <p className="text-[11px] text-[#8A85A3]">{fmtMinutes(w.minutes.reduce((s, m) => s + m, 0))} na semana</p>
-                  {!w.times && <p className="text-[11px] text-[#C2410C]">Sem horário do ponto — edite para preencher a sub-aba</p>}
-                </td>
-                {w.times
-                  ? w.times.map((t, i) => <td key={i} className="py-2 text-center font-mono-data text-xs"><Span t={t} /></td>)
-                  : w.minutes.map((m, i) => <td key={i} className="py-2 text-center font-mono-data text-xs text-[#8A85A3]">{fmtMinutes(m)}</td>)}
-                <td className="py-2 text-center font-mono-data text-xs">
-                  {w.times_5x2 ? <Span t={w.times_5x2} /> : w.minutes_5x2 ? <span className="text-[#8A85A3]">{fmtMinutes(w.minutes_5x2)}</span> : "—"}
-                </td>
-                <td className="py-1 text-right whitespace-nowrap">
-                  <button onClick={() => edit(w)} className="p-1.5 rounded-lg text-[#8A85A3] hover:bg-[#EEEBFB] hover:text-[#17142E]" aria-label={`Editar ${w.name}`}>
-                    <Pencil className="h-4 w-4" />
-                  </button>
-                  <button onClick={() => remove(w)} className="p-1.5 rounded-lg text-[#8A85A3] hover:bg-[#FDECEC] hover:text-[#C93C3C]" aria-label={`Excluir ${w.name}`}>
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+        {workloads.map((w) => {
+          const total = w.minutes.reduce((s, m) => s + m, 0);
+          const groups = w.times ? groupDays(w.times) : [];
+          const five = w.times_5x2;
+          const wide = groups.length + (five ? 1 : 0) > 1;
+          const n = people(w);
+          return (
+            <article key={w.id} className={`glass rounded-[26px] p-5 sm:p-6 ${wide ? "xl:col-span-2" : ""}`}>
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <h3 className="text-lg font-bold">{w.name}</h3>
+                <div className="flex flex-wrap items-center gap-2">
+                  {total > 0 && (() => {
+                    // Semana no 6x1: uma folga por semana, que pode cair em qualquer dia com horário
+                    const on = w.minutes.filter((m) => m > 0);
+                    const lo = total - Math.max(...on);
+                    const hi = on.length < 7 ? total : total - Math.min(...on);
+                    const lvl = hi <= LIMIT ? "ok" : lo <= LIMIT ? "warn" : "risk";
+                    const txt = lo === hi ? fmtMinutes(lo) : `${fmtMinutes(lo)} a ${fmtMinutes(hi)}`;
+                    return (
+                      <span title="Horas na semana com uma folga (6x1). Varia conforme o dia da folga." className={`rounded-full px-2.5 py-1 text-xs font-semibold ${WEEK_CHIP[lvl]}`}>
+                        {txt} · {lvl === "ok" ? "dentro do limite" : lvl === "warn" ? "passa de 44h conforme a folga" : "acima de 44h"}
+                      </span>
+                    );
+                  })()}
+                  {w.minutes_5x2 > 0 && (
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${w.minutes_5x2 * 5 <= LIMIT ? WEEK_CHIP.ok : WEEK_CHIP.risk}`}>No 5×2 · {fmtMinutes(w.minutes_5x2 * 5)}</span>
+                  )}
+                  <span className="rounded-full bg-[#F2F0F8] px-2.5 py-1 text-xs font-semibold text-[#4A4566]">{n} {n === 1 ? "pessoa" : "pessoas"}</span>
+                  <button onClick={() => edit(w)} aria-label={`Editar ${w.name}`} className="h-9 rounded-full border border-[#E4E0F3] bg-white px-4 text-sm font-semibold hover:border-[#17142E]">Editar</button>
+                </div>
+              </div>
+              {!w.times ? (
+                <p className="rounded-xl border border-dashed border-[#F2CF6B] bg-[#FFF9E6] px-4 py-3 text-sm text-[#7A5500]">
+                  Sem horário do ponto: {DAYS_SHORT.map((d, i) => `${d} ${fmtMinutes(w.minutes[i])}`).join(" · ")}. Clique em Editar para preencher os horários.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {wide && (
+                    <div className="grid grid-cols-[110px_1fr] gap-3">
+                      <span />
+                      <div className="relative h-4 font-mono-data text-[11px] text-[#5E5880]">
+                        {HOURS_AXIS.map((h) => (
+                          <span key={h} className="absolute -translate-x-1/2" style={{ left: tPct(h * 60) }}>{h}h</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {groups.map((g) => (
+                    <div key={`${g.from}-${g.to}`} className="grid grid-cols-[110px_1fr] items-center gap-3">
+                      <span className="text-sm font-semibold text-[#3A3555]">{g.label}</span>
+                      <Timeline t={g.t} />
+                    </div>
+                  ))}
+                  {five && (
+                    <div className="grid grid-cols-[110px_1fr] items-center gap-3">
+                      <span className="text-sm font-semibold text-[#3A3555]" title="Horário de cada dia trabalhado quando o setor está em 5x2">No 5×2</span>
+                      <Timeline t={five} />
+                    </div>
+                  )}
+                  {groups.length === 0 && <p className="text-sm text-[#5E5880]">Nenhum dia com horário.</p>}
+                </div>
+              )}
+            </article>
+          );
+        })}
+        <button
+          onClick={() => setEditing({ ...NEW_FORM })}
+          className="flex min-h-[170px] flex-col items-center justify-center gap-1 rounded-[26px] border-2 border-dashed border-[#C9BFFF] bg-white/40 p-6 text-center hover:bg-white/70"
+        >
+          <Plus className="h-6 w-6 text-[#4B3DA8]" />
+          <span className="text-base font-bold text-[#4B3DA8]">Cadastrar nova jornada</span>
+          <span className="text-[13px] text-[#5E5880]">Entrada, intervalo e saída de cada dia</span>
+        </button>
       </div>
-      <p className="text-xs text-[#5E5880] mt-3">
+      <p className="text-xs text-[#5E5880]">
         Os efetivos já entram na sub-aba de horários com o horário da sua jornada. Ajustes feitos lá valem só para aquele dia.
       </p>
+
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[760px]">
+          <DialogHeader>
+            <DialogTitle>{editing?.id ? `Editar ${editing.name}` : "Nova jornada"}</DialogTitle>
+            <DialogDescription>Use os horários do cartão ponto.</DialogDescription>
+          </DialogHeader>
+          {editing && <Editor key={editing.id || "new"} initial={editing} onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); onChange(); }} />}
+          {editingW && (
+            <button onClick={() => remove(editingW)} className="inline-flex items-center gap-1.5 self-start text-sm font-semibold text-[#A12828] hover:underline">
+              <Trash2 className="h-4 w-4" /> Excluir esta jornada
+            </button>
+          )}
+        </DialogContent>
+      </Dialog>
     </section>
   );
 };

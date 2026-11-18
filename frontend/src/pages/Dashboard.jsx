@@ -126,13 +126,11 @@ export default function Dashboard() {
           )}
           {tab === "jornadas" && (
             <>
-              <PageTitle eyebrow={`${workloads.length} jornadas cadastradas`}>Jornadas e <em>horários do ponto</em></PageTitle>
-              <WorkloadsPanel workloads={workloads} onChange={load} />
+              <WorkloadsPanel workloads={workloads} employees={employees} onChange={load} />
             </>
           )}
           {tab === "movimento" && (
             <>
-              <PageTitle eyebrow="Define os dias de pico usados na geração da escala">Movimento <em>de clientes</em></PageTitle>
               <MovementPanel movement={movement} onChange={setMovement} />
             </>
           )}
@@ -140,12 +138,11 @@ export default function Dashboard() {
             <>
               <PageTitle eyebrow="Frente de Caixa" actions={<WeekNav week={week} onChange={setWeek} />}>Quem fica em <em>cada caixa</em></PageTitle>
               <CheckoutsBoard employees={scheduled} schedule={schedule} week={week} workloads={workloads} sectorModes={sectorModes} checkouts={checkouts} />
-              <CheckoutsPanel checkouts={checkouts} onChange={load} />
+              <div id="checkouts-panel"><CheckoutsPanel checkouts={checkouts} onChange={load} /></div>
             </>
           )}
           {tab === "feriados" && (
             <>
-              <PageTitle eyebrow="Loja fechada ou aberta com pagamento em dobro">Feriados <em>do ano</em></PageTitle>
               <HolidaysPanel onChange={load} />
             </>
           )}
