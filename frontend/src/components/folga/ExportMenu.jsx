@@ -35,7 +35,7 @@ export const ExportMenu = ({ employees, schedule }) => {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button data-testid="btn-export-schedule" variant="outline" className="rounded-full border-[#D1CBBF] bg-white hover:bg-[#0F172A] hover:text-white">
+        <Button data-testid="btn-export-schedule" variant="outline" className="rounded-full border-[#D6D0EE] bg-white hover:bg-[#17142E] hover:text-white">
           <Download className="h-4 w-4 mr-2" /> Exportar
         </Button>
       </DropdownMenuTrigger>

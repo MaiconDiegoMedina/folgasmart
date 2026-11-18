@@ -4,26 +4,33 @@ import { toast } from "sonner";
 import { Flame, AlertTriangle, Users, CalendarDays, Printer, Lock } from "lucide-react";
 import { UnlockButton, useUnlock } from "@/components/folga/UnlockDialog";
 import { groupByRole } from "@/lib/groupByRole";
-import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate, http } from "@/lib/api";
+import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate, http, errMsg } from "@/lib/api";
 import { defaultShiftOf } from "@/lib/workloadTimes";
 import { WeekNav } from "@/components/folga/WeekNav";
 import { PeakHoursPanel } from "@/components/folga/PeakHoursPanel";
 import { isIntermittent, convocationOf, acceptedOn, shortNotice, CONVOCATION_LABEL, MIN_NOTICE_DAYS } from "@/lib/convocation";
 
 // Célula do intermitente: — -> CONVOCADO -> ACEITO -> RECUSOU -> —
+const OK = "bg-[#E3F5EC] border-[#E3F5EC] text-[#1D6B45] hover:border-[#8FD0AE]";
+const WARN = "bg-[#FFF4D1] border-[#F2CF6B] text-[#7A5500]";
+const RISK = "bg-[#FDE2E2] border-[#EE9A9A] text-[#A12828]";
+const CELL = "relative w-full h-[52px] rounded-[14px] border-[1.5px] font-mono-data select-none";
 const CONVOCATION_STYLE = {
-  none: "bg-white border-dashed border-[#D1CBBF] text-[#B8B2A7] hover:border-[#0EA5E9] hover:text-[#0369A1]",
-  pending: "bg-[#F0F9FF] border-[#7DD3FC] text-[#0369A1] hover:bg-[#E0F2FE]",
-  accepted: "bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D] hover:bg-[#DCFCE7]",
+  none: "bg-white/60 border-dashed border-[#D6D0EE] text-[#B9B2DA] hover:border-[#7C6AE0] hover:text-[#4B3DA8]",
+  pending: "bg-[#E8EEF7] border-[#B9CBE6] text-[#34507A] hover:brightness-[0.98]",
+  accepted: OK,
   declined: "bg-[#F8FAFC] border-[#E2E8F0] text-[#94A3B8] line-through hover:bg-[#F1F5F9]",
 };
 const CONVOCATION_NEXT = { none: "convocar", pending: "marcar aceite", accepted: "marcar recusa", declined: "limpar" };
 
-const CheckoutTag = ({ name }) => (
-  <span className="absolute -top-1.5 left-1/2 -translate-x-1/2 max-w-[90%] truncate rounded bg-[#0F172A] px-1 text-[8px] font-bold leading-[12px] tracking-normal text-white" title={`Caixa: ${name}`}>
-    {name}
-  </span>
-);
+const Tags = ({ checkout, doublePay, streak }) =>
+  checkout || doublePay || streak ? (
+    <span className="absolute top-1 right-1.5 flex max-w-[calc(100%-8px)] gap-[3px]">
+      {checkout && <b title={`Caixa: ${checkout}`} className="truncate rounded-md bg-[#17142E] px-[5px] py-[2px] text-[9px] font-bold leading-none tracking-normal text-white">{checkout}</b>}
+      {doublePay && <b title="Trabalha no feriado: pagamento em dobro" className="shrink-0 rounded-md bg-[#7A5500] px-[5px] py-[2px] text-[9px] font-bold leading-none tracking-normal text-[#FFF4D1]">2×</b>}
+      {streak && <b title="Passou de 6 dias seguidos sem folga" className="shrink-0 rounded-md bg-[#A12828] px-[5px] py-[2px] text-[9px] font-bold leading-none tracking-normal text-white">+6 DIAS</b>}
+    </span>
+  ) : null;
 
 const ConvocationCell = ({ conv, date, vacation, sick, closed, doublePay, shift, checkout, mural, excess, onClick, testId }) => {
   if (closed) return <Cell status="feriado" testId={testId} />;
@@ -35,7 +42,7 @@ const ConvocationCell = ({ conv, date, vacation, sick, closed, doublePay, shift,
     return state === "accepted" && !excess ? (
       <Cell shift={shift} checkout={checkout} doublePay={doublePay} mural testId={testId} />
     ) : (
-      <div data-testid={testId} className="w-full h-11" />
+      <div data-testid={testId} className="w-full h-[52px]" />
     );
   }
   const late = shortNotice(conv, date);
@@ -46,10 +53,9 @@ const ConvocationCell = ({ conv, date, vacation, sick, closed, doublePay, shift,
       title={`${state === "none" ? "Não convocado" : CONVOCATION_LABEL[state]}${conv?.at ? ` em ${conv.at.split("-").reverse().join("/")}` : ""} · clique: ${CONVOCATION_NEXT[state]}${
         late ? ` · convocação com menos de ${MIN_NOTICE_DAYS} dias de antecedência` : ""
       }${excess ? ` · ${excess} — fica fora do mural` : ""}`}
-      className={`relative w-full h-11 rounded-lg text-[10px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none ${CONVOCATION_STYLE[state]} ${excess ? "ring-2 ring-[#DC2626] ring-offset-1" : late ? "ring-2 ring-[#F59E0B] ring-offset-1" : ""}`}
+      className={`${CELL} text-[10px] font-bold tracking-wider transition-colors duration-200 focus:outline-none ${excess ? RISK : state === "accepted" && doublePay ? WARN : CONVOCATION_STYLE[state]} ${late && !excess ? "ring-2 ring-[#F2CF6B] ring-offset-1" : ""} ${state === "accepted" && (checkout || doublePay || excess) ? "pt-3" : ""}`}
     >
-      {state === "accepted" && checkout && <CheckoutTag name={checkout} />}
-      {state === "accepted" && doublePay && <DoubleTag />}
+      {state === "accepted" && <Tags checkout={checkout} doublePay={doublePay} streak={!!excess} />}
       {state === "none" ? "—" : state === "accepted" ? (shift ? <ShiftText shift={shift} /> : "TRAB.") : CONVOCATION_LABEL[state]}
     </button>
   );
@@ -58,30 +64,24 @@ const ConvocationCell = ({ conv, date, vacation, sick, closed, doublePay, shift,
 // Horário do dia: entrada–saída e, embaixo, o intervalo
 const ShiftText = ({ shift }) => (
   <span className="flex flex-col items-center leading-tight">
-    <span className="text-[11px] tracking-normal">{shift[0]}–{shift[shift.length - 1]}</span>
-    {shift.length === 4 && <span className="text-[9px] font-medium tracking-normal opacity-70">int. {shift[1]}–{shift[2]}</span>}
+    <span className="text-[12px] font-semibold tracking-normal">{shift[0]}–{shift[shift.length - 1]}</span>
+    {shift.length === 4 && <span className="whitespace-nowrap font-sans text-[9.5px] font-medium tracking-[-0.01em] opacity-85">int. {shift[1]}–{shift[2]}</span>}
   </span>
 );
 
-// Feriado com a loja aberta: quem trabalha recebe em dobro
-const DoubleTag = () => (
-  <span className="absolute -bottom-1.5 right-1 rounded bg-[#4338CA] px-1 text-[8px] font-bold leading-[12px] tracking-normal text-white" title="Trabalha no feriado: pagamento em dobro">
-    2×
-  </span>
-);
-
-const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp, shift, checkout, doublePay, mural, locked, onClick, testId }) => {
+const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp, streak: streakProp, shift, checkout, doublePay, mural, locked, onClick, testId }) => {
   // Mural: falta acontece depois da impressão (vale o horário escalado) e não mostra alertas
   const absent = mural ? false : absentProp;
   const cct = mural ? undefined : cctProp;
+  const streak = mural ? false : streakProp;
   if (status === "ferias") {
     return (
       <div
         data-testid={testId}
-        className="w-full h-11 flex items-center justify-center rounded-lg text-[10px] font-extrabold tracking-wider bg-[#F1F5F9] border border-[#CBD5E1] text-[#64748B] font-mono-data select-none cursor-not-allowed"
+        className={`${CELL} flex items-center justify-center text-[11px] font-bold bg-[#E6F2F1] border-[#E6F2F1] text-[#2E5F5B] cursor-not-allowed`}
         title="Funcionário em período de férias"
       >
-        FÉRIAS
+        Férias
       </div>
     );
   }
@@ -89,10 +89,10 @@ const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp
     return (
       <div
         data-testid={testId}
-        className="w-full h-11 flex items-center justify-center rounded-lg text-[10px] font-extrabold tracking-wider bg-[#EEF2FF] border border-[#C7D2FE] text-[#4338CA] font-mono-data select-none cursor-not-allowed"
+        className={`${CELL} flex items-center justify-center text-[11px] font-bold bg-[#EEEBFB] border-[#EEEBFB] text-[#4B3DA8] cursor-not-allowed`}
         title="Feriado com a loja fechada"
       >
-        FERIADO
+        Feriado
       </div>
     );
   }
@@ -100,31 +100,32 @@ const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp
     return (
       <div
         data-testid={testId}
-        className="w-full h-11 flex items-center justify-center rounded-lg text-[10px] font-extrabold tracking-wider bg-[#F0FDFA] border border-[#99F6E4] text-[#0F766E] font-mono-data select-none cursor-not-allowed"
+        className={`${CELL} flex items-center justify-center text-[11px] font-bold bg-[#E8EEF7] border-[#E8EEF7] text-[#34507A] cursor-not-allowed`}
         title="Atestado médico (lançado no status do funcionário)"
       >
-        ATESTADO
+        Atestado
       </div>
     );
   }
 
-  let texto = shift ? <ShiftText shift={shift} /> : "TRAB.";
-  let classesEstilo = "bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D] hover:bg-[#DCFCE7]"; // Trabalhando
+  let texto = shift ? <ShiftText shift={shift} /> : "Trab.";
+  // Semáforo: verde = ok · amarelo = atenção · vermelho = risco
+  let classesEstilo = streak ? RISK : doublePay ? WARN : OK; // Trabalhando
 
   if (absent) {
-    texto = "FALTA";
-    classesEstilo = "bg-[#FFF7ED] border-[#FDBA74] text-[#C2410C] hover:bg-[#FFEDD5]"; // Falta
+    texto = "Falta";
+    classesEstilo = RISK; // Falta
   } else if (extra) {
-    texto = "FOLGA"; // A cor lilás indica que é EXTRA
-    classesEstilo = "bg-[#F5F3FF] border-[#C4B5FD] text-[#6D28D9] hover:bg-[#EDE9FE]"; // Trabalha na folga
+    texto = "Folga"; // A cor lilás indica que é EXTRA
+    classesEstilo = streak ? RISK : "bg-[#EEEBFB] border-[#C9BFFF] text-[#4B3DA8]"; // Trabalha na folga
   } else if (susp) {
-    texto = "SUSP.";
-    classesEstilo = "bg-[#FFF1F2] border-[#FECDD3] text-[#E11D48] hover:bg-[#FFE4E6]"; // Suspensão
+    texto = "Susp.";
+    classesEstilo = "bg-[#FFF1F4] border-[#F6C6D2] text-[#A12850]"; // Suspensão
   } else if (off) {
-    texto = "FOLGA";
+    texto = "Folga";
     classesEstilo = peak
-      ? "bg-[#FEF2F2] border-[#DC2626] text-[#DC2626]" // Folga em dia de pico
-      : "bg-[#FFFBEB] border-[#FCD34D] text-[#B45309] hover:bg-[#FEF3C7]"; // Folga comum
+      ? WARN // Folga em dia de pico
+      : "bg-[#F2F0F8] border-[#F2F0F8] text-[#4A4566] hover:border-[#D6D0EE]"; // Folga comum
   }
 
   // Dia trabalhado (inclui EXTRA): mostra o caixa
@@ -132,9 +133,8 @@ const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp
 
   if (mural) {
     return (
-      <div data-testid={testId} className={`relative w-full h-11 flex items-center justify-center rounded-lg text-[11px] font-bold tracking-wider font-mono-data border select-none ${classesEstilo}`}>
-        {working && checkout && <CheckoutTag name={checkout} />}
-        {working && doublePay && <DoubleTag />}
+      <div data-testid={testId} className={`${CELL} flex items-center justify-center text-[12px] font-semibold ${classesEstilo} ${working && (checkout || doublePay) ? "pt-3" : ""}`}>
+        {working && <Tags checkout={checkout} doublePay={doublePay} />}
         {texto}
       </div>
     );
@@ -166,26 +166,25 @@ const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp
                 ? "Folga · clique: suspensão · shift + clique: EXTRA"
                 : "Trabalha · clique: folga")
       }
-      className={`relative w-full h-11 rounded-lg text-[11px] font-bold tracking-wider font-mono-data border transition-colors duration-200 select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[#0F172A] ${classesEstilo} ${cct ? "ring-2 ring-[#DC2626] ring-offset-1" : ""} ${locked && !absent ? "opacity-70" : ""}`}
+      className={`${CELL} text-[12px] font-semibold transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[#6D5BD0] ${classesEstilo} ${cct && !streak ? "ring-2 ring-[#F2CF6B] ring-offset-1" : ""} ${locked && !absent ? "opacity-60" : ""} ${working && (checkout || doublePay || streak) ? "pt-3" : ""}`}
     >
-      {working && checkout && <CheckoutTag name={checkout} />}
-      {working && doublePay && <DoubleTag />}
+      {working && <Tags checkout={checkout} doublePay={doublePay} streak={streak} />}
       {texto}
     </button>
   );
 };
 
 const Alert = ({ title, testId, children }) => (
-  <span data-testid={testId} title={title} className="inline-flex items-center gap-0.5 text-[9px] bg-[#FEF2F2] text-[#DC2626] border border-[#FECACA] font-bold px-1.5 py-0.5 rounded cursor-help">
+  <span data-testid={testId} title={title} className="inline-flex items-center gap-0.5 text-[9px] bg-[#FDECEC] text-[#C93C3C] border border-[#EE9A9A] font-bold px-1.5 py-0.5 rounded cursor-help">
     <AlertTriangle className="h-2.5 w-2.5" /> {children}
   </span>
 );
 
 const RoleHeader = ({ role, count, span }) => (
   <tr>
-    <td colSpan={span} className="pt-3 pb-1 sticky left-0 bg-white">
-      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8A929B]">{role}</span>
-      <span className="ml-1.5 text-[10px] text-[#B8B2A7]">{count}</span>
+    <td colSpan={span} className="pt-3 pb-1 sticky left-0 bg-[#FBFAFE]">
+      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8A85A3]">{role}</span>
+      <span className="ml-1.5 text-[10px] text-[#B9B2DA]">{count}</span>
     </td>
   </tr>
 );
@@ -208,8 +207,8 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
   const wrong = !onVacation && realOffs.length < required;
 
   return (
-    <tr data-testid="employee-row" className="rise border-t border-[#EFEBE3]" style={{ animationDelay: `${idx * 30}ms` }}>
-      <td className="py-1.5 pr-4 sticky left-0 bg-white z-10 min-w-[110px] md:min-w-[200px]">
+    <tr data-testid="employee-row" className="rise border-t border-[#EEEBFB]" style={{ animationDelay: `${idx * 30}ms` }}>
+      <td className="py-1 pr-4 sticky left-0 bg-[#FBFAFE] z-10 min-w-[110px] md:min-w-[200px]">
         <p className="font-semibold text-sm leading-tight flex items-center gap-1.5">
           {emp.name}
           {emp.status === "ferias" && <span className="text-[9px] bg-[#E2E8F0] text-[#475569] font-bold px-1.5 py-0.5 rounded">FÉRIAS</span>}
@@ -217,12 +216,11 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
           {emp.status === "falta" && <span className="text-[9px] bg-[#FFEDD5] text-[#C2410C] font-bold px-1.5 py-0.5 rounded">FALTA</span>}
           {intermittent && !mural && <span title="Intermitente: trabalha só nos dias com convocação aceita" className="text-[9px] bg-[#E0F2FE] text-[#0369A1] font-bold px-1.5 py-0.5 rounded">INT.</span>}
           {!mural && cctAlert && <Alert testId={`cct-alert-${emp.id}`} title={cctAlert}>CCT</Alert>}
-          {!mural && streakDays?.length > 0 && <Alert testId={`streak-alert-${emp.id}`} title="Mais de 6 dias seguidos sem folga">+6 DIAS</Alert>}
           {!mural && excessDays.size > 0 && <Alert title={`Mais de ${streakLimit} dias seguidos — os dias excedentes ficam fora do mural`}>+{streakLimit} DIAS</Alert>}
         </p>
       </td>
       {DAYS_SHORT.map((_, d) => (
-        <td key={d} className="p-1 min-w-[72px]">
+        <td key={d} className="p-[3px] min-w-[96px]">
           {intermittent ? (
             <ConvocationCell
               conv={convocationOf(schedule, emp.id, d)}
@@ -245,6 +243,7 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
             absent={absences.includes(d)}
             extra={extras.includes(d)}
             cct={streakDays?.includes(d) ? "Mais de 6 dias seguidos sem folga (máximo 6)" : d === 6 ? cctAlert : undefined}
+            streak={!!streakDays?.includes(d)}
             peak={peaks.includes(d)}
             shift={shiftOn(d)}
             checkout={checkoutOn(d)}
@@ -265,7 +264,7 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
             {DAYS_SHORT.filter((_, d) => acceptedOn(schedule, emp.id, d)).length} dia(s)
           </span>
         ) : (
-        <span data-testid={`row-summary-${emp.id}`} className={`inline-flex items-center gap-1 text-xs font-mono-data font-semibold ${wrong ? "text-[#DC2626]" : "text-[#575E65]"}`}>
+        <span data-testid={`row-summary-${emp.id}`} className={`inline-flex items-center gap-1 text-xs font-mono-data font-semibold ${wrong ? "text-[#C93C3C]" : "text-[#5E5880]"}`}>
           {wrong && <AlertTriangle className="h-3.5 w-3.5" />}
           {emp.status === "ferias" || vacationDays.length === 7 ? "Férias" : `${realOffs.length}/${required}`}
         </span>
@@ -283,7 +282,7 @@ const SectorTabs = ({ sectors, value, onChange }) => (
         data-testid={`sector-tab-${s === "all" ? "todos" : s}`}
         onClick={() => onChange(s)}
         className={`px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-colors duration-200 ${
-          value === s ? "bg-[#0F172A] border-[#0F172A] text-white" : "bg-white border-[#E5E1D8] text-[#575E65] hover:border-[#0F172A] hover:text-[#191C1E]"
+          value === s ? "bg-[#17142E] border-[#17142E] text-white" : "bg-white border-[#E4E0F3] text-[#5E5880] hover:border-[#17142E] hover:text-[#1B1830]"
         }`}
       >
         {s === "all" ? "Todos os setores" : s}
@@ -297,22 +296,22 @@ const DayTabs = ({ dates, peaks, value, onChange }) => (
     <button
       onClick={() => onChange(null)}
       className={`px-3 py-1 rounded-md text-xs font-semibold border transition-colors duration-200 inline-flex items-center gap-1 ${
-        value === null ? "bg-[#F2EFE8] border-[#191C1E] text-[#191C1E]" : "bg-white border-[#E5E1D8] text-[#575E65] hover:border-[#191C1E]"
+        value === null ? "bg-[#EEEBFB] border-[#1B1830] text-[#1B1830]" : "bg-white border-[#E4E0F3] text-[#5E5880] hover:border-[#1B1830]"
       }`}
     >
       <CalendarDays className="h-3.5 w-3.5" /> Semana
     </button>
-    <span className="text-[11px] text-[#8A929B] mx-1">Horários do dia:</span>
+    <span className="text-[11px] text-[#8A85A3] mx-1">Horários do dia:</span>
     {DAYS_SHORT.map((d, i) => (
       <button
         key={d}
         data-testid={`day-tab-${i}`}
         onClick={() => onChange(i)}
         className={`px-3 py-1 rounded-md text-xs font-semibold border transition-colors duration-200 inline-flex items-center gap-1 ${
-          value === i ? "bg-[#F2EFE8] border-[#191C1E] text-[#191C1E]" : "bg-white border-[#E5E1D8] text-[#575E65] hover:border-[#191C1E]"
+          value === i ? "bg-[#EEEBFB] border-[#1B1830] text-[#1B1830]" : "bg-white border-[#E4E0F3] text-[#5E5880] hover:border-[#1B1830]"
         }`}
       >
-        {peaks.includes(i) && <Flame className="h-3 w-3 text-[#DC2626]" />}
+        {peaks.includes(i) && <Flame className="h-3 w-3 text-[#B98500]" />}
         {d} <span className="font-mono-data text-[10px] opacity-70">{fmtDayMonth(dates[i])}</span>
       </button>
     ))}
@@ -321,13 +320,13 @@ const DayTabs = ({ dates, peaks, value, onChange }) => (
 
 const SectorModeToggle = ({ sector, mode, onChange }) => (
   <div className="inline-flex items-center gap-1.5">
-    <span className="text-[11px] text-[#8A929B]">Escala do setor:</span>
-    <div data-testid="sector-mode-toggle" className="inline-flex rounded-md border border-[#E5E1D8] bg-white p-0.5">
+    <span className="text-[11px] text-[#8A85A3]">Escala do setor:</span>
+    <div data-testid="sector-mode-toggle" className="inline-flex rounded-md border border-[#E4E0F3] bg-white p-0.5">
       {["6x1", "5x2"].map((m) => (
         <button
           key={m}
           onClick={() => m !== mode && onChange(sector, m)}
-          className={`px-2.5 py-0.5 rounded text-xs font-semibold font-mono-data transition-colors ${m === mode ? "bg-[#0F172A] text-white" : "text-[#575E65] hover:bg-[#F2EFE8]"}`}
+          className={`px-2.5 py-0.5 rounded text-xs font-semibold font-mono-data transition-colors ${m === mode ? "bg-[#17142E] text-white" : "text-[#5E5880] hover:bg-[#EEEBFB]"}`}
         >
           {m}
         </button>
@@ -338,16 +337,16 @@ const SectorModeToggle = ({ sector, mode, onChange }) => (
 
 const SectorHeader = ({ name, members, worksOn, peaks, mode, showCount, mural, newPage }) => (
   <tr data-testid={`sector-group-${name}`} className={mural && newPage ? "print:break-before-page" : ""}>
-    <td className="pt-5 pb-2 sticky left-0 bg-white z-10">
-      <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#0F172A]">{name}</span>
-      {!mural && <span className="ml-2 text-[11px] text-[#8A929B]">{members.length} pessoa(s) · {mode}</span>}
+    <td className="pt-5 pb-2 sticky left-0 bg-[#FBFAFE] z-10">
+      <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#17142E]">{name}</span>
+      {!mural && <span className="ml-2 text-[11px] text-[#8A85A3]">{members.length} pessoa(s) · {mode}</span>}
     </td>
     {DAYS_SHORT.map((_, d) => {
       if (!showCount) return <td key={d} />;
       const c = members.filter((e) => worksOn(e.id, d)).length;
       return (
         <td key={d} className="pt-5 pb-2 text-center">
-          <span data-testid={`sector-coverage-${name}-${d}`} className={`font-mono-data text-[11px] font-semibold ${peaks.includes(d) && c < members.length ? "text-[#DC2626]" : "text-[#8A929B]"}`}>
+          <span data-testid={`sector-coverage-${name}-${d}`} className={`font-mono-data text-[11px] font-semibold ${peaks.includes(d) && c < members.length ? "text-[#C93C3C]" : "text-[#8A85A3]"}`}>
             {c}/{members.length}
           </span>
         </td>
@@ -447,30 +446,30 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   };
 
   return (
-    <section data-testid="weekly-calendar-grid" className="print-area rounded-2xl border border-[#E5E1D8] bg-white shadow-[0_1px_0_#E5E1D8,0_12px_32px_-16px_rgba(15,23,42,0.12)]">
-      <div className="flex flex-wrap items-end justify-between gap-4 p-5 sm:p-6 border-b border-[#EFEBE3]">
+    <section data-testid="weekly-calendar-grid" className="print-area glass rounded-[26px]">
+      <div className="flex flex-wrap items-end justify-between gap-4 p-5 sm:p-6 border-b border-[#EEEBFB]">
         <div>
           {mural ? (
             <>
-              <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A929B]">Escala semanal</p>
-              <h2 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight mt-1">
+              <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A85A3]">Escala semanal</p>
+              <h2 className="font-serif-title text-4xl sm:text-5xl mt-1">
                 {activeSector === "all" ? "Todos os setores" : activeSector}
               </h2>
-              <p className="text-sm font-semibold text-[#575E65] mt-1">
+              <p className="text-sm font-semibold text-[#5E5880] mt-1">
                 {fmtLong(dates[0])} a {fmtLong(dates[6])} de {dates[6].getFullYear()}
               </p>
             </>
           ) : (
             <>
-              <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A929B]">
+              <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A85A3]">
                 Escala semanal · {[...new Set(sectors.map(modeOf))].join(" + ") || schedule.mode}
               </p>
-              <h2 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight mt-1">Quem trabalha, quem folga.</h2>
+              <h2 className="font-display text-2xl font-bold tracking-tight mt-1">Escala da semana</h2>
             </>
           )}
           <div className="mt-4 no-print"><WeekNav week={week} onChange={onWeekChange} /></div>
           {!schedule.generated_at && employees.length > 0 && (
-            <p data-testid="week-not-generated" className="no-print text-xs text-[#B45309] mt-3">Escala desta semana ainda não gerada — clique em <b>Gerar escala</b>.</p>
+            <p data-testid="week-not-generated" className="no-print text-xs text-[#7A5500] mt-3">Escala desta semana ainda não gerada — clique em <b>Gerar escala</b>.</p>
           )}
         </div>
         <div className="no-print flex flex-col items-end gap-3">
@@ -479,41 +478,40 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
           onClick={() => setMuralOn((v) => !v)}
           title="Mostra a escala como vai ser impressa: só quem trabalha na semana, sem contagens e alertas"
           className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
-            muralOn ? "bg-[#0F172A] border-[#0F172A] text-white" : "bg-white border-[#E5E1D8] text-[#575E65] hover:border-[#0F172A]"
+            muralOn ? "bg-[#17142E] border-[#17142E] text-white" : "bg-white border-[#E4E0F3] text-[#5E5880] hover:border-[#17142E]"
           }`}
         >
           <Printer className="h-3.5 w-3.5" /> Versão para o mural
         </button>
         {DAYS_SHORT.some((_, d) => pastDay(d)) && <UnlockButton />}
-        {!mural && <div className="flex flex-wrap justify-end gap-4 text-xs text-[#575E65]">
-          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#DCFCE7] border border-[#BBF7D0]" />Trabalha</span>
-          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FEF3C7] border border-[#FCD34D]" />Folga</span>
-          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FEF2F2] border border-[#DC2626]" />Folga em pico</span>
-          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FFE4E6] border border-[#FECDD3]" />Suspensão</span>
-          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FFEDD5] border border-[#FDBA74]" />Falta</span>
-          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F0F9FF] border border-[#7DD3FC]" />Convocado (intermitente)</span>
-          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F1F5F9] border border-[#CBD5E1]" />Férias</span>
-          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F0FDFA] border border-[#99F6E4]" />Atestado</span>
-          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F5F3FF] border border-[#C4B5FD]" />Extra (shift + clique na folga)</span>
+        {!mural && <div className="flex flex-wrap justify-end gap-4 text-xs text-[#5E5880]">
+          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#E3F5EC] border border-[#8FD0AE]" />Ok</span>
+          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FFF4D1] border border-[#F2CF6B]" />Atenção (pico, feriado 2×)</span>
+          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FDE2E2] border border-[#EE9A9A]" />Risco (+6 dias, falta)</span>
+          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F2F0F8] border border-[#D6D0EE]" />Folga</span>
+          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#EEEBFB] border border-[#C9BFFF]" />Extra (shift + clique na folga)</span>
+          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#E8EEF7] border border-[#B9CBE6]" />Convocado</span>
+          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#E6F2F1]" />Férias</span>
+          <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#E8EEF7]" />Atestado</span>
         </div>}
         </div>
       </div>
       {employees.length === 0 ? (
-        <div data-testid="schedule-empty" className="p-12 text-center text-[#575E65]">
-          <Users className="h-8 w-8 mx-auto mb-3 text-[#8A929B]" />
+        <div data-testid="schedule-empty" className="p-12 text-center text-[#5E5880]">
+          <Users className="h-8 w-8 mx-auto mb-3 text-[#8A85A3]" />
           Cadastre funcionários abaixo e clique em <b>Gerar escala</b>.
         </div>
       ) : (
         <>
           <SectorTabs sectors={sectors} value={activeSector} onChange={setSector} />
           {activeSector === "all" ? (
-            <p className="no-print px-5 sm:px-6 pt-2 text-[11px] text-[#8A929B]">Selecione um setor para escalar os horários de pico de cada dia.</p>
+            <p className="no-print px-5 sm:px-6 pt-2 text-[11px] text-[#8A85A3]">Selecione um setor para escalar os horários de pico de cada dia.</p>
           ) : (
             <>
               <div className="no-print px-5 sm:px-6 pt-3">
                 <SectorModeToggle sector={activeSector} mode={configuredMode(activeSector)} onChange={onSectorMode} />
                 {configuredMode(activeSector) !== modeOf(activeSector) && (
-                  <span className="ml-2 text-[11px] text-[#B45309]">Esta semana foi gerada em {modeOf(activeSector)}. Clique em Gerar escala · {activeSector} para aplicar.</span>
+                  <span className="ml-2 text-[11px] text-[#7A5500]">Esta semana foi gerada em {modeOf(activeSector)}. Clique em Gerar escala · {activeSector} para aplicar.</span>
                 )}
               </div>
               <DayTabs dates={dates} peaks={peaks} value={activeDay} onChange={setDayView} />
@@ -530,7 +528,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
             <table className="w-full border-separate border-spacing-0">
               <thead>
                 <tr>
-                  <th className="text-left text-xs font-semibold text-[#8A929B] uppercase tracking-wider pb-3 sticky left-0 bg-white z-10">Funcionário</th>
+                  <th className="text-left text-xs font-semibold text-[#8A85A3] uppercase tracking-wider pb-3 sticky left-0 bg-[#FBFAFE] z-10">Funcionário</th>
                   {DAYS_SHORT.map((d, i) => (
                     <th
                       key={d}
@@ -539,13 +537,13 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       title={activeSector !== "all" ? "Ver horários de pico deste dia" : undefined}
                       className={`pb-3 px-1 ${activeSector !== "all" ? "cursor-pointer" : ""}`}
                     >
-                      <div className={`rounded-lg py-1.5 text-xs font-bold uppercase tracking-wider ${peaks.includes(i) ? "bg-[#DC2626] text-white" : "text-[#575E65]"} ${isoDate(dates[i]) === today ? "ring-2 ring-offset-2 ring-[#0F172A]" : ""}`}>
+                      <div className={`rounded-lg py-1.5 text-xs font-bold uppercase tracking-wider ${peaks.includes(i) ? "bg-[#FFF4D1] text-[#7A5500]" : "text-[#5E5880]"} ${isoDate(dates[i]) === today ? "ring-2 ring-offset-2 ring-[#6D5BD0]" : ""}`}>
                         <span className="inline-flex items-center gap-1">{peaks.includes(i) && <Flame className="h-3 w-3" />}{lockedDay(i) && !mural && <Lock className="h-3 w-3 opacity-70" />}{d}</span>
                         <span data-testid={`header-date-${i}`} className="block font-mono-data text-[10px] font-medium opacity-80 normal-case">{fmtDayMonth(dates[i])}</span>
                         {holidayOn(i) && (
                           <span
                             title={`${holidayOn(i).name}${holidayOn(i).closed ? " · loja fechada" : " · loja aberta (pagamento em dobro)"}`}
-                            className="mt-1 mx-auto block max-w-[86px] truncate rounded bg-[#EEF2FF] px-1 text-[9px] font-semibold normal-case tracking-normal text-[#4338CA]"
+                            className={`mt-1 mx-auto block max-w-[86px] truncate rounded px-1 text-[9px] font-semibold normal-case tracking-normal ${holidayOn(i).closed ? "bg-[#E3F5EC] text-[#1D6B45]" : "bg-[#7A5500] text-[#FFF4D1]"}`}
                           >
                             {holidayOn(i).name}
                           </span>
@@ -553,7 +551,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       </div>
                     </th>
                   ))}
-                  {!mural && <th className="pb-3 text-xs font-semibold text-[#8A929B] uppercase tracking-wider">Folgas</th>}
+                  {!mural && <th className="pb-3 text-xs font-semibold text-[#8A85A3] uppercase tracking-wider">Folgas</th>}
                 </tr>
               </thead>
               <tbody>
@@ -593,12 +591,12 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                 ])}
               </tbody>
               {!mural && <tfoot>
-                <tr className="border-t-2 border-[#191C1E]">
-                  <td className="pt-4 text-xs font-bold uppercase tracking-wider sticky left-0 bg-white">
-                    Em operação{activeSector !== "all" && <span className="block text-[10px] text-[#8A929B] normal-case tracking-normal">{activeSector}</span>}
+                <tr className="border-t-2 border-[#1B1830]">
+                  <td className="pt-4 text-xs font-bold uppercase tracking-wider sticky left-0 bg-[#FBFAFE]">
+                    Em operação{activeSector !== "all" && <span className="block text-[10px] text-[#8A85A3] normal-case tracking-normal">{activeSector}</span>}
                   </td>
                   {coverage.map((c, d) => (
-                    <td key={d} className="pt-4 text-center font-mono-data text-xs font-bold text-[#191C1E]">
+                    <td key={d} className="pt-4 text-center font-mono-data text-xs font-bold text-[#1B1830]">
                       {c}/{visible.length}
                     </td>
                   ))}

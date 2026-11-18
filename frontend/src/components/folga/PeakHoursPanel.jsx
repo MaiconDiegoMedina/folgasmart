@@ -84,7 +84,7 @@ const ShiftInputs = ({ shift, fallback, onSave, minutes, breakLen }) => {
     onSave({ start, break_start: bs || null, break_end: be || null, end });
   };
 
-  const cls = "w-[78px] rounded-md border border-[#E5E1D8] bg-white px-1 py-1 text-xs font-mono-data focus:outline-none focus:ring-2 focus:ring-[#0F172A]";
+  const cls = "w-[78px] rounded-md border border-[#E4E0F3] bg-white px-1 py-1 text-xs font-mono-data focus:outline-none focus:ring-2 focus:ring-[#17142E]";
   return (
     <div className="flex items-center gap-1" onBlur={onBlur}>
       {FIELDS.map((label, i) => (
@@ -104,7 +104,7 @@ const ShiftInputs = ({ shift, fallback, onSave, minutes, breakLen }) => {
             if (i !== 0 || (e.key !== "Enter" && e.key !== "Tab")) return;
             setValues((v) => (!v[1] && !v[2] && !v[3] && v[0] ? suggestShift(v[0], minutes, breakLen) || v : v));
           }}
-          className={`${cls} ${i === 1 || i === 2 ? "bg-[#F0F9FF]" : ""} ${usingDefault ? "text-[#8A929B]" : ""}`}
+          className={`${cls} ${i === 1 || i === 2 ? "bg-[#F0F9FF]" : ""} ${usingDefault ? "text-[#8A85A3]" : ""}`}
         />
       ))}
     </div>
@@ -123,12 +123,12 @@ const quarterState = (shift, h, q) => {
 const fmtQuarter = (h, q) => `${pad(h)}:${pad(q * 15)}`;
 
 // Uma hora da grade, dividida em 4 blocos de 15 min
-const HourCell = ({ shift, h, peak, workColor = "bg-[#15803D]", lentAt }) => (
-  <div className={`h-8 rounded overflow-hidden flex gap-px ${peak ? "bg-[#FEF2F2]" : "bg-[#F2EFE8]"}`}>
+const HourCell = ({ shift, h, peak, workColor = "bg-[#1D6B45]", lentAt }) => (
+  <div className={`h-8 rounded overflow-hidden flex gap-px ${peak ? "bg-[#FDECEC]" : "bg-[#EEEBFB]"}`}>
     {[0, 1, 2, 3].map((q) => {
       const st = quarterState(shift, h, q);
       const lent = st === "work" && lentAt?.(h * 60 + q * 15 + 7);
-      const color = lent ? "bg-[#FCD34D]" : st === "work" ? workColor : st === "break" ? "bg-[#BAE6FD]" : "";
+      const color = lent ? "bg-[#F2CF6B]" : st === "work" ? workColor : st === "break" ? "bg-[#BAE6FD]" : "";
       const label = lent ? `Ajudando em ${lent}` : st === "break" ? "Intervalo" : st === "work" ? "No setor" : "Fora";
       return <div key={q} title={`${fmtQuarter(h, q)} · ${label}`} className={`flex-1 ${color}`} />;
     })}
@@ -153,7 +153,7 @@ const LoanInputs = ({ shift, onSave }) => {
   return (
     <div className="flex items-center gap-1" onBlur={onBlur}>
       <input type="time" step={300} aria-label="Ajuda de" title="Ajuda de" value={values[0]} onChange={(e) => setValues([e.target.value, values[1]])} className={cls} />
-      <span className="text-[10px] text-[#8A929B] w-[78px] text-center">até</span>
+      <span className="text-[10px] text-[#8A85A3] w-[78px] text-center">até</span>
       <input type="time" step={300} aria-label="Ajuda até" title="Ajuda até" value={values[1]} onChange={(e) => setValues([values[0], e.target.value])} className={cls} />
     </div>
   );
@@ -166,7 +166,7 @@ const ImportPreview = ({ preview, setPreview, onSave, saving }) => {
   const total = period.hours.reduce((s, h) => s + h.clients, 0);
   const peaks = peakHours(period.hours);
   return (
-    <div data-testid="hourly-import-preview" className="rounded-xl border border-[#E5E1D8] bg-[#F9F8F5] p-4 space-y-3">
+    <div data-testid="hourly-import-preview" className="rounded-xl border border-[#E4E0F3] bg-[#F3F1FA] p-4 space-y-3">
       <p className="text-sm font-bold">Relatório lido: {period.hours.length} faixas de horário</p>
       {preview.periods.length > 1 && (
         <div className="flex flex-wrap gap-2">
@@ -174,14 +174,14 @@ const ImportPreview = ({ preview, setPreview, onSave, saving }) => {
             <button
               key={p.key}
               onClick={() => setPreview({ ...preview, key: p.key, day: singleWeekday(p) ?? preview.day })}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${p.key === preview.key ? "bg-[#0F172A] border-[#0F172A] text-white" : "bg-white border-[#E5E1D8] text-[#575E65]"}`}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${p.key === preview.key ? "bg-[#17142E] border-[#17142E] text-white" : "bg-white border-[#E4E0F3] text-[#5E5880]"}`}
             >
               {p.label}
             </button>
           ))}
         </div>
       )}
-      <p className="text-xs text-[#575E65]">
+      <p className="text-xs text-[#5E5880]">
         {preview.periods.length === 1 && <>{period.label} · </>}
         {Math.round(total)} clientes · pico em {peaks.length ? peaks.map((h) => `${h}h`).join(", ") : "—"}
       </p>
@@ -190,13 +190,13 @@ const ImportPreview = ({ preview, setPreview, onSave, saving }) => {
         <select
           value={preview.day}
           onChange={(e) => setPreview({ ...preview, day: Number(e.target.value) })}
-          className="rounded-md border border-[#E5E1D8] bg-white px-2 py-1 text-xs"
+          className="rounded-md border border-[#E4E0F3] bg-white px-2 py-1 text-xs"
         >
           {DAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
         </select>
         <div className="ml-auto flex gap-2">
           <Button size="sm" variant="ghost" onClick={() => setPreview(null)}>Cancelar</Button>
-          <Button size="sm" disabled={saving} onClick={() => onSave(period, preview.day)} className="bg-[#0F172A] hover:bg-[#1E293B] text-white">
+          <Button size="sm" disabled={saving} onClick={() => onSave(period, preview.day)} className="bg-[#17142E] hover:bg-[#2A2550] text-white">
             {saving && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Salvar
           </Button>
         </div>
@@ -465,7 +465,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
         onChange={(e) => onAssign?.(id, e.target.value)}
         title={clashOf(id) || undefined}
         className={`rounded-md border px-1.5 py-1 text-xs max-w-[120px] ${
-          clashOf(id) ? "border-[#DC2626] bg-[#FEF2F2] text-[#DC2626]" : assign[id] ? "border-[#0F172A] bg-white font-semibold" : "border-[#E5E1D8] bg-white text-[#8A929B]"
+          clashOf(id) ? "border-[#C93C3C] bg-[#FDECEC] text-[#C93C3C]" : assign[id] ? "border-[#17142E] bg-white font-semibold" : "border-[#E4E0F3] bg-white text-[#8A85A3]"
         }`}
       >
         <option value="">—</option>
@@ -475,10 +475,10 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
   );
 
   const empRow = (emp) => (
-                <tr key={emp.id} className="border-t border-[#EFEBE3]">
+                <tr key={emp.id} className="border-t border-[#EEEBFB]">
                   <td className="py-1 pr-3 sticky left-0 bg-white z-10 min-w-[120px]">
                     <p className="font-semibold text-sm leading-tight flex items-center gap-1.5">
-                      {isTrial(emp) && <span title={`Em teste (${emp.role})`} className="text-[9px] bg-[#FEF3C7] text-[#B45309] font-bold px-1.5 py-0.5 rounded">TESTE</span>}
+                      {isTrial(emp) && <span title={`Em teste (${emp.role})`} className="text-[9px] bg-[#FFF4D1] text-[#7A5500] font-bold px-1.5 py-0.5 rounded">TESTE</span>}
                       {emp.name}
                       {defaultOf(emp) && shifts[emp.id] && (
                         <button onClick={() => saveShift(emp.id, null)} className="no-print text-[10px] font-semibold text-[#C2410C] hover:underline" title="Horário ajustado neste dia · clique para voltar ao horário da jornada">
@@ -487,11 +487,11 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                       )}
                     </p>
                     {lentOut(emp).map((l) => (
-                      <p key={l.to} className="text-[10px] font-semibold text-[#B45309]">ajuda em {l.to} {l.shift[0]}–{l.shift[1]}</p>
+                      <p key={l.to} className="text-[10px] font-semibold text-[#7A5500]">ajuda em {l.to} {l.shift[0]}–{l.shift[1]}</p>
                     ))}
                   </td>
                   <td className="px-2 no-print"><ShiftInputs shift={shifts[emp.id]} fallback={defaultOf(emp)} minutes={minutesOf(emp)} breakLen={breakFor(wlOf(emp), minutesOf(emp))} onSave={(times) => saveShift(emp.id, times)} /></td>
-                  <td className="px-2 text-center font-mono-data text-xs font-semibold text-[#191C1E] whitespace-nowrap">{fmtHours(dayMinutes(shiftOf(emp)))}</td>
+                  <td className="px-2 text-center font-mono-data text-xs font-semibold text-[#1B1830] whitespace-nowrap">{fmtHours(dayMinutes(shiftOf(emp)))}</td>
                   {showCheckouts && (isOperator(emp) ? checkoutCell(emp.id, emp.name) : <td />)}
                   {hours.map((h) => (
                     <td key={h} className="p-0.5">
@@ -507,11 +507,11 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
   );
 
   const helperRow = ({ emp, shift, key, offClock }) => (
-                <tr key={key} className="border-t border-[#EFEBE3]">
+                <tr key={key} className="border-t border-[#EEEBFB]">
                   <td className="py-1.5 pr-3 sticky left-0 bg-white z-10 min-w-[120px]">
                     <p className="font-semibold text-sm leading-tight flex items-center gap-1">
                       {emp.name}
-                      <button onClick={() => { saveShift(key, null); if (assign[key]) onAssign?.(key, ""); }} className="no-print p-0.5 rounded text-[#8A929B] hover:text-[#DC2626]" aria-label={`Tirar ${emp.name} da ajuda`}>
+                      <button onClick={() => { saveShift(key, null); if (assign[key]) onAssign?.(key, ""); }} className="no-print p-0.5 rounded text-[#8A85A3] hover:text-[#C93C3C]" aria-label={`Tirar ${emp.name} da ajuda`}>
                         <X className="h-3 w-3" />
                       </button>
                     </p>
@@ -519,7 +519,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                       <p className="text-[10px] font-semibold text-[#C2410C]" title="Depois do turno, sem bater ponto. Não entra no total de horas nem no mural.">
                         após o turno · fora do ponto
                         {shiftOf(emp) && shiftOf(emp)[shiftOf(emp).length - 1] > shift[0] && (
-                          <span className="block text-[#DC2626]">começa antes do fim do turno ({shiftOf(emp)[shiftOf(emp).length - 1]})</span>
+                          <span className="block text-[#C93C3C]">começa antes do fim do turno ({shiftOf(emp)[shiftOf(emp).length - 1]})</span>
                         )}
                       </p>
                     ) : (
@@ -546,19 +546,19 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
     <div data-testid="peak-hours-panel" className="p-3 sm:p-5 space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A929B]">Horários de pico · {sector}</p>
+          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A85A3]">Horários de pico · {sector}</p>
           <h3 className="font-display text-2xl font-bold tracking-tight mt-1">{DAYS[day]}, {fmtDayMonth(date)}</h3>
-          <p className="text-xs text-[#575E65] mt-1">
+          <p className="text-xs text-[#5E5880] mt-1">
             {report ? <>Movimento da loja: <b>{report.label || "relatório importado"}</b></> : "Nenhum relatório de horários para este dia da semana."}
           </p>
         </div>
         <div className="flex gap-2 no-print">
           {report && (
-            <Button size="sm" variant="ghost" onClick={removeReport} className="hover:bg-[#F2EFE8]">
+            <Button size="sm" variant="ghost" onClick={removeReport} className="hover:bg-[#EEEBFB]">
               <Trash2 className="h-4 w-4 mr-1" /> Remover relatório
             </Button>
           )}
-          <Button data-testid="btn-import-hourly" size="sm" onClick={() => fileRef.current.click()} className="bg-[#0F172A] hover:bg-[#1E293B] text-white">
+          <Button data-testid="btn-import-hourly" size="sm" onClick={() => fileRef.current.click()} className="bg-[#17142E] hover:bg-[#2A2550] text-white">
             <FileUp className="h-4 w-4 mr-1" /> Importar relatório
           </Button>
           <input ref={fileRef} type="file" accept=".csv,.txt,text/csv,text/plain" className="hidden" onChange={(e) => onFile(e.target.files[0])} />
@@ -572,7 +572,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
         </p>
       )}
       {locked && (
-        <p className="no-print text-xs text-[#B45309] bg-[#FFFBEB] border border-[#FCD34D] rounded-lg px-3 py-2">
+        <p className="no-print text-xs text-[#7A5500] bg-[#FFF9E6] border border-[#F2CF6B] rounded-lg px-3 py-2">
           Este dia já passou: os horários estão bloqueados. Para alterar, desbloqueie com a senha do administrador.
         </p>
       )}
@@ -583,45 +583,45 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
         <div className="h-56 -ml-4">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={chartData}>
-              <CartesianGrid vertical={false} stroke="#EFEBE3" />
-              <XAxis dataKey="hora" tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "#575E65" }} />
-              <YAxis yAxisId="c" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#8A929B" }} width={40} />
-              <YAxis yAxisId="e" orientation="right" allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#8A929B" }} width={28} />
-              <Tooltip cursor={{ fill: "#F2EFE8" }} formatter={(v, name) => (name === "clientes" ? [`${v}`, "Clientes"] : [`${v}`, `Equipe ${sector}`])} />
+              <CartesianGrid vertical={false} stroke="#EEEBFB" />
+              <XAxis dataKey="hora" tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "#5E5880" }} />
+              <YAxis yAxisId="c" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#8A85A3" }} width={40} />
+              <YAxis yAxisId="e" orientation="right" allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#8A85A3" }} width={28} />
+              <Tooltip cursor={{ fill: "#EEEBFB" }} formatter={(v, name) => (name === "clientes" ? [`${v}`, "Clientes"] : [`${v}`, `Equipe ${sector}`])} />
               <Bar yAxisId="c" dataKey="clientes" radius={[6, 6, 0, 0]}>
-                {chartData.map((d) => <Cell key={d.hora} fill={d.peak ? "#DC2626" : "#CBD5E1"} />)}
+                {chartData.map((d) => <Cell key={d.hora} fill={d.peak ? "#C93C3C" : "#CBD5E1"} />)}
               </Bar>
-              <Line yAxisId="e" type="stepAfter" dataKey="equipe" stroke="#0F172A" strokeWidth={2} dot={{ r: 3 }} />
+              <Line yAxisId="e" type="stepAfter" dataKey="equipe" stroke="#17142E" strokeWidth={2} dot={{ r: 3 }} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
       ) : (
         !preview && (
-          <div className="rounded-xl border border-dashed border-[#D1CBBF] p-6 text-center text-sm text-[#575E65]">
-            <Clock className="h-6 w-6 mx-auto mb-2 text-[#8A929B]" />
+          <div className="rounded-xl border border-dashed border-[#D6D0EE] p-6 text-center text-sm text-[#5E5880]">
+            <Clock className="h-6 w-6 mx-auto mb-2 text-[#8A85A3]" />
             Movimento de Vendas por faixa de Horário
           </div>
         )
       )}
 
       {working.length === 0 && helpers.length === 0 && candidates.length === 0 && offClockCandidates.length === 0 ? (
-        <p className="text-sm text-[#575E65]">Ninguém do setor {sector} trabalha neste dia.</p>
+        <p className="text-sm text-[#5E5880]">Ninguém do setor {sector} trabalha neste dia.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full border-separate border-spacing-0">
             <thead>
               <tr>
-                <th className="text-left text-xs font-semibold text-[#8A929B] uppercase tracking-wider pb-2 sticky left-0 bg-white z-10">Funcionário</th>
-                <th className="text-left text-[10px] font-semibold text-[#8A929B] uppercase tracking-wider pb-2 px-2 no-print">
+                <th className="text-left text-xs font-semibold text-[#8A85A3] uppercase tracking-wider pb-2 sticky left-0 bg-white z-10">Funcionário</th>
+                <th className="text-left text-[10px] font-semibold text-[#8A85A3] uppercase tracking-wider pb-2 px-2 no-print">
                   <div className="flex gap-1">
                     {["Entrada", "Saída int.", "Volta int.", "Saída"].map((t) => <span key={t} className="w-[78px]">{t}</span>)}
                   </div>
                 </th>
-                <th className="text-[10px] font-semibold text-[#8A929B] uppercase tracking-wider pb-2 px-2" title="Horas trabalhadas no dia (sem o intervalo)">Total</th>
-                {showCheckouts && <th className="text-left text-[10px] font-semibold text-[#8A929B] uppercase tracking-wider pb-2 px-2">Caixa</th>}
+                <th className="text-[10px] font-semibold text-[#8A85A3] uppercase tracking-wider pb-2 px-2" title="Horas trabalhadas no dia (sem o intervalo)">Total</th>
+                {showCheckouts && <th className="text-left text-[10px] font-semibold text-[#8A85A3] uppercase tracking-wider pb-2 px-2">Caixa</th>}
                 {hours.map((h) => (
                   <th key={h} className="pb-2 px-0.5 min-w-[38px]">
-                    <div className={`rounded-md py-1 text-[11px] font-bold font-mono-data ${peaks.includes(h) ? "bg-[#DC2626] text-white" : "text-[#575E65]"}`}>
+                    <div className={`rounded-md py-1 text-[11px] font-bold font-mono-data ${peaks.includes(h) ? "bg-[#C93C3C] text-white" : "text-[#5E5880]"}`}>
                       <span className="inline-flex items-center gap-0.5">{peaks.includes(h) && <Flame className="h-2.5 w-2.5" />}{pad(h)}</span>
                     </div>
                   </th>
@@ -632,8 +632,8 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
               {rowGroups.flatMap((rg, gi) => [
                 <tr key={`r-${gi}-${rg.role}`}>
                   <td colSpan={3 + extraCols + hours.length} className="pt-3 pb-1 sticky left-0 bg-white">
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8A929B]">{rg.role}</span>
-                    <span className="ml-1.5 text-[10px] text-[#B8B2A7]">{rg.items.length}</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8A85A3]">{rg.role}</span>
+                    <span className="ml-1.5 text-[10px] text-[#B9B2DA]">{rg.items.length}</span>
                   </td>
                 </tr>,
                 ...rg.items.map((it) => (it.kind === "emp" ? empRow(it.emp) : helperRow(it))),
@@ -674,12 +674,12 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
             <tfoot>
               <tr>
                 <td colSpan={2} className="pt-3 text-xs font-bold uppercase tracking-wider sticky left-0 bg-white">Na loja</td>
-                <td className="pt-3 px-2 text-center font-mono-data text-xs font-bold text-[#191C1E] whitespace-nowrap" title="Soma das horas do dia">
+                <td className="pt-3 px-2 text-center font-mono-data text-xs font-bold text-[#1B1830] whitespace-nowrap" title="Soma das horas do dia">
                   {fmtHours(totalMinutes)}
                 </td>
                 {showCheckouts && <td />}
                 {coverage.map((c, i) => (
-                  <td key={hours[i]} className={`pt-3 text-center font-mono-data text-xs font-bold ${understaffed(i) ? "text-[#DC2626]" : "text-[#191C1E]"}`}>
+                  <td key={hours[i]} className={`pt-3 text-center font-mono-data text-xs font-bold ${understaffed(i) ? "text-[#C93C3C]" : "text-[#1B1830]"}`}>
                     {understaffed(i) && <AlertTriangle className="h-3 w-3 mx-auto" />}
                     {c}
                   </td>
@@ -687,11 +687,11 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
               </tr>
               {report && (
                 <tr>
-                  <td colSpan={2} className="pt-1 text-[10px] text-[#8A929B] sticky left-0 bg-white">Clientes por pessoa</td>
+                  <td colSpan={2} className="pt-1 text-[10px] text-[#8A85A3] sticky left-0 bg-white">Clientes por pessoa</td>
                   <td />
                   {showCheckouts && <td />}
                   {coverage.map((c, i) => (
-                    <td key={hours[i]} className="pt-1 text-center font-mono-data text-[10px] text-[#8A929B]">
+                    <td key={hours[i]} className="pt-1 text-center font-mono-data text-[10px] text-[#8A85A3]">
                       {c && clientsAt(hours[i]) ? Math.round(clientsAt(hours[i]) / c) : "–"}
                     </td>
                   ))}
@@ -699,21 +699,21 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
               )}
             </tfoot>
           </table>
-          <div className="flex gap-4 text-[11px] text-[#575E65] mt-3">
-            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#15803D]" />No setor</span>
+          <div className="flex gap-4 text-[11px] text-[#5E5880] mt-3">
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#1D6B45]" />No setor</span>
             <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#BAE6FD]" />Intervalo</span>
             <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#8B5CF6]" />Ajuda de outro setor</span>
             <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#EA580C]" />Após o turno (fora do ponto)</span>
-            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FCD34D]" />Ajudando em outro setor</span>
-            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FEF2F2] border border-[#FECACA]" />Pico sem a pessoa</span>
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#F2CF6B]" />Ajudando em outro setor</span>
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#FDECEC] border border-[#EE9A9A]" />Pico sem a pessoa</span>
           </div>
           {coverage.some((_, i) => understaffed(i)) && (
-            <p className="text-xs text-[#DC2626] mt-3 flex items-center gap-1">
+            <p className="text-xs text-[#C93C3C] mt-3 flex items-center gap-1">
               <AlertTriangle className="h-3.5 w-3.5" /> Horários de pico com poucos funcionários para o movimento. Ajuste os turnos.
             </p>
           )}
           {clashes.map((c) => (
-            <p key={`${c.checkout}-${c.from}`} className="text-xs text-[#DC2626] mt-2 flex items-center gap-1">
+            <p key={`${c.checkout}-${c.from}`} className="text-xs text-[#C93C3C] mt-2 flex items-center gap-1">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Caixa {c.checkout}: {c.ids.map(nameOf).join(" e ")} ao mesmo tempo das {c.from} às {c.to}.
             </p>
           ))}
@@ -727,7 +727,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
                   <li key={r.emp.id} className="text-xs text-[#7C2D12]">
                     <span className="font-semibold">{r.emp.name}</span>: {fmtHours(r.off)} fora do ponto hoje · {fmtHours(r.total)} trabalhadas no dia · {fmtHours(r.weekOff)} fora do ponto na semana
                     {r.flags.map((f) => (
-                      <span key={f} className="flex items-start gap-1 text-[#DC2626] mt-0.5">
+                      <span key={f} className="flex items-start gap-1 text-[#C93C3C] mt-0.5">
                         <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" /> {f}
                       </span>
                     ))}
@@ -745,7 +745,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
       )}
 
       {away.length > 0 && (
-        <p className="text-xs text-[#8A929B]">Fora neste dia (folga, férias, suspensão ou falta): {away.map((e) => e.name).join(", ")}</p>
+        <p className="text-xs text-[#8A85A3]">Fora neste dia (folga, férias, suspensão ou falta): {away.map((e) => e.name).join(", ")}</p>
       )}
     </div>
   );

@@ -32,7 +32,7 @@ export const UnlockButton = () => {
       data-testid="btn-lock"
       onClick={lockAdmin}
       title="Bloquear de novo os dias que já passaram"
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-[#FCD34D] bg-[#FFFBEB] text-[#B45309] hover:border-[#B45309]"
+      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-[#F2CF6B] bg-[#FFF9E6] text-[#7A5500] hover:border-[#7A5500]"
     >
       <LockOpen className="h-3.5 w-3.5" /> Desbloqueado até {fmtTime(until)} · bloquear
     </button>
@@ -41,7 +41,7 @@ export const UnlockButton = () => {
       data-testid="btn-unlock"
       onClick={openUnlock}
       title="Dias que já passaram só aceitam falta e atestado. Para outras alterações, use a senha do administrador."
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-[#E5E1D8] bg-white text-[#575E65] hover:border-[#0F172A]"
+      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-[#E4E0F3] bg-white text-[#5E5880] hover:border-[#17142E]"
     >
       <Lock className="h-3.5 w-3.5" /> Dias passados bloqueados
     </button>
@@ -91,11 +91,11 @@ export const UnlockDialog = () => {
             placeholder="Senha do administrador"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-md border border-[#E5E1D8] bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F172A]"
+            className="w-full rounded-md border border-[#E4E0F3] bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#17142E]"
           />
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Cancelar</Button>
-            <Button type="submit" disabled={busy || !password} className="bg-[#0F172A] hover:bg-[#1E293B] text-white">
+            <Button type="submit" disabled={busy || !password} className="bg-[#17142E] hover:bg-[#2A2550] text-white">
               {busy && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Desbloquear
             </Button>
           </DialogFooter>

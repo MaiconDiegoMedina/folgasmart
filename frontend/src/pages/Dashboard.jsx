@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { http, errMsg, isoDate, mondayOf } from "@/lib/api";
-import { Header } from "@/components/folga/Header";
+import { Header, PageTitle } from "@/components/folga/Header";
+import { AppRail, TABS } from "@/components/folga/AppRail";
+import { HomePanel } from "@/components/folga/HomePanel";
+import { CheckoutsBoard } from "@/components/folga/CheckoutsBoard";
+import { WeekNav } from "@/components/folga/WeekNav";
 import { MovementPanel } from "@/components/folga/MovementPanel";
 import { EmployeesPanel } from "@/components/folga/EmployeesPanel";
 import { WorkloadsPanel } from "@/components/folga/WorkloadsPanel";
@@ -11,8 +15,24 @@ import { ScheduleGrid } from "@/components/folga/ScheduleGrid";
 import { UnlockDialog } from "@/components/folga/UnlockDialog";
 import { useAuth } from "@/components/LoginGate";
 
+const TAB_KEY = "escalasmart.tab";
+const readTab = () => {
+  try {
+    const t = localStorage.getItem(TAB_KEY);
+    return TABS.some((x) => x.id === t) ? t : "escala";
+  } catch {
+    return "escala";
+  }
+};
+
 export default function Dashboard() {
   const { logout } = useAuth();
+  const [tab, setTabState] = useState(readTab);
+  const setTab = (t) => {
+    setTabState(t);
+    try { localStorage.setItem(TAB_KEY, t); } catch { /* sem armazenamento: só não lembra a aba */ }
+    window.scrollTo({ top: 0 });
+  };
   const [employees, setEmployees] = useState([]);
   const [movement, setMovement] = useState(null);
   const [week, setWeek] = useState(() => isoDate(mondayOf(new Date())));
@@ -86,19 +106,53 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="grain min-h-screen bg-[#F9F8F5] text-[#191C1E]">
-      <Header onLogout={logout} employees={scheduled} movement={movement} schedule={schedule} generating={generating} onGenerate={generate} generateSector={activeSector} />
-      <main className="relative z-10 mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        <UnlockDialog />
-        <ScheduleGrid employees={scheduled} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} workloads={workloads} checkouts={checkouts} sector={sector} onSectorChange={setSector} />
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 no-print">
-          <div className="lg:col-span-2"><MovementPanel movement={movement} onChange={setMovement} /></div>
-          <div className="lg:col-span-3"><EmployeesPanel employees={employees} workloads={workloads} vacations={vacations} onChange={load} /></div>
-        </div>
-        <div className="no-print"><WorkloadsPanel workloads={workloads} onChange={load} /></div>
-        <div className="no-print"><CheckoutsPanel checkouts={checkouts} onChange={load} /></div>
-        <div className="no-print"><HolidaysPanel onChange={load} /></div>
-      </main>
+    <div className="relative min-h-screen overflow-hidden bg-[#F3F1FA] text-[#1B1830]">
+      <div className="blob no-print" style={{ width: 520, height: 520, background: "#C9BFFF", top: -200, left: "38%" }} />
+      <div className="blob no-print" style={{ width: 420, height: 420, background: "#FFD9E8", bottom: -160, right: -120 }} />
+      <div className="relative z-10 flex gap-6 p-3.5 pb-28 sm:p-6 md:pb-6">
+        <AppRail tab={tab} onTab={setTab} onLogout={logout} />
+        <main className="min-w-0 flex-1 space-y-6">
+          <UnlockDialog />
+          {tab === "inicio" && <HomePanel employees={scheduled} schedule={schedule} movement={movement} week={week} onTab={setTab} />}
+          {tab === "escala" && (
+            <>
+              <Header employees={scheduled} movement={movement} schedule={schedule} generating={generating} onGenerate={generate} generateSector={activeSector} />
+              <ScheduleGrid employees={scheduled} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} workloads={workloads} checkouts={checkouts} sector={sector} onSectorChange={setSector} />
+            </>
+          )}
+          {tab === "funcionarios" && (
+            <>
+              <PageTitle eyebrow={`${employees.length} cadastrados · ${scheduled.length} na escala`}>Quem faz parte <em>da equipe</em></PageTitle>
+              <EmployeesPanel employees={employees} workloads={workloads} vacations={vacations} onChange={load} />
+            </>
+          )}
+          {tab === "jornadas" && (
+            <>
+              <PageTitle eyebrow={`${workloads.length} jornadas cadastradas`}>Jornadas e <em>horários do ponto</em></PageTitle>
+              <WorkloadsPanel workloads={workloads} onChange={load} />
+            </>
+          )}
+          {tab === "movimento" && (
+            <>
+              <PageTitle eyebrow="Define os dias de pico usados na geração da escala">Movimento <em>de clientes</em></PageTitle>
+              <MovementPanel movement={movement} onChange={setMovement} />
+            </>
+          )}
+          {tab === "caixas" && (
+            <>
+              <PageTitle eyebrow="Frente de Caixa" actions={<WeekNav week={week} onChange={setWeek} />}>Quem fica em <em>cada caixa</em></PageTitle>
+              <CheckoutsBoard employees={scheduled} schedule={schedule} week={week} workloads={workloads} sectorModes={sectorModes} checkouts={checkouts} />
+              <CheckoutsPanel checkouts={checkouts} onChange={load} />
+            </>
+          )}
+          {tab === "feriados" && (
+            <>
+              <PageTitle eyebrow="Loja fechada ou aberta com pagamento em dobro">Feriados <em>do ano</em></PageTitle>
+              <HolidaysPanel onChange={load} />
+            </>
+          )}
+        </main>
+      </div>
     </div>
   );
 }

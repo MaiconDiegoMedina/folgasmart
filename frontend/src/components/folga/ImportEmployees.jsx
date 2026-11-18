@@ -13,7 +13,7 @@ const FIELDS = [
   { key: "workload", label: "Jornada", words: ["jornada", "horario", "escala"] },
 ];
 
-const selectCls = "w-full rounded-md border border-[#E5E1D8] bg-white px-2 py-1 text-xs";
+const selectCls = "w-full rounded-md border border-[#E4E0F3] bg-white px-2 py-1 text-xs";
 
 export const ImportEmployees = ({ workloads, onDone }) => {
   const fileRef = useRef(null);
@@ -80,11 +80,11 @@ export const ImportEmployees = ({ workloads, onDone }) => {
       <input ref={fileRef} type="file" accept=".csv,.txt,text/csv" className="hidden" onChange={(e) => onFile(e.target.files[0])} />
 
       {data && (
-        <div data-testid="import-employees-preview" className="basis-full mt-3 rounded-xl border border-[#E5E1D8] bg-[#F9F8F5] p-4 space-y-3">
+        <div data-testid="import-employees-preview" className="basis-full mt-3 rounded-xl border border-[#E4E0F3] bg-[#F3F1FA] p-4 space-y-3">
           <p className="text-sm font-bold">Arquivo com {data.rows.length} linha(s). Indique de qual coluna vem cada informação:</p>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
             {FIELDS.map((f) => (
-              <label key={f.key} className="text-[11px] font-semibold text-[#575E65] space-y-1">
+              <label key={f.key} className="text-[11px] font-semibold text-[#5E5880] space-y-1">
                 <span>{f.label}{f.required && " *"}</span>
                 <select
                   value={data.map[f.key]}
@@ -100,7 +100,7 @@ export const ImportEmployees = ({ workloads, onDone }) => {
           {(data.map.role < 0 || data.map.sector < 0) && (
             <div className="grid grid-cols-2 gap-2">
               {["role", "sector"].filter((k) => data.map[k] < 0).map((k) => (
-                <label key={k} className="text-[11px] font-semibold text-[#575E65] space-y-1">
+                <label key={k} className="text-[11px] font-semibold text-[#5E5880] space-y-1">
                   <span>{k === "role" ? "Cargo" : "Setor"} para todos</span>
                   <input
                     value={data.defaults[k]}
@@ -111,7 +111,7 @@ export const ImportEmployees = ({ workloads, onDone }) => {
               ))}
             </div>
           )}
-          <div className="text-xs text-[#575E65]">
+          <div className="text-xs text-[#5E5880]">
             <p className="font-semibold mb-1">Prévia:</p>
             <ul className="space-y-0.5">
               {preview.slice(0, 5).map((e, i) => (
@@ -126,7 +126,7 @@ export const ImportEmployees = ({ workloads, onDone }) => {
           </div>
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={() => setData(null)}>Cancelar</Button>
-            <Button size="sm" disabled={busy || !preview.length} onClick={submit} className="bg-[#0F172A] hover:bg-[#1E293B] text-white">
+            <Button size="sm" disabled={busy || !preview.length} onClick={submit} className="bg-[#17142E] hover:bg-[#2A2550] text-white">
               {busy && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Importar {preview.length} funcionário(s)
             </Button>
           </div>

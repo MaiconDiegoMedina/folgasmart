@@ -1,8 +1,20 @@
-@import url("https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@500,700,800&display=swap");
-@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@500;600;700&display=swap");
 
-.font-display { font-family: "Cabinet Grotesk", "Plus Jakarta Sans", sans-serif; }
-.font-mono-data { font-family: "JetBrains Mono", monospace; }
+body, .App { font-family: Inter, system-ui, sans-serif; background: #F3F1FA; color: #1B1830; }
+.font-display { font-family: "Space Grotesk", Inter, sans-serif; letter-spacing: -0.01em; }
+.font-serif-title { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; letter-spacing: -0.5px; }
+.font-serif-title em { color: #5B4BC4; }
+.font-mono-data { font-family: "Space Grotesk", Inter, sans-serif; font-variant-numeric: tabular-nums; }
+
+/* Cartões de vidro do novo visual */
+.glass {
+  background: rgba(255, 255, 255, 0.74);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 1px 2px rgba(27, 24, 48, 0.04), 0 18px 40px -20px rgba(70, 50, 160, 0.18);
+}
+.blob { position: fixed; border-radius: 50%; filter: blur(90px); opacity: 0.5; pointer-events: none; z-index: 0; }
 
 .grain::before {
   content: "";
@@ -31,4 +43,6 @@
   .no-print { display: none !important; }
   .print-area { box-shadow: none !important; border: none !important; }
   .grain::before { display: none; }
+  .blob { display: none; }
+  .glass { background: #fff !important; backdrop-filter: none !important; box-shadow: none !important; }
 }

@@ -35,7 +35,7 @@ const TimeRow = ({ label, fields, onChange, extra }) => {
   const t = fromFields(fields);
   const ok = !dayError(fields, label);
   return (
-    <tr className="border-t border-[#EFEBE3]">
+    <tr className="border-t border-[#EEEBFB]">
       <td className="py-1.5 pr-3 text-xs font-semibold whitespace-nowrap">{label}</td>
       {fields.map((v, i) => (
         <td key={i} className="px-1">
@@ -45,11 +45,11 @@ const TimeRow = ({ label, fields, onChange, extra }) => {
             aria-label={`${FIELDS[i]} ${label}`}
             value={v}
             onChange={(e) => onChange(fields.map((x, j) => (j === i ? e.target.value : x)))}
-            className={`w-[84px] rounded-md border border-[#E5E1D8] px-1 py-1 text-xs font-mono-data focus:outline-none focus:ring-2 focus:ring-[#0F172A] ${i === 1 || i === 2 ? "bg-[#F0F9FF]" : "bg-white"}`}
+            className={`w-[84px] rounded-md border border-[#E4E0F3] px-1 py-1 text-xs font-mono-data focus:outline-none focus:ring-2 focus:ring-[#17142E] ${i === 1 || i === 2 ? "bg-[#F0F9FF]" : "bg-white"}`}
           />
         </td>
       ))}
-      <td className="px-2 text-xs font-mono-data text-[#575E65] whitespace-nowrap">{t && ok ? fmtMinutes(dayMinutes(t)) : t ? "?" : "folga"}</td>
+      <td className="px-2 text-xs font-mono-data text-[#5E5880] whitespace-nowrap">{t && ok ? fmtMinutes(dayMinutes(t)) : t ? "?" : "folga"}</td>
       <td className="pl-1">{extra}</td>
     </tr>
   );
@@ -82,15 +82,15 @@ const Editor = ({ initial, onCancel, onSaved }) => {
   };
 
   return (
-    <div data-testid="workload-editor" className="rounded-xl border border-[#E5E1D8] bg-[#F9F8F5] p-4 space-y-3">
+    <div data-testid="workload-editor" className="rounded-xl border border-[#E4E0F3] bg-[#F3F1FA] p-4 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <Input placeholder="Nome da jornada (ex.: 8h seg–sex + 4h sáb)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="h-9 max-w-sm bg-white" />
-        <span className="text-xs text-[#575E65]">Total na semana: <b className="font-mono-data">{fmtMinutes(total)}</b></span>
+        <span className="text-xs text-[#5E5880]">Total na semana: <b className="font-mono-data">{fmtMinutes(total)}</b></span>
       </div>
       <div className="overflow-x-auto">
         <table className="text-sm">
           <thead>
-            <tr className="text-[10px] uppercase tracking-wider text-[#8A929B]">
+            <tr className="text-[10px] uppercase tracking-wider text-[#8A85A3]">
               <th />
               {FIELDS.map((f) => <th key={f} className="text-left font-semibold pb-1 px-1">{f}</th>)}
               <th className="text-left font-semibold pb-1 px-2">Horas</th>
@@ -105,7 +105,7 @@ const Editor = ({ initial, onCancel, onSaved }) => {
                 fields={f}
                 onChange={(v) => setDay(i, v)}
                 extra={i === 0 && (
-                  <button type="button" onClick={copyMonday} title="Copiar o horário de segunda para terça a sexta" className="p-1.5 rounded-lg text-[#8A929B] hover:bg-white hover:text-[#0F172A]">
+                  <button type="button" onClick={copyMonday} title="Copiar o horário de segunda para terça a sexta" className="p-1.5 rounded-lg text-[#8A85A3] hover:bg-white hover:text-[#17142E]">
                     <Copy className="h-3.5 w-3.5" />
                   </button>
                 )}
@@ -115,12 +115,12 @@ const Editor = ({ initial, onCancel, onSaved }) => {
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-[#575E65]">
+      <p className="text-xs text-[#5E5880]">
         Use os horários do cartão ponto. Deixe o dia em branco quando não há trabalho nele. "No 5x2" é o horário de cada dia trabalhado quando o setor está em 5x2.
       </p>
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="ghost" onClick={onCancel}>Cancelar</Button>
-        <Button size="sm" disabled={busy} onClick={save} className="bg-[#0F172A] hover:bg-[#1E293B] text-white">
+        <Button size="sm" disabled={busy} onClick={save} className="bg-[#17142E] hover:bg-[#2A2550] text-white">
           {busy && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Salvar jornada
         </Button>
       </div>
@@ -130,7 +130,7 @@ const Editor = ({ initial, onCancel, onSaved }) => {
 
 const Span = ({ t }) =>
   !t ? (
-    <span className="text-[#B8B2A7]">—</span>
+    <span className="text-[#B9B2DA]">—</span>
   ) : (
     <>
       <span className="block">{t[0]}–{t[t.length - 1]}</span>
@@ -155,14 +155,14 @@ export const WorkloadsPanel = ({ workloads, onChange }) => {
   };
 
   return (
-    <section data-testid="workloads-panel" className="rounded-2xl border border-[#E5E1D8] bg-white p-5 sm:p-6">
+    <section data-testid="workloads-panel" className="glass rounded-[26px] p-5 sm:p-6">
       <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
         <div>
-          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A929B]">Jornadas</p>
+          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A85A3]">Jornadas</p>
           <h3 className="font-display text-2xl font-bold tracking-tight mt-1">Horários do ponto</h3>
         </div>
         {!editing && (
-          <Button size="sm" onClick={() => setEditing({ ...NEW_FORM })} className="bg-[#0F172A] hover:bg-[#1E293B] text-white">
+          <Button size="sm" onClick={() => setEditing({ ...NEW_FORM })} className="bg-[#17142E] hover:bg-[#2A2550] text-white">
             <Plus className="h-4 w-4 mr-1" /> Nova jornada
           </Button>
         )}
@@ -177,7 +177,7 @@ export const WorkloadsPanel = ({ workloads, onChange }) => {
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-[11px] uppercase tracking-wider text-[#8A929B]">
+            <tr className="text-[11px] uppercase tracking-wider text-[#8A85A3]">
               <th className="text-left font-semibold pb-2 pr-3">Jornada</th>
               {DAYS_SHORT.map((d) => <th key={d} className="font-semibold pb-2 px-1 min-w-[84px]">{d}</th>)}
               <th className="font-semibold pb-2 px-1" title="Horário de cada dia trabalhado quando o setor está em 5x2">No 5x2</th>
@@ -186,23 +186,23 @@ export const WorkloadsPanel = ({ workloads, onChange }) => {
           </thead>
           <tbody>
             {workloads.map((w) => (
-              <tr key={w.id} className="border-t border-[#EFEBE3] align-top">
+              <tr key={w.id} className="border-t border-[#EEEBFB] align-top">
                 <td className="py-2 pr-3">
                   <p className="font-semibold">{w.name}</p>
-                  <p className="text-[11px] text-[#8A929B]">{fmtMinutes(w.minutes.reduce((s, m) => s + m, 0))} na semana</p>
+                  <p className="text-[11px] text-[#8A85A3]">{fmtMinutes(w.minutes.reduce((s, m) => s + m, 0))} na semana</p>
                   {!w.times && <p className="text-[11px] text-[#C2410C]">Sem horário do ponto — edite para preencher a sub-aba</p>}
                 </td>
                 {w.times
                   ? w.times.map((t, i) => <td key={i} className="py-2 text-center font-mono-data text-xs"><Span t={t} /></td>)
-                  : w.minutes.map((m, i) => <td key={i} className="py-2 text-center font-mono-data text-xs text-[#8A929B]">{fmtMinutes(m)}</td>)}
+                  : w.minutes.map((m, i) => <td key={i} className="py-2 text-center font-mono-data text-xs text-[#8A85A3]">{fmtMinutes(m)}</td>)}
                 <td className="py-2 text-center font-mono-data text-xs">
-                  {w.times_5x2 ? <Span t={w.times_5x2} /> : w.minutes_5x2 ? <span className="text-[#8A929B]">{fmtMinutes(w.minutes_5x2)}</span> : "—"}
+                  {w.times_5x2 ? <Span t={w.times_5x2} /> : w.minutes_5x2 ? <span className="text-[#8A85A3]">{fmtMinutes(w.minutes_5x2)}</span> : "—"}
                 </td>
                 <td className="py-1 text-right whitespace-nowrap">
-                  <button onClick={() => edit(w)} className="p-1.5 rounded-lg text-[#8A929B] hover:bg-[#F2EFE8] hover:text-[#0F172A]" aria-label={`Editar ${w.name}`}>
+                  <button onClick={() => edit(w)} className="p-1.5 rounded-lg text-[#8A85A3] hover:bg-[#EEEBFB] hover:text-[#17142E]" aria-label={`Editar ${w.name}`}>
                     <Pencil className="h-4 w-4" />
                   </button>
-                  <button onClick={() => remove(w)} className="p-1.5 rounded-lg text-[#8A929B] hover:bg-[#FEF2F2] hover:text-[#DC2626]" aria-label={`Excluir ${w.name}`}>
+                  <button onClick={() => remove(w)} className="p-1.5 rounded-lg text-[#8A85A3] hover:bg-[#FDECEC] hover:text-[#C93C3C]" aria-label={`Excluir ${w.name}`}>
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </td>
@@ -211,7 +211,7 @@ export const WorkloadsPanel = ({ workloads, onChange }) => {
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-[#575E65] mt-3">
+      <p className="text-xs text-[#5E5880] mt-3">
         Os efetivos já entram na sub-aba de horários com o horário da sua jornada. Ajustes feitos lá valem só para aquele dia.
       </p>
     </section>

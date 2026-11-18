@@ -12,7 +12,7 @@ import { RoleDialog, isTrial } from "@/components/folga/RoleDialog";
 const fold = (t) => (t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 const EMPTY = { name: "", role: "", sector: "", status: "ativo", gender: "", workload: "", contract: "efetivo" };
-const selectCls = "text-xs bg-[#F8F6F0] border border-[#E5E1D8] rounded-lg px-2 py-1.5 text-[#575E65] font-medium outline-none focus:border-[#0F172A] transition-colors";
+const selectCls = "text-xs bg-[#F7F5FC] border border-[#E4E0F3] rounded-lg px-2 py-1.5 text-[#5E5880] font-medium outline-none focus:border-[#17142E] transition-colors";
 
 const EmployeeForm = ({ sectors, roles, workloads, onSaved }) => {
   const [form, setForm] = useState(EMPTY);
@@ -65,7 +65,7 @@ const EmployeeForm = ({ sectors, roles, workloads, onSaved }) => {
       </select>
       <datalist id="sectors">{sectors.map((s) => <option key={s} value={s} />)}</datalist>
       <datalist id="roles">{roles.map((r) => <option key={r} value={r} />)}</datalist>
-      <Button data-testid="btn-save-employee" type="submit" disabled={busy} className="sm:col-span-2 bg-[#0F172A] hover:bg-[#1E293B] text-white">
+      <Button data-testid="btn-save-employee" type="submit" disabled={busy} className="sm:col-span-2 bg-[#17142E] hover:bg-[#2A2550] text-white">
         {busy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />} Adicionar funcionário
       </Button>
     </form>
@@ -119,8 +119,8 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
   };
 
   return (
-    <section data-testid="employees-panel" className="rounded-2xl border border-[#E5E1D8] bg-white p-5 sm:p-6 h-full">
-      <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A929B]">Equipe</p>
+    <section data-testid="employees-panel" className="glass rounded-[26px] p-5 sm:p-6 h-full">
+      <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A85A3]">Equipe</p>
       <div className="flex flex-wrap items-center justify-between gap-2 mt-1 mb-4">
         <h3 className="font-display text-2xl font-bold tracking-tight">Funcionários</h3>
         <ImportEmployees workloads={workloads} onDone={onChange} />
@@ -128,7 +128,7 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
       <EmployeeForm sectors={sectors} roles={roles} workloads={workloads} onSaved={onChange} />
       {employees.length > 0 && (
         <div className="relative mt-5">
-          <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#8A929B]" />
+          <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#8A85A3]" />
           <Input
             data-testid="input-employee-search"
             placeholder={`Procurar entre ${employees.length} funcionários (nome, cargo ou setor)`}
@@ -138,28 +138,28 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
           />
         </div>
       )}
-      <ul data-testid="employee-list" className="mt-2 divide-y divide-[#EFEBE3] max-h-96 overflow-y-auto">
-        {employees.length === 0 && <li className="py-6 text-sm text-center text-[#8A929B]">Nenhum funcionário cadastrado.</li>}
-        {employees.length > 0 && list.length === 0 && <li className="py-6 text-sm text-center text-[#8A929B]">Nenhum funcionário encontrado para "{query}".</li>}
+      <ul data-testid="employee-list" className="mt-2 divide-y divide-[#EEEBFB] max-h-96 overflow-y-auto">
+        {employees.length === 0 && <li className="py-6 text-sm text-center text-[#8A85A3]">Nenhum funcionário cadastrado.</li>}
+        {employees.length > 0 && list.length === 0 && <li className="py-6 text-sm text-center text-[#8A85A3]">Nenhum funcionário encontrado para "{query}".</li>}
         {list.map((e) => (
           <li key={e.id} data-testid={`employee-item-${e.id}`} className={`py-2.5 flex items-center justify-between gap-3 ${e.status === "inativo" ? "opacity-50" : ""}`}>
             <div className="min-w-[140px] flex-1">
               <p className="text-sm font-semibold truncate flex items-center gap-1.5">
                 {e.name}
-                {isTrial(e) && <span className="text-[9px] bg-[#FEF3C7] text-[#B45309] font-bold px-1.5 py-0.5 rounded">TESTE</span>}
+                {isTrial(e) && <span className="text-[9px] bg-[#FFF4D1] text-[#7A5500] font-bold px-1.5 py-0.5 rounded">TESTE</span>}
               </p>
-              <p className="text-xs text-[#8A929B] flex items-center gap-1 min-w-0">
-                <span className="truncate">{e.role} · <span className="text-[#575E65]">{e.sector}</span></span>
+              <p className="text-xs text-[#8A85A3] flex items-center gap-1 min-w-0">
+                <span className="truncate">{e.role} · <span className="text-[#5E5880]">{e.sector}</span></span>
                 {isTrial(e) ? (
                   <button
                     data-testid={`btn-approve-${e.id}`}
                     onClick={() => setRoleFor(e)}
-                    className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold text-[#15803D] bg-[#F0FDF4] border border-[#BBF7D0] rounded px-1.5 py-0.5 hover:bg-[#DCFCE7]"
+                    className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold text-[#1D6B45] bg-[#F0FAF4] border border-[#8FD0AE] rounded px-1.5 py-0.5 hover:bg-[#E3F5EC]"
                   >
                     <BadgeCheck className="h-3 w-3" /> Aprovar
                   </button>
                 ) : (
-                  <button onClick={() => setRoleFor(e)} aria-label={`Trocar cargo e setor de ${e.name}`} title="Trocar cargo e setor" className="shrink-0 p-0.5 rounded text-[#B8B2A7] hover:text-[#0F172A]">
+                  <button onClick={() => setRoleFor(e)} aria-label={`Trocar cargo e setor de ${e.name}`} title="Trocar cargo e setor" className="shrink-0 p-0.5 rounded text-[#B9B2DA] hover:text-[#17142E]">
                     <Pencil className="h-3 w-3" />
                   </button>
                 )}
@@ -181,7 +181,7 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
               aria-label="Sexo"
               value={e.gender || ""}
               onChange={(evt) => update(e, { gender: evt.target.value || null }, `Sexo de ${e.name} atualizado`)}
-              className={`${selectCls} ${!e.gender ? "border-[#FCD34D] bg-[#FFFBEB]" : ""}`}
+              className={`${selectCls} ${!e.gender ? "border-[#F2CF6B] bg-[#FFF9E6]" : ""}`}
               title={!e.gender ? "Informe o sexo para aplicar a regra de domingos da CCT" : undefined}
             >
               <option value="">Sexo?</option>
@@ -193,7 +193,7 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
               aria-label="Jornada"
               value={e.workload || ""}
               onChange={(evt) => update(e, { workload: evt.target.value || null }, `Jornada de ${e.name} atualizada`)}
-              className={`${selectCls} ${!e.workload ? "border-[#FCD34D] bg-[#FFFBEB]" : ""}`}
+              className={`${selectCls} ${!e.workload ? "border-[#F2CF6B] bg-[#FFF9E6]" : ""}`}
               title={workloads.find((w) => w.id === e.workload)?.name || "Informe a jornada"}
             >
               <option value="">Jornada?</option>
@@ -229,7 +229,7 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
               <option value="inativo">Inativo</option>
             </select>
 
-            <button data-testid={`btn-delete-employee-${e.id}`} onClick={() => remove(e)} className="p-2 rounded-lg text-[#8A929B] hover:bg-[#FEF2F2] hover:text-[#DC2626] transition-colors">
+            <button data-testid={`btn-delete-employee-${e.id}`} onClick={() => remove(e)} className="p-2 rounded-lg text-[#8A85A3] hover:bg-[#FDECEC] hover:text-[#C93C3C] transition-colors">
               <Trash2 className="h-4 w-4" />
             </button>
           </li>

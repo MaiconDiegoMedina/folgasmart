@@ -9,7 +9,7 @@ const KIND_LABEL = { nacional: "Nacional", estadual: "Estadual", municipal: "Mun
 const KIND_STYLE = {
   nacional: "bg-[#EEF2FF] text-[#4338CA]",
   estadual: "bg-[#F0FDFA] text-[#0F766E]",
-  municipal: "bg-[#FEF3C7] text-[#B45309]",
+  municipal: "bg-[#FFF4D1] text-[#7A5500]",
 };
 const fmt = (iso) => parseIso(iso).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" }).replace(".", "");
 
@@ -61,26 +61,26 @@ export const HolidaysPanel = ({ onChange }) => {
   const inputCls = "h-9 rounded-md border border-input bg-transparent px-3 text-sm";
 
   return (
-    <section data-testid="holidays-panel" className="rounded-2xl border border-[#E5E1D8] bg-white p-5 sm:p-6">
+    <section data-testid="holidays-panel" className="glass rounded-[26px] p-5 sm:p-6">
       <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
         <div>
-          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A929B]">Calendário</p>
+          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A85A3]">Calendário</p>
           <h3 className="font-display text-2xl font-bold tracking-tight mt-1">Feriados</h3>
         </div>
         <div className="inline-flex items-center gap-1">
-          <button onClick={() => setYear(year - 1)} aria-label="Ano anterior" className="p-1.5 rounded-lg hover:bg-[#F2EFE8]"><ChevronLeft className="h-4 w-4" /></button>
+          <button onClick={() => setYear(year - 1)} aria-label="Ano anterior" className="p-1.5 rounded-lg hover:bg-[#EEEBFB]"><ChevronLeft className="h-4 w-4" /></button>
           <span className="font-mono-data text-sm font-bold w-12 text-center">{year}</span>
-          <button onClick={() => setYear(year + 1)} aria-label="Próximo ano" className="p-1.5 rounded-lg hover:bg-[#F2EFE8]"><ChevronRight className="h-4 w-4" /></button>
+          <button onClick={() => setYear(year + 1)} aria-label="Próximo ano" className="p-1.5 rounded-lg hover:bg-[#EEEBFB]"><ChevronRight className="h-4 w-4" /></button>
         </div>
       </div>
 
-      <ul className="divide-y divide-[#EFEBE3] max-h-80 overflow-y-auto">
+      <ul className="divide-y divide-[#EEEBFB] max-h-80 overflow-y-auto">
         {items.map((h) => (
           <li key={h.date} className={`py-2 flex items-center gap-3 ${h.date < today ? "opacity-60" : ""}`}>
-            <span className="font-mono-data text-xs w-24 shrink-0 text-[#575E65]">{fmt(h.date)}</span>
+            <span className="font-mono-data text-xs w-24 shrink-0 text-[#5E5880]">{fmt(h.date)}</span>
             <span className="text-sm font-semibold flex-1 min-w-0 truncate">{h.name}</span>
             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${KIND_STYLE[h.kind]}`}>{KIND_LABEL[h.kind]}</span>
-            <label className="inline-flex items-center gap-1.5 text-xs text-[#575E65] cursor-pointer select-none" title="Loja fechada: ninguém trabalha nesse dia">
+            <label className="inline-flex items-center gap-1.5 text-xs text-[#5E5880] cursor-pointer select-none" title="Loja fechada: ninguém trabalha nesse dia">
               <input
                 type="checkbox"
                 checked={h.closed}
@@ -89,7 +89,7 @@ export const HolidaysPanel = ({ onChange }) => {
               Loja fecha
             </label>
             {h.kind !== "nacional" ? (
-              <button onClick={() => remove(h)} aria-label={`Excluir ${h.name}`} className="p-1.5 rounded-lg text-[#8A929B] hover:bg-[#FEF2F2] hover:text-[#DC2626]">
+              <button onClick={() => remove(h)} aria-label={`Excluir ${h.name}`} className="p-1.5 rounded-lg text-[#8A85A3] hover:bg-[#FDECEC] hover:text-[#C93C3C]">
                 <Trash2 className="h-4 w-4" />
               </button>
             ) : (
@@ -106,14 +106,14 @@ export const HolidaysPanel = ({ onChange }) => {
           <option value="municipal">Municipal</option>
           <option value="estadual">Estadual</option>
         </select>
-        <label className="inline-flex items-center gap-1.5 text-xs text-[#575E65]">
+        <label className="inline-flex items-center gap-1.5 text-xs text-[#5E5880]">
           <input type="checkbox" checked={form.closed} onChange={(e) => setForm({ ...form, closed: e.target.checked })} /> Loja fecha
         </label>
-        <Button type="submit" size="sm" disabled={busy} className="bg-[#0F172A] hover:bg-[#1E293B] text-white h-9">
+        <Button type="submit" size="sm" disabled={busy} className="bg-[#17142E] hover:bg-[#2A2550] text-white h-9">
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
         </Button>
       </form>
-      <p className="text-xs text-[#575E65] mt-3">
+      <p className="text-xs text-[#5E5880] mt-3">
         Os feriados nacionais entram sozinhos. Loja fechada: ninguém trabalha e a folga da semana continua em outro dia. Loja aberta: quem trabalha fica marcado com 2× (pagamento em dobro).
       </p>
     </section>

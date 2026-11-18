@@ -1,59 +1,45 @@
-import { CalendarRange, Sparkles, Loader2, LogOut } from "lucide-react";
+import { Sparkles, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ExportMenu } from "@/components/folga/ExportMenu";
 import { DAYS_SHORT } from "@/lib/api";
 
-const ModeToggle = ({ mode, onChange, disabled }) => (
-  <div data-testid="scale-mode-toggle" className="inline-flex rounded-full border border-[#D1CBBF] bg-white p-1">
-    {["6x1", "5x2"].map((m) => (
-      <button
-        key={m}
-        disabled={disabled}
-        data-testid={`scale-mode-${m}`}
-        onClick={() => m !== mode && onChange(m)}
-        className={`px-4 py-1.5 rounded-full text-sm font-semibold font-mono-data transition-colors duration-200 ${
-          m === mode ? "bg-[#0F172A] text-white" : "text-[#575E65] hover:bg-[#F2EFE8] hover:text-[#191C1E]"
-        }`}
-      >
-        {m}
-      </button>
-    ))}
-  </div>
+// Título de cada aba: linha pequena em cima e título com serifa
+export const PageTitle = ({ eyebrow, children, actions }) => (
+  <header className="no-print flex flex-wrap items-end justify-between gap-4">
+    <div>
+      {eyebrow && <p className="mb-2 text-[13px] font-medium text-[#5E5880]">{eyebrow}</p>}
+      <h1 className="font-serif-title text-[40px] leading-none sm:text-[56px]">{children}</h1>
+    </div>
+    {actions && <div className="flex flex-wrap items-center gap-2.5">{actions}</div>}
+  </header>
 );
 
-export const Header = ({ employees, movement, schedule, generating, onGenerate, generateSector, onLogout }) => {
+export const Header = ({ employees, movement, schedule, generating, onGenerate, generateSector }) => {
   const peaks = movement?.peak_days || [];
   return (
-    <header data-testid="app-header" className="no-print md:sticky top-0 z-30 border-b border-[#E5E1D8] bg-[#F9F8F5]/85 backdrop-blur-xl">
-      <div className="mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8 py-4 flex flex-wrap items-center gap-4 justify-between">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-[#0F172A] text-white grid place-items-center">
-            <CalendarRange className="h-5 w-5" />
-          </div>
-          <div>
-            <h1 className="font-display text-2xl font-extrabold tracking-tight leading-none">EscalaSmart</h1>
-            <p className="text-xs text-[#575E65] mt-1">
-              <span data-testid="stat-employees">{employees.length} funcionários</span>
-              {peaks.length > 0 && <> · pico: <span className="text-[#DC2626] font-semibold">{peaks.map((d) => DAYS_SHORT[d]).join(", ")}</span></>}
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
+    <PageTitle
+      eyebrow={
+        <span data-testid="app-header">
+          <span data-testid="stat-employees">{employees.length} funcionários</span>
+          {peaks.length > 0 && <> · pico: <span className="font-semibold text-[#7A5500]">{peaks.map((d) => DAYS_SHORT[d]).join(", ")}</span></>}
+        </span>
+      }
+      actions={
+        <>
           <ExportMenu employees={employees} schedule={schedule} />
           <Button
             data-testid="btn-generate-roster"
             onClick={() => onGenerate()}
             disabled={generating}
-            className="rounded-full bg-[#DC2626] hover:bg-[#B91C1C] text-white px-5"
+            className="h-11 rounded-full bg-[#6D5BD0] px-5 text-white hover:bg-[#5B4BC4]"
           >
-            {generating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
+            {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
             {generateSector ? `Gerar escala · ${generateSector}` : "Gerar escala · todos"}
           </Button>
-          <Button variant="outline" onClick={onLogout} className="rounded-full">
-            <LogOut className="mr-2 h-4 w-4" /> Sair
-          </Button>
-        </div>
-      </div>
-    </header>
+        </>
+      }
+    >
+      Quem trabalha, <em>quem folga</em>
+    </PageTitle>
   );
 };
