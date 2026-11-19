@@ -5,6 +5,7 @@ import { PageTitle } from "@/components/folga/Header";
 import { AppRail, TABS } from "@/components/folga/AppRail";
 import { HomePanel } from "@/components/folga/HomePanel";
 import { CheckoutsBoard } from "@/components/folga/CheckoutsBoard";
+import { SectorBoard, SECTOR_TABS } from "@/components/folga/SectorBoard";
 import { WeekNav } from "@/components/folga/WeekNav";
 import { MovementPanel } from "@/components/folga/MovementPanel";
 import { EmployeesPanel } from "@/components/folga/EmployeesPanel";
@@ -140,6 +141,9 @@ export default function Dashboard() {
             <>
               <CheckoutsBoard employees={scheduled} schedule={schedule} week={week} onWeek={setWeek} workloads={workloads} sectorModes={sectorModes} checkouts={checkouts} onChange={load} />
             </>
+          )}
+          {SECTOR_TABS.some((t) => t.id === tab) && (
+            <SectorBoard key={tab} tab={tab} employees={scheduled} schedule={schedule} week={week} onWeek={setWeek} workloads={workloads} sectorModes={sectorModes} />
           )}
           {tab === "feriados" && (
             <>

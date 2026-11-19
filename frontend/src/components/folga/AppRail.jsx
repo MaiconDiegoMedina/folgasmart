@@ -1,4 +1,5 @@
 import { Home, CalendarDays, Users, Clock, BarChart3, ShoppingCart, Flag, LogOut } from "lucide-react";
+import { SECTOR_TABS } from "@/components/folga/SectorBoard";
 
 export const TABS = [
   { id: "inicio", label: "Início", icon: Home },
@@ -7,13 +8,14 @@ export const TABS = [
   { id: "jornadas", label: "Jornadas", icon: Clock },
   { id: "movimento", label: "Movimento de clientes", short: "Movimento", icon: BarChart3 },
   { id: "caixas", label: "Caixas", icon: ShoppingCart },
+  ...SECTOR_TABS.map(({ id, label, short, icon }) => ({ id, label, short, icon })),
   { id: "feriados", label: "Feriados", icon: Flag },
 ];
 
 // Menu principal: barra escura à esquerda no computador e pílula embaixo no celular
 export const AppRail = ({ tab, onTab, onLogout }) => (
   <>
-    <nav aria-label="Menu principal" className="no-print hidden md:flex sticky top-6 z-20 w-[76px] shrink-0 flex-col items-center gap-2 self-start rounded-[38px] bg-[#17142E] py-[18px] min-h-[640px]">
+    <nav aria-label="Menu principal" className="no-print hidden md:flex sticky top-6 z-20 w-[76px] shrink-0 flex-col items-center gap-1.5 self-start rounded-[38px] bg-[#17142E] py-[18px] min-h-[640px]">
       <div className="mb-3.5 grid h-11 w-11 place-items-center rounded-[14px] bg-white font-display text-[15px] font-bold text-[#17142E]">ES</div>
       {TABS.map((t) => (
         <button
@@ -22,7 +24,7 @@ export const AppRail = ({ tab, onTab, onLogout }) => (
           aria-label={t.label}
           title={t.label}
           aria-current={tab === t.id ? "page" : undefined}
-          className={`grid h-12 w-12 place-items-center rounded-2xl transition-colors ${tab === t.id ? "bg-[#7C6AE0] text-white" : "text-[#B7B1D6] hover:bg-white/10 hover:text-white"}`}
+          className={`grid h-11 w-11 place-items-center rounded-2xl transition-colors ${tab === t.id ? "bg-[#7C6AE0] text-white" : "text-[#B7B1D6] hover:bg-white/10 hover:text-white"}`}
         >
           <t.icon className="h-[22px] w-[22px]" strokeWidth={1.8} />
         </button>
@@ -39,6 +41,7 @@ export const AppRail = ({ tab, onTab, onLogout }) => (
           onClick={() => onTab(t.id)}
           aria-label={t.label}
           aria-current={tab === t.id ? "page" : undefined}
+          ref={tab === t.id ? (el) => el?.scrollIntoView({ inline: "nearest", block: "nearest" }) : undefined}
           className={`flex min-w-[44px] flex-1 flex-col items-center gap-0.5 rounded-2xl px-1 py-1.5 text-[10px] font-semibold ${tab === t.id ? "bg-[#7C6AE0] text-white" : "text-[#B7B1D6]"}`}
         >
           <t.icon className="h-5 w-5" strokeWidth={1.8} />
