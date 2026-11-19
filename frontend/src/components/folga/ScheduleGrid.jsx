@@ -529,7 +529,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
               <tbody>
                 {groups.map((g, gi) => [
                   <SectorHeader key={`h-${g.name}`} name={g.name} members={g.members} worksOn={worksOn} peaks={peaks} mode={modeOf(g.name)} showCount={groups.length > 1 && !mural} mural={mural} newPage={gi > 0} />,
-                  ...groupByRole(g.members).flatMap((rg) => [
+                  ...groupByRole(g.members, undefined, g.name).flatMap((rg) => [
                     ...rg.members.map((emp, idx) => (
                     <Row
                       key={emp.id}
