@@ -136,6 +136,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
 
   // Arrastar a barra muda o horário do dia (o mesmo ajuste da sub-aba de horários)
   const saveShift = async (o, s) => {
+    if (!s) return;
     const k = String(day);
     const put = (times) => http.put("/shifts", { week, day, employee_id: o.key, ...(times ? shiftPayload(times) : {}) });
     setShifts((prev) => ({ ...prev, [k]: { ...(prev[k] || {}), [o.key]: s } }));
@@ -309,7 +310,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
                           colors={{ bg: LVL[o.lvl].bar, ink: LVL[o.lvl].barInk }}
                           title={`${o.emp.name} · ${o.note}.`}
                           grab={grab}
-                          dragging={preview?.key === o.key}
+                          drag={preview?.key === o.key ? preview : null}
                           extra={o.base && shiftFor(o) ? dayMinutes(shiftFor(o)) - o.base : 0}
                         />
                       </div>

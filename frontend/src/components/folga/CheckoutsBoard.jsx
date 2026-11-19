@@ -346,7 +346,12 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
   });
 
   // Arrastar a barra muda o horário do dia (salvo como ajuste na sub-aba de horários)
-  const saveShift = async (o, s) => {
+  // Soltar a barra: novo horário (s) e/ou outro caixa (row: id do caixa ou "none")
+  const saveShift = async (o, s, row) => {
+    if (s) await saveTimes(o, s);
+    if (row) await dropOn(o.emp.id, row === "none" ? "none" : `caixa:${row}`);
+  };
+  const saveTimes = async (o, s) => {
     const key = String(day);
     const put = (times) => http.put("/shifts", { week, day, employee_id: o.emp.id, ...(times ? shiftPayload(times) : {}) });
     setShifts((prev) => ({ ...prev, [key]: { ...(prev[key] || {}), [o.emp.id]: s } }));
@@ -373,7 +378,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
         colors={where === "sem caixa" ? { dashed: true } : { bg: LVL[o.lvl].bar, ink: LVL[o.lvl].barInk }}
         title={`${o.emp.name} · ${where} · ${o.note}.`}
         grab={grab}
-        dragging={preview?.key === o.emp.id}
+        drag={preview?.key === o.emp.id ? preview : null}
         extra={o.base && s ? dayMinutes(s) - o.base : 0}
       />
     );
@@ -440,7 +445,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                 </div>
               </div>
               {rows.map((r) => (
-                <div key={r.id} className="grid grid-cols-[96px_1fr] items-center gap-2.5">
+                <div key={r.id} data-row={r.id} className={`grid grid-cols-[96px_1fr] items-center gap-2.5 rounded-xl transition ${preview?.row === r.id ? "bg-[#EEEBFB] ring-2 ring-[#6D5BD0]" : ""}`}>
                   <div className="truncate font-display text-[13px] font-semibold">
                     {r.name}
                     <small className="block font-sans text-[11px] font-medium text-[#5E5880]">{r.ops.length ? `${r.ops.length} ${r.ops.length > 1 ? "turnos" : "turno"}` : "livre"}</small>
@@ -451,8 +456,8 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                   </div>
                 </div>
               ))}
-              {loose.length > 0 && (
-                <div className="grid grid-cols-[96px_1fr] items-center gap-2.5">
+              {(loose.length > 0 || preview?.mode === "move") && (
+                <div data-row="none" className={`grid grid-cols-[96px_1fr] items-center gap-2.5 rounded-xl transition ${preview?.row === "none" ? "bg-[#EEEBFB] ring-2 ring-[#6D5BD0]" : ""}`}>
                   <div className="font-display text-[13px] font-semibold">Sem caixa<small className="block font-sans text-[11px] font-medium text-[#5E5880]">{loose.length} {loose.length === 1 ? "pessoa" : "pessoas"}</small></div>
                   <div className="flex flex-col gap-1">
                     {(lanes.length ? lanes : [[]]).map((l, i) => (

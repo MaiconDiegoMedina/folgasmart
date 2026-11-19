@@ -4,44 +4,76 @@ import { toMin, fromMin } from "@/lib/workloadTimes";
 const STEP = 5; // minutos
 const MIN_WORK = 30; // trecho mínimo antes/depois do intervalo
 const LAST = 23 * 60 + 55;
+const SIX_HOURS = 6 * 60;
+export const MAX_EXTRA = 2 * 60; // hora extra por dia para quem trabalha mais de 6h
+export const BREAK_RANGE = [60, 120]; // intervalo de 1h a 2h para quem trabalha mais de 6h
 
-// Calcula o novo horário a partir do original e do deslocamento em minutos
-const shiftWith = (orig, mode, delta) => {
-  const [s, ...rest] = orig;
-  const e = rest[rest.length - 1];
+const workOf = (t) => t[t.length - 1] - t[0] - (t.length === 4 ? t[2] - t[1] : 0);
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// Limites do arrasto: hora extra até 2h e intervalo de 1h a 2h para quem trabalha mais de 6h
+export const limitsOf = (base, orig) => {
+  const work = workOf(orig);
+  return {
+    maxWork: base && base > SIX_HOURS ? Math.max(base + MAX_EXTRA, work) : null,
+    brk: orig.length === 4 && Math.max(work, base || 0) > SIX_HOURS ? BREAK_RANGE : null,
+  };
+};
+
+// Novo horário a partir do original e do deslocamento em minutos; capped = bateu no limite de hora extra
+const shiftWith = (orig, mode, delta, lim) => {
+  const s = orig[0];
+  const e = orig[orig.length - 1];
   const brk = orig.length === 4 ? [orig[1], orig[2]] : null;
+  const blen = brk ? brk[1] - brk[0] : 0;
+  const max = lim.maxWork;
   if (mode === "move") {
-    const d = Math.max(-s, Math.min(LAST - e, delta));
-    return orig.map((m) => m + d);
+    const d = clamp(delta, -s, LAST - e);
+    return { next: orig.map((m) => m + d), capped: false };
   }
   if (mode === "start") {
-    const limit = (brk ? brk[0] : e) - MIN_WORK;
-    const ns = Math.max(0, Math.min(limit, s + delta));
-    return [ns, ...orig.slice(1)];
+    let lo = 0;
+    if (max) lo = Math.max(lo, e - blen - max);
+    const want = s + delta;
+    const ns = clamp(want, lo, (brk ? brk[0] : e) - MIN_WORK);
+    return { next: [ns, ...orig.slice(1)], capped: !!max && want < lo };
   }
   if (mode === "end") {
-    const limit = (brk ? brk[1] : s) + MIN_WORK;
-    const ne = Math.min(LAST, Math.max(limit, e + delta));
-    return [...orig.slice(0, -1), ne];
+    let hi = LAST;
+    if (max) hi = Math.min(hi, s + blen + max);
+    const want = e + delta;
+    const ne = clamp(want, (brk ? brk[1] : s) + MIN_WORK, hi);
+    return { next: [...orig.slice(0, -1), ne], capped: !!max && want > hi };
   }
-  if (mode === "break" && brk) {
-    const len = brk[1] - brk[0];
-    const bs = Math.max(s + MIN_WORK, Math.min(e - MIN_WORK - len, brk[0] + delta));
-    return [s, bs, bs + len, e];
+  if (!brk) return { next: orig, capped: false };
+  if (mode === "break") {
+    const bs = clamp(brk[0] + delta, s + MIN_WORK, e - MIN_WORK - blen);
+    return { next: [s, bs, bs + blen, e], capped: false };
   }
-  return orig;
+  // Pontas do intervalo: muda a duração dentro de 1h–2h (e sem passar da hora extra permitida)
+  const [bmin, bmax] = lim.brk || [blen, blen];
+  const minLen = Math.max(bmin, max ? e - s - max : 0);
+  if (mode === "brkStart") {
+    const bs = clamp(brk[0] + delta, Math.max(s + MIN_WORK, brk[1] - bmax), brk[1] - minLen);
+    return { next: [s, bs, brk[1], e], capped: false };
+  }
+  if (mode === "brkEnd") {
+    const be = clamp(brk[1] + delta, brk[0] + minLen, Math.min(e - MIN_WORK, brk[0] + bmax));
+    return { next: [s, brk[0], be, e], capped: false };
+  }
+  return { next: orig, capped: false };
 };
 
 /**
  * Arrastar a barra do horário no gráfico do dia:
- * - corpo da barra: muda entrada e saída juntas (mantém a jornada)
- * - pontas: muda só a entrada ou só a saída (hora extra ou saída antes)
- * - parte listrada: move o intervalo
+ * - corpo da barra: muda entrada e saída juntas (mantém a jornada); para cima/baixo troca de linha (caixa)
+ * - pontas: muda só a entrada ou só a saída (hora extra até 2h para quem trabalha mais de 6h)
+ * - parte listrada: move o intervalo; as pontas dela mudam a duração (1h a 2h para quem trabalha mais de 6h)
  * No celular: segure a barra um instante e arraste.
- * `onCommit(o, novoHorario)` salva; `preview` traz o horário enquanto arrasta.
+ * `onCommit(o, novoHorario | null, linhaDestino | null)` salva.
  */
 export const useShiftDrag = ({ span, onCommit }) => {
-  const [preview, setPreview] = useState(null); // { key, shift }
+  const [preview, setPreview] = useState(null); // { key, shift, mode, dy, row, capped }
   const ref = useRef(null);
   const commitRef = useRef(onCommit);
   commitRef.current = onCommit;
@@ -54,17 +86,20 @@ export const useShiftDrag = ({ span, onCommit }) => {
       if (!track) return;
       if (e.pointerType === "mouse") e.preventDefault();
       if (ref.current?.timer) clearTimeout(ref.current.timer);
+      const orig = o.shift.map(toMin);
+      const rowEl = track.closest("[data-row]");
       const p = {
-        o, mode, key: o.key || o.emp.id, pid: e.pointerId, sx: e.clientX,
-        mpp: span / track.getBoundingClientRect().width,
-        orig: o.shift.map(toMin), touch: e.pointerType !== "mouse", live: false, next: null, timer: null,
+        o, mode, key: o.key || o.emp.id, pid: e.pointerId, sx: e.clientX, sy: e.clientY,
+        mpp: span / track.getBoundingClientRect().width, orig, lim: limitsOf(o.base, orig),
+        fromRow: rowEl?.getAttribute("data-row") || null, row: null,
+        touch: e.pointerType !== "mouse", live: false, next: null, timer: null,
       };
       ref.current = p;
       if (p.touch) {
         p.timer = setTimeout(() => {
           if (ref.current !== p) return;
           p.live = true;
-          setPreview({ key: p.key, shift: o.shift, mode });
+          setPreview({ key: p.key, shift: o.shift, mode, dy: 0, row: null, capped: false });
           if (navigator.vibrate) navigator.vibrate(15);
         }, 280);
       }
@@ -85,21 +120,33 @@ export const useShiftDrag = ({ span, onCommit }) => {
       const p = ref.current;
       if (!p || e.pointerId !== p.pid) return;
       const dx = e.clientX - p.sx;
+      const dy = e.clientY - p.sy;
       if (!p.live) {
-        if (Math.abs(dx) < 4) return;
+        if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
         if (p.touch) return end(); // deslizou sem segurar: é rolagem
         p.live = true;
       }
-      const delta = Math.round((dx * p.mpp) / STEP) * STEP;
-      const next = shiftWith(p.orig, p.mode, delta);
+      // Linha de destino (outro caixa): só ao arrastar o corpo da barra num gráfico com linhas
+      let row = null;
+      if (p.mode === "move" && p.fromRow !== null) {
+        const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-row]")?.getAttribute("data-row");
+        row = hit && hit !== p.fromRow ? hit : null;
+      }
+      p.row = row;
+      // Movendo para outro caixa quase na vertical, o horário fica como está
+      const effDx = row && Math.abs(dx) < 12 ? 0 : dx;
+      const delta = Math.round((effDx * p.mpp) / STEP) * STEP;
+      const { next, capped } = shiftWith(p.orig, p.mode, delta, p.lim);
       p.next = next;
-      setPreview({ key: p.key, shift: next.map(fromMin), mode: p.mode });
+      setPreview({ key: p.key, shift: next.map(fromMin), mode: p.mode, dy: p.fromRow !== null && p.mode === "move" ? dy : 0, row, capped });
     };
     const up = (e) => {
       const p = ref.current;
       if (!p || e.pointerId !== p.pid) return;
       end();
-      if (p.live && p.next && p.next.some((m, i) => m !== p.orig[i])) commitRef.current(p.o, p.next.map(fromMin));
+      if (!p.live) return;
+      const changed = p.next && p.next.some((m, i) => m !== p.orig[i]);
+      if (changed || p.row) commitRef.current(p.o, changed ? p.next.map(fromMin) : null, p.row);
     };
     const block = (e) => {
       if (ref.current?.live) e.preventDefault();
