@@ -101,7 +101,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
     return (!has("off_days", e.id, d) || has("extra_days", e.id, d)) && !has("suspension_days", e.id, d) && !has("absence_days", e.id, d);
   };
   const shiftOf = (e, d) =>
-    shifts[String(d)]?.[e.id] || (isIntermittent(e) ? null : defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), d));
+    shifts[String(d)]?.[e.id] || (isIntermittent(e) ? null : defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), d, has("extra_days", e.id, d)));
 
   const { rows, loose, staff, cover } = useMemo(() => {
     const dayAssign = assign[String(day)] || {};
@@ -109,7 +109,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
       const s = shiftOf(e, day);
       const streak = (schedule.streak_alerts?.[e.id] || []).includes(day);
       const extra = has("extra_days", e.id, day);
-      const base = isIntermittent(e) ? null : dayMinutes(defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), day)) || null;
+      const base = isIntermittent(e) ? null : dayMinutes(defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), day, extra)) || null;
       const { lvl, note, tag } = dayStatus({ shift: s, base, streak, offDay: extra });
       return {
         emp: e, shift: s, lvl, note, tag,

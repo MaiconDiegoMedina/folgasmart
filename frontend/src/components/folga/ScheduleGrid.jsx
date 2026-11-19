@@ -380,7 +380,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   const checkoutName = (id) => checkouts.find((c) => c.id === id)?.name || null;
   const shiftOf = (emp, d) =>
     weekShifts[String(d)]?.[emp.id] ||
-    (isIntermittent(emp) ? null : defaultShiftOf(workloads.find((w) => w.id === emp.workload), modeOf(emp.sector), d));
+    (isIntermittent(emp) ? null : defaultShiftOf(workloads.find((w) => w.id === emp.workload), modeOf(emp.sector), d, extrasOf(emp.id).includes(d)));
 
   const onExtra = (emp, d, isOff) => {
     if (emp.status === "ferias") return toast.error("EXTRA não pode ser marcado para funcionário de férias.");

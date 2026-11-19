@@ -86,7 +86,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
     return null;
   };
   const shiftOf = (e, d) =>
-    shifts[String(d)]?.[e.id] || (isIntermittent(e) ? null : defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), d));
+    shifts[String(d)]?.[e.id] || (isIntermittent(e) ? null : defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), d, has("extra_days", e.id, d)));
 
   const { team, away, cover } = useMemo(() => {
     const person = (e, s, lvl, note, key = e.id, base = null) => ({
@@ -107,7 +107,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
       }
       const streak = (schedule.streak_alerts?.[e.id] || []).includes(day);
       const extra = has("extra_days", e.id, day);
-      const base = isIntermittent(e) ? null : dayMinutes(defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), day)) || null;
+      const base = isIntermittent(e) ? null : dayMinutes(defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), day, extra)) || null;
       const s = shiftOf(e, day);
       const st = dayStatus({ shift: s, base, streak, offDay: extra });
       team.push(person(e, s, st.lvl, st.note, e.id, base));
