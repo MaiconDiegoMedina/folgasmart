@@ -7,7 +7,7 @@ import { defaultShiftOf, toMin, dayMinutes } from "@/lib/workloadTimes";
 import { isIntermittent, acceptedOn } from "@/lib/convocation";
 import { WeekNav } from "@/components/folga/WeekNav";
 import { PageTitle } from "@/components/folga/Header";
-import { ShiftBar, dayLabel } from "@/components/folga/ShiftBar";
+import { ShiftBar, dayLabel, dayStatus } from "@/components/folga/ShiftBar";
 import { useShiftDrag, shiftPayload } from "@/lib/useShiftDrag";
 
 // Abas de setor: o setor do funcionário é reconhecido pelo nome (ex.: "Açougue", "Hortifruti", "FLV")
@@ -108,7 +108,9 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
       const streak = (schedule.streak_alerts?.[e.id] || []).includes(day);
       const extra = has("extra_days", e.id, day);
       const base = isIntermittent(e) ? null : dayMinutes(defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), day)) || null;
-      team.push(person(e, shiftOf(e, day), streak ? "risk" : extra ? "warn" : "ok", streak ? "Passou de 6 dias seguidos" : extra ? "Extra no dia de folga" : "Na jornada", e.id, base));
+      const s = shiftOf(e, day);
+      const st = dayStatus({ shift: s, base, streak, offDay: extra });
+      team.push(person(e, s, st.lvl, st.note, e.id, base));
     }
     // Ajuda de outro setor salva na sub-aba de horários (chave "funcionário@setor")
     const byId = Object.fromEntries(employees.map((e) => [e.id, e]));
@@ -279,8 +281,8 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
               </div>
               <div className="flex flex-wrap gap-3 text-xs text-[#4A4566]">
                 <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#BFE6D1]" />Na jornada</span>
-                <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#F7DC8A]" />Extra</span>
-                <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#F4B4B4]" />+6 dias</span>
+                <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#F7DC8A]" />Hora extra</span>
+                <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#F4B4B4]" />Fora da jornada (folga ou +6 dias)</span>
                 <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#DCD5FA]" />Ajuda de outro setor</span>
                 <span className="inline-flex items-center gap-1.5"><i className="h-3.5 w-0.5 bg-[#6D5BD0]" />Agora</span>
               </div>

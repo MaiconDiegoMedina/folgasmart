@@ -8,7 +8,7 @@ import { WeekNav } from "@/components/folga/WeekNav";
 import { PageTitle } from "@/components/folga/Header";
 import { CheckoutsPanel } from "@/components/folga/CheckoutsPanel";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ShiftBar, dayLabel } from "@/components/folga/ShiftBar";
+import { ShiftBar, dayLabel, dayStatus } from "@/components/folga/ShiftBar";
 import { useShiftDrag, shiftPayload } from "@/lib/useShiftDrag";
 
 const ALL_HOURS = Array.from({ length: 18 }, (_, i) => 6 + i); // 6h..23h
@@ -103,17 +103,15 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
       const s = shiftOf(e, day);
       const streak = (schedule.streak_alerts?.[e.id] || []).includes(day);
       const extra = has("extra_days", e.id, day);
-      const lvl = streak ? "risk" : extra ? "warn" : "ok";
-      const note = streak ? "Risco: passou de 6 dias seguidos" : extra ? "Extra: trabalha no dia de folga" : "Na jornada";
+      const base = isIntermittent(e) ? null : dayMinutes(defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), day)) || null;
+      const { lvl, note, tag } = dayStatus({ shift: s, base, streak, offDay: extra });
       return {
-        emp: e, shift: s, lvl, note,
+        emp: e, shift: s, lvl, note, tag,
         a: s ? toMin(s[0]) : null,
         b: s ? toMin(s[s.length - 1]) : null,
         brk: s && s.length === 4 ? [toMin(s[1]), toMin(s[2])] : null,
-        ...(() => {
-          const base = isIntermittent(e) ? null : dayMinutes(defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), day)) || null;
-          return { base, daily: dayLabel(s, base) };
-        })(),
+        base,
+        daily: dayLabel(s, base),
         contract: e.contract || (isIntermittent(e) ? "intermitente" : "efetivo"),
       };
     };
@@ -429,8 +427,8 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
           </div>
           <div className="flex flex-wrap gap-3 text-xs text-[#4A4566]">
             <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#BFE6D1]" />Na jornada</span>
-            <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#F7DC8A]" />Extra no dia de folga</span>
-            <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#F4B4B4]" />+6 dias seguidos</span>
+            <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#F7DC8A]" />Hora extra</span>
+            <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#F4B4B4]" />Fora da jornada (folga ou +6 dias)</span>
             <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded border-[1.5px] border-dashed border-[#B9B2DA]" />Sem caixa</span>
             <span className="inline-flex items-center gap-1.5"><i className="h-3.5 w-0.5 bg-[#6D5BD0]" />Agora</span>
           </div>
@@ -540,7 +538,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                             </select>
                           ) : (
                             <span className="mt-1 flex items-center gap-2">
-                              <span className="text-[11px] font-bold" style={{ color: LVL[o.lvl].ink }}>{o.lvl === "ok" ? "Na jornada" : o.lvl === "warn" ? "Extra" : "+6 dias"}</span>
+                              <span className="text-[11px] font-bold" style={{ color: LVL[o.lvl].ink }}>{o.tag}</span>
                               <button onClick={() => setMoving(o.emp.id)} className="text-[11px] font-semibold text-[#5B4BC4] hover:underline">Trocar</button>
                             </span>
                           )}

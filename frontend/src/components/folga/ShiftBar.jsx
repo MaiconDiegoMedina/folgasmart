@@ -62,6 +62,20 @@ export const ShiftBar = ({ o, shift, win, colors, title, grab, drag, extra = 0 }
 
 export { fmtDur };
 
+// Cor do cartão: verde = bate com a jornada; amarelo = hora extra; vermelho = trabalhando fora da jornada
+// (dia de folga ou mais de 6 dias seguidos)
+export const dayStatus = ({ shift, base, streak, offDay }) => {
+  if (offDay) return { lvl: "risk", tag: "Dia de folga", note: "Fora da jornada: trabalhando no dia de folga" };
+  if (streak) return { lvl: "risk", tag: "+6 dias", note: "Fora da jornada: passou de 6 dias seguidos" };
+  if (shift && base) {
+    const t = shift.map(toMin);
+    const w = t[t.length - 1] - t[0] - (t.length === 4 ? t[2] - t[1] : 0);
+    if (w > base) return { lvl: "warn", tag: `Hora extra +${fmtDur(w - base)}`, note: `Hora extra: ${fmtDur(w - base)} além da jornada` };
+    if (w < base) return { lvl: "ok", tag: `Jornada −${fmtDur(base - w)}`, note: `Na jornada, com ${fmtDur(base - w)} a menos hoje` };
+  }
+  return { lvl: "ok", tag: "Na jornada", note: "Na jornada" };
+};
+
 // Texto das horas do dia: só a jornada, ou jornada e horas de hoje quando há ajuste
 export const dayLabel = (s, base) => {
   if (!s) return "sem horário";
