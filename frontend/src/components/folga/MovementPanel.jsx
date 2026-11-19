@@ -5,6 +5,7 @@ import { PageTitle } from "@/components/folga/Header";
 import { WeekNav } from "@/components/folga/WeekNav";
 import { http, errMsg, DAYS, DAYS_SHORT, DAY_SLUGS, SAMPLE_CSV, downloadFile } from "@/lib/api";
 import { peakHours } from "@/lib/hourlyReport";
+import { ImportPreview, readHourlyFile } from "@/components/folga/HourlyImport";
 
 const todayIdx = () => (new Date().getDay() + 6) % 7;
 const fmtN = (n) => Math.round(n || 0).toLocaleString("pt-BR");
@@ -19,7 +20,10 @@ const Flame = () => (
 
 export const MovementPanel = ({ movement, onChange, week, onWeek }) => {
   const fileRef = useRef(null);
+  const hourlyRef = useRef(null);
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [day, setDay] = useState(todayIdx);
   const [hourly, setHourly] = useState([]);
   const peaks = movement?.peak_days || [];
@@ -41,6 +45,43 @@ export const MovementPanel = ({ movement, onChange, week, onWeek }) => {
     } finally {
       setBusy(false);
       fileRef.current.value = "";
+    }
+  };
+
+  // Relatório de vendas por horário (antes ficava na sub-aba de horários da Escala)
+  const onHourlyFile = async (file) => {
+    if (!file) return;
+    try {
+      const next = await readHourlyFile(file, day);
+      if (!next) return toast.error("Não encontrei faixas de horário nesse arquivo. Exporte o relatório 170 como CSV ou Texto.");
+      setPreview(next);
+    } catch {
+      toast.error("Não foi possível ler o arquivo.");
+    } finally {
+      hourlyRef.current.value = "";
+    }
+  };
+  const saveHourly = async (period, targetDay) => {
+    setSaving(true);
+    try {
+      const { data } = await http.put("/hourly", { week, day: targetDay, label: period.label, hours: period.hours });
+      setHourly((all) => [...all.filter((h) => h.day !== targetDay), data]);
+      setPreview(null);
+      setDay(targetDay);
+      toast.success(`Movimento por hora salvo para ${DAYS[targetDay].toLowerCase()} desta semana`);
+    } catch (e) {
+      toast.error(errMsg(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const removeHourly = async () => {
+    try {
+      await http.delete(`/hourly/${day}`, { params: { week } });
+      const { data } = await http.get("/hourly", { params: { week } });
+      setHourly(data || []);
+    } catch (e) {
+      toast.error(errMsg(e));
     }
   };
 
@@ -88,6 +129,11 @@ export const MovementPanel = ({ movement, onChange, week, onWeek }) => {
               Importar CSV
             </button>
             <input ref={fileRef} data-testid="csv-upload-input" type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => onFile(e.target.files[0])} />
+            <button data-testid="btn-import-hourly" onClick={() => hourlyRef.current.click()} className={`${BTN} bg-[#17142E] text-white hover:bg-[#2A2550]`}>
+              <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+              Importar relatório por hora
+            </button>
+            <input ref={hourlyRef} data-testid="hourly-upload-input" type="file" accept=".csv,.txt,text/csv,text/plain" className="hidden" onChange={(e) => onHourlyFile(e.target.files[0])} />
           </>
         }
       >
@@ -104,6 +150,8 @@ export const MovementPanel = ({ movement, onChange, week, onWeek }) => {
           {hasData ? `Enquanto isso, o app usa o movimento ${fromWeek}. ` : ""}Clique em <strong>Importar CSV</strong> para trazer o movimento desta semana.
         </p>
       )}
+
+      {preview && <ImportPreview preview={preview} setPreview={setPreview} onSave={saveHourly} saving={saving} />}
 
       <p className="m-0 text-sm text-[#4A4566]">Escolha um dia para ver as horas. Marque os <strong>dias de pico</strong>: o app evita dar folga neles.</p>
 
@@ -155,10 +203,13 @@ export const MovementPanel = ({ movement, onChange, week, onWeek }) => {
                 </span>
               )}
               {pk.length > 0 && <span className={`${CHIP} bg-[#F2CF6B] text-[#3A2A00]`}>Atenção · pico {joinPt(pk.map((h) => `${h}h`))}</span>}
+              {hourly.some((h) => h.day === day && h.week === week) && (
+                <button type="button" onClick={removeHourly} className={`${CHIP} border border-[#3A3463] text-[#C9C4E6] hover:bg-[#3A3463]`}>Remover relatório</button>
+              )}
             </div>
           </div>
           {!hours.length ? (
-            <p className="py-16 text-center text-sm text-[#C9C4E6]">Sem movimento por hora para {DAYS[day].toLowerCase()} nesta semana. Importe o relatório por hora na sub-aba de horários da Escala.</p>
+            <p className="py-16 text-center text-sm text-[#C9C4E6]">Sem movimento por hora para {DAYS[day].toLowerCase()} nesta semana. Clique em <strong className="text-white">Importar relatório por hora</strong> para trazer o movimento deste dia.</p>
           ) : (
             <>
               <div className="flex h-[240px] items-end gap-[3px] sm:gap-2">
