@@ -212,8 +212,8 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
   const extraCols = showCheckouts ? 1 : 0;
   const wlOf = (emp) => workloads.find((w) => w.id === emp.workload);
   const minutesOf = (emp) => dailyMinutes(wlOf(emp), sectorMode, day);
-  // Efetivos: horário do ponto da jornada, a não ser que tenha um ajuste salvo para o dia
-  const defaultOf = (emp) => (isIntermittent(emp) ? null : defaultShiftOf(wlOf(emp), sectorMode, day, (schedule.extra_days?.[emp.id] || []).includes(day)));
+  // Horário da jornada (efetivos e intermitentes), a não ser que tenha um ajuste salvo para o dia
+  const defaultOf = (emp) => defaultShiftOf(wlOf(emp), sectorMode, day);
   const shiftOf = (emp) => shifts[emp.id] || defaultOf(emp);
   const fileRef = useRef(null);
   const [hourlyAll, setHourlyAll] = useState([]);
@@ -403,7 +403,7 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
       if (off > 120) flags.push(`${fmtHours(off)} além do turno — passa de 2h extras por dia`);
       if (own && own[own.length - 1] > shift[0]) flags.push(`começa antes do fim do turno (${own[own.length - 1]})`);
       if (day < 6 && worksOn(schedule, emp, day + 1)) {
-        const next = isIntermittent(emp) ? null : defaultShiftOf(wlOf(emp), sectorMode, day + 1, (schedule.extra_days?.[emp.id] || []).includes(day + 1));
+        const next = defaultShiftOf(wlOf(emp), sectorMode, day + 1);
         if (next) {
           const rest = 24 * 60 - toMin(shift[1]) + toMin(next[0]);
           if (rest < 660) flags.push(`descanso de ${fmtHours(rest)} até a entrada de amanhã (${next[0]}) — mínimo de 11h (art. 66)`);

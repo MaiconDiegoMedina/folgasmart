@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { DAYS, weekDates, isoDate, http, errMsg } from "@/lib/api";
 import { peakHours } from "@/lib/hourlyReport";
-import { defaultShiftOf, toMin, dayMinutes } from "@/lib/workloadTimes";
+import { defaultShiftOf, toMin, dayMinutes, STARTER_SHIFT } from "@/lib/workloadTimes";
 import { isIntermittent, acceptedOn } from "@/lib/convocation";
 import { WeekNav } from "@/components/folga/WeekNav";
 import { PageTitle } from "@/components/folga/Header";
@@ -101,7 +101,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
     return (!has("off_days", e.id, d) || has("extra_days", e.id, d)) && !has("suspension_days", e.id, d) && !has("absence_days", e.id, d);
   };
   const shiftOf = (e, d) =>
-    shifts[String(d)]?.[e.id] || (isIntermittent(e) ? null : defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), d, has("extra_days", e.id, d)));
+    shifts[String(d)]?.[e.id] || defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), d);
 
   const { rows, loose, staff, cover } = useMemo(() => {
     const dayAssign = assign[String(day)] || {};
@@ -109,8 +109,10 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
       const s = shiftOf(e, day);
       const streak = (schedule.streak_alerts?.[e.id] || []).includes(day);
       const extra = has("extra_days", e.id, day);
-      const base = isIntermittent(e) ? null : dayMinutes(defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), day, extra)) || null;
-      const { lvl, note, tag } = dayStatus({ shift: s, base, streak, offDay: extra });
+      const base = dayMinutes(defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), day)) || null;
+      const st = dayStatus({ shift: s, base, streak, offDay: extra });
+      // Sem horário: não dá para dizer que está na jornada
+      const { lvl, note, tag } = !s && st.tag === "Na jornada" ? { ...st, lvl: "warn", tag: "Sem horário", note: "Sem horário no dia: clique em Definir horário" } : st;
       return {
         emp: e, shift: s, lvl, note, tag,
         a: s ? toMin(s[0]) : null,
@@ -254,7 +256,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
     const t = turnoOf(o);
     const mismatch = slot !== null && t !== null && t !== slot;
     const hint = () =>
-      toast.info(`${firstName(o)} entra às ${o.shift[0]}, então fica no ${t + 1}º turno. Para colocá-la no ${slot + 1}º turno, mude o horário dela na sub-aba de horários da Escala.`);
+      toast.info(`${firstName(o)} entra às ${o.shift[0]}, então fica no ${t + 1}º turno. Para colocá-la no ${slot + 1}º turno, arraste a barra dela em "Posição dos caixas no dia".`);
     if (caixaOf(id) === rest) {
       if (mismatch) hint();
       return;
@@ -354,7 +356,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
     else lanes.push([o]);
   });
 
-  // Arrastar a barra muda o horário do dia (salvo como ajuste na sub-aba de horários)
+  // Arrastar a barra muda o horário do dia (salvo como ajuste do dia)
   // Soltar a barra: novo horário (s) e/ou outro caixa (row: id do caixa ou "none")
   const saveShift = async (o, s, row) => {
     if (s) await saveTimes(o, s);
@@ -376,6 +378,18 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
     loadShifts();
   };
   const { grab, preview, shiftFor } = useShiftDrag({ span: SPAN, onCommit: saveShift });
+  // Quem não tem horário (nem jornada) ganha um horário inicial, que depois é ajustado arrastando a barra
+  const setShiftBtn = (o) =>
+    !o.shift && (
+      <button
+        type="button"
+        onClick={() => saveTimes(o, STARTER_SHIFT)}
+        title={`Cria o horário ${STARTER_SHIFT[0]} às ${STARTER_SHIFT[3]} (intervalo ${STARTER_SHIFT[1]}–${STARTER_SHIFT[2]}). Depois arraste a barra para ajustar.`}
+        className="mt-1 block rounded-full border border-[#6D5BD0] bg-white px-2 py-0.5 text-[11px] font-semibold text-[#4B3DA8] hover:bg-[#EEEBFB]"
+      >
+        Definir horário
+      </button>
+    );
 
   const Bar = ({ o, where }) => {
     const s = shiftFor(o);
@@ -543,6 +557,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                                 <small className="block text-[11px] font-medium text-[#5E5880]">{o.shift ? `${o.shift[0]} – ${o.shift[o.shift.length - 1]}` : "sem horário"}</small>
                                 {g.id === "desk" && <span className="block text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A85A3]">{/recep/i.test(o.emp.role || "") ? "recepcionista" : "fiscal"}</span>}
                                 <span className="mt-0.5 block text-[11px] font-bold" style={{ color: LVL[o.lvl].ink }}>{o.tag}</span>
+                                {setShiftBtn(o)}
                               </div>
                             </div>
                           ))
@@ -584,6 +599,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                           <span className="block truncate">{o.emp.name}</span>
                           <small className="block text-xs font-medium text-[#5E5880]">{o.daily}{o.shift ? ` · ${o.shift[0]}` : ""}</small>
                           <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A85A3]">{o.contract}</span>
+                          {setShiftBtn(o)}
                           {moving === o.emp.id ? (
                             <select
                               autoFocus
@@ -689,6 +705,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                     <div className="min-w-0 flex-1">
                       <span className="block truncate">{o.emp.name}</span>
                       <small className="block text-xs font-medium text-[#5E5880]">{o.shift ? `entra ${o.shift[0]}` : "sem horário"}</small>
+                      {setShiftBtn(o)}
                     </div>
                     {picking === o.emp.id ? (
                       <select autoFocus aria-label={`Caixa de ${o.emp.name}`} defaultValue="" onBlur={() => setPicking(null)} onChange={(e) => e.target.value && allocate(o.emp.id, e.target.value)} className="h-[34px] rounded-[17px] border border-[#E4E0F3] bg-white px-2 text-xs">

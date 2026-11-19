@@ -3,7 +3,7 @@ import { Beef, Croissant, Apple, PackageOpen, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { DAYS, weekDates, isoDate, http, errMsg } from "@/lib/api";
 import { peakHours } from "@/lib/hourlyReport";
-import { defaultShiftOf, toMin, dayMinutes } from "@/lib/workloadTimes";
+import { defaultShiftOf, toMin, dayMinutes, STARTER_SHIFT } from "@/lib/workloadTimes";
 import { isIntermittent, acceptedOn } from "@/lib/convocation";
 import { WeekNav } from "@/components/folga/WeekNav";
 import { PageTitle } from "@/components/folga/Header";
@@ -86,7 +86,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
     return null;
   };
   const shiftOf = (e, d) =>
-    shifts[String(d)]?.[e.id] || (isIntermittent(e) ? null : defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), d, has("extra_days", e.id, d)));
+    shifts[String(d)]?.[e.id] || defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), d);
 
   const { team, away, cover } = useMemo(() => {
     const person = (e, s, lvl, note, key = e.id, base = null) => ({
@@ -107,7 +107,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
       }
       const streak = (schedule.streak_alerts?.[e.id] || []).includes(day);
       const extra = has("extra_days", e.id, day);
-      const base = isIntermittent(e) ? null : dayMinutes(defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), day, extra)) || null;
+      const base = dayMinutes(defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), day)) || null;
       const s = shiftOf(e, day);
       const st = dayStatus({ shift: s, base, streak, offDay: extra });
       team.push(person(e, s, st.lvl, st.note, e.id, base));
@@ -137,7 +137,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
   const width = (a, b) => `${(((b - a) / SPAN) * 100).toFixed(2)}%`;
   const visible = (o) => o.a !== null && o.b > START && o.a < END;
 
-  // Arrastar a barra muda o horário do dia (o mesmo ajuste da sub-aba de horários)
+  // Arrastar a barra muda o horário do dia (salvo como ajuste do dia)
   const saveShift = async (o, s) => {
     if (!s) return;
     const k = String(day);
@@ -352,7 +352,13 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
                     <span className="block truncate">{o.emp.name}</span>
                     <small className="block text-xs font-medium text-[#5E5880]">{o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]} · ${o.label}` : "Sem horário definido"}</small>
                     {o.brk && <small className="block text-xs font-medium text-[#5E5880]">Intervalo {o.shift[1]}–{o.shift[2]}</small>}
-                    <span className="mt-1 block text-[11px] font-bold" style={{ color: LVL[o.lvl].ink }}>{o.shift ? o.note : "Defina o horário na sub-aba de horários"}</span>
+                    {o.shift ? (
+                      <span className="mt-1 block text-[11px] font-bold" style={{ color: LVL[o.lvl].ink }}>{o.note}</span>
+                    ) : (
+                      <button type="button" onClick={() => saveShift(o, STARTER_SHIFT)} title={`Cria o horário ${STARTER_SHIFT[0]} às ${STARTER_SHIFT[3]}. Depois arraste a barra para ajustar.`} className="mt-1 block rounded-full border border-[#6D5BD0] bg-white px-2 py-0.5 text-[11px] font-semibold text-[#4B3DA8] hover:bg-[#EEEBFB]">
+                        Definir horário
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}

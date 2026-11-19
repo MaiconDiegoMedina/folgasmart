@@ -21,17 +21,16 @@ export const legacyDay = (minutes, breakMinutes = 60, start = 480) => {
 export const timesOf = (wl) => wl?.times || (wl ? wl.minutes.map((m) => legacyDay(m, wl.break_minutes)) : Array(7).fill(null));
 export const times5x2Of = (wl) => wl?.times_5x2 || (wl?.minutes_5x2 ? legacyDay(wl.minutes_5x2, wl.break_minutes) : null);
 
-// Horário padrão do funcionário no dia — só quando a jornada tem o horário do ponto cadastrado.
-// Dia EXTRA (trabalhando na folga): carrega a jornada mesmo que ela não tenha horário para esse dia,
-// usando o horário de um dia normal dela (ou as horas por dia, a partir das 08:00, em jornadas antigas).
-export const defaultShiftOf = (wl, mode, day, extra = false) => {
+// Horário padrão do funcionário no dia, pela jornada. Usado só nos dias em que ele trabalha.
+// Se a jornada não tem horário para esse dia (ex.: dia EXTRA, ou folga da escala em outro dia da semana),
+// usa o horário de um dia normal dela. Jornada antiga, só com horas por dia: monta a partir das 08:00.
+export const defaultShiftOf = (wl, mode, day) => {
   if (!wl) return null;
-  if (wl.times) {
-    if (mode === "5x2" && wl.times_5x2) return wl.times_5x2;
-    if (wl.times[day]) return wl.times[day];
-    if (!extra) return null;
-  } else if (!extra) return null;
-  if (mode === "5x2" && times5x2Of(wl)) return times5x2Of(wl);
+  const five = times5x2Of(wl);
+  if (mode === "5x2" && five) return five;
   const all = timesOf(wl);
-  return all[day] || all.find(Boolean) || times5x2Of(wl) || null;
+  return all[day] || all.find(Boolean) || five || null;
 };
+
+// Horário inicial para quem não tem jornada: 6h trabalhadas com 15 min de intervalo (ajuste arrastando a barra)
+export const STARTER_SHIFT = ["08:00", "11:00", "11:15", "14:15"];
