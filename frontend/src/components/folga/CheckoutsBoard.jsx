@@ -39,6 +39,8 @@ const STAFF = [
   { id: "desk", name: "Fiscal e Recepcionista", match: /fiscal|recep/i, one: "pessoa", many: "pessoas" },
 ];
 const staffOf = (e) => STAFF.find((g) => g.match.test(e.role || ""))?.id || null;
+// Quem foi colocado num quadro fixo no dia fica salvo como caixa "@pack" / "@desk"
+const boardKey = (gid) => `@${gid}`;
 const initials = (n) => n.split(" ").filter(Boolean).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 const CHIP = "inline-flex h-[26px] items-center whitespace-nowrap rounded-[13px] px-2.5 text-xs font-semibold";
 const PILL = "h-[38px] rounded-[19px] border px-4 text-sm font-medium";
@@ -130,7 +132,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
     }));
     const loose = onDay.filter((e) => /caixa/i.test(e.sector || "") && !dayAssign[e.id] && !staffOf(e)).map(op);
     const staff = Object.fromEntries(
-      STAFF.map((g) => [g.id, onDay.filter((e) => staffOf(e) === g.id && !dayAssign[e.id]).map(op).sort((x, y) => (x.a ?? 9999) - (y.a ?? 9999) || x.emp.name.localeCompare(y.emp.name, "pt-BR"))])
+      STAFF.map((g) => [g.id, onDay.filter((e) => dayAssign[e.id] === boardKey(g.id) || (staffOf(e) === g.id && !dayAssign[e.id])).map((e) => ({ ...op(e), cover: staffOf(e) !== g.id })).sort((x, y) => (x.a ?? 9999) - (y.a ?? 9999) || x.emp.name.localeCompare(y.emp.name, "pt-BR"))])
     );
     const cover = ALL_HOURS.map((h) => {
       const t = h * 60 + 30;
@@ -185,7 +187,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
   const turnoOf = (o) => (o?.a == null ? null : o.a < 12 * 60 ? 0 : 1);
   const opOf = (id) => rows.flatMap((r) => r.ops).concat(loose, ...Object.values(staff)).find((o) => o.emp.id === id);
   const caixaOf = (id) => (assign[String(day)] || {})[id] || null;
-  const caixaName = (id) => checkouts.find((c) => c.id === id)?.name || "caixa";
+  const caixaName = (id) => STAFF.find((g) => boardKey(g.id) === id)?.name || checkouts.find((c) => c.id === id)?.name || "caixa";
   const firstName = (o) => o.emp.name.split(" ")[0];
   const put = (employee_id, checkout_id) => http.put("/checkouts/assign", { week, day, employee_id, checkout_id });
 
@@ -249,6 +251,17 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
     }
     if (kind === "op") {
       if (rest !== id) swapWith(id, rest);
+      return;
+    }
+    // Quadro de Pacoteiros ou de Fiscal e Recepcionista
+    if (kind === "staff") {
+      const o = opOf(id);
+      const key = boardKey(rest);
+      if (!o || caixaOf(id) === key) return;
+      // Pessoa do próprio cargo volta ao quadro dela tirando o caixa; as demais ficam marcadas no quadro
+      if (staffOf(o.emp) === rest) {
+        if (caixaOf(id)) await allocate(id, null);
+      } else await allocate(id, key);
       return;
     }
     const o = opOf(id);
@@ -528,9 +541,9 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
               return (
                 <div
                   key={g.id}
-                  {...dropAt("none")}
+                  {...dropAt(`staff:${g.id}`)}
                   data-staff={g.id}
-                  className="flex flex-col gap-3.5 rounded-[22px] border border-white bg-white/80 p-[18px] shadow-[0_10px_30px_-20px_rgba(70,50,160,0.25)]"
+                  className={`flex flex-col gap-3.5 rounded-[22px] border border-white bg-white/80 p-[18px] shadow-[0_10px_30px_-20px_rgba(70,50,160,0.25)] transition ${over === `staff:${g.id}` ? "ring-2 ring-[#6D5BD0] ring-offset-2" : ""}`}
                 >
                   <div className="flex items-center justify-between">
                     <h3 className="m-0 font-display text-lg font-semibold">{g.name}</h3>
@@ -547,7 +560,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                             <div
                               key={o.emp.id}
                               {...dragProps(o)}
-                              title={`${o.emp.name} · ${o.emp.role || g.name} · ${o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]}` : "sem horário"} · ${o.note}. Arraste para um caixa se precisar cobrir.`}
+                              title={`${o.emp.name} · ${o.emp.role || g.name} · ${o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]}` : "sem horário"} · ${o.note}. Arraste para um caixa, para o outro quadro ou para "Trabalhando sem caixa".`}
                               className={`flex cursor-grab select-none items-start gap-2 rounded-[14px] border-[1.5px] p-2 text-[13px] font-semibold text-[#1B1830] [-webkit-touch-callout:none] active:cursor-grabbing ${dragId === o.emp.id ? "opacity-40" : ""}`}
                               style={LVL[o.lvl].tile}
                             >
@@ -555,7 +568,9 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                               <div className="min-w-0">
                                 <span className="block truncate">{o.emp.name}</span>
                                 <small className="block text-[11px] font-medium text-[#5E5880]">{o.shift ? `${o.shift[0]} – ${o.shift[o.shift.length - 1]}` : "sem horário"}</small>
-                                {g.id === "desk" && <span className="block text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A85A3]">{/recep/i.test(o.emp.role || "") ? "recepcionista" : "fiscal"}</span>}
+                                {o.cover ? (
+                                  <span className="block text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A85A3]">cobrindo · {o.emp.role || o.emp.sector}</span>
+                                ) : g.id === "desk" && <span className="block text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A85A3]">{/recep/i.test(o.emp.role || "") ? "recepcionista" : "fiscal"}</span>}
                                 <span className="mt-0.5 block text-[11px] font-bold" style={{ color: LVL[o.lvl].ink }}>{o.tag}</span>
                                 {setShiftBtn(o)}
                               </div>
@@ -610,6 +625,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                               className="mt-1 h-7 w-full rounded-lg border border-[#E4E0F3] bg-white px-1 text-[11px]"
                             >
                               {checkouts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                              {STAFF.map((g) => <option key={g.id} value={boardKey(g.id)}>{g.name}</option>)}
                             </select>
                           ) : (
                             <span className="mt-1 flex items-center gap-2">
@@ -711,9 +727,10 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                       <select autoFocus aria-label={`Caixa de ${o.emp.name}`} defaultValue="" onBlur={() => setPicking(null)} onChange={(e) => e.target.value && allocate(o.emp.id, e.target.value)} className="h-[34px] rounded-[17px] border border-[#E4E0F3] bg-white px-2 text-xs">
                         <option value="" disabled>Caixa…</option>
                         {checkouts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        {STAFF.map((g) => <option key={g.id} value={boardKey(g.id)}>{g.name}</option>)}
                       </select>
                     ) : (
-                      <button disabled={!checkouts.length} onClick={() => setPicking(o.emp.id)} className="h-[34px] rounded-[17px] border border-[#E4E0F3] bg-white/80 px-3 text-xs font-semibold text-[#1B1830] hover:border-[#17142E] disabled:opacity-40">Alocar</button>
+                      <button onClick={() => setPicking(o.emp.id)} className="h-[34px] rounded-[17px] border border-[#E4E0F3] bg-white/80 px-3 text-xs font-semibold text-[#1B1830] hover:border-[#17142E] disabled:opacity-40">Alocar</button>
                     )}
                   </div>
                 ))}
