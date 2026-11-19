@@ -16,13 +16,15 @@ import { ScheduleGrid } from "@/components/folga/ScheduleGrid";
 import { UnlockDialog } from "@/components/folga/UnlockDialog";
 import { useAuth } from "@/components/LoginGate";
 
+// A aba aberta vale só para o login atual (recarregar a página mantém); cada novo login abre no Início
 const TAB_KEY = "escalasmart.tab";
 const readTab = () => {
   try {
-    const t = localStorage.getItem(TAB_KEY);
-    return TABS.some((x) => x.id === t) ? t : "escala";
+    localStorage.removeItem(TAB_KEY); // versões antigas guardavam a aba para sempre
+    const t = sessionStorage.getItem(TAB_KEY);
+    return TABS.some((x) => x.id === t) ? t : "inicio";
   } catch {
-    return "escala";
+    return "inicio";
   }
 };
 
@@ -31,7 +33,7 @@ export default function Dashboard() {
   const [tab, setTabState] = useState(readTab);
   const setTab = (t) => {
     setTabState(t);
-    try { localStorage.setItem(TAB_KEY, t); } catch { /* sem armazenamento: só não lembra a aba */ }
+    try { sessionStorage.setItem(TAB_KEY, t); } catch { /* sem armazenamento: só não lembra a aba */ }
     window.scrollTo({ top: 0 });
   };
   const [employees, setEmployees] = useState([]);

@@ -42,6 +42,7 @@ http.interceptors.response.use((response) => response, (error) => {
 export const login = async (password) => {
   const { data } = await axios.post(`${API}/auth/login`, { password });
   sessionStorage.setItem(TOKEN_KEY, data.access_token);
+  try { sessionStorage.removeItem("escalasmart.tab"); } catch { /* sem armazenamento */ }
 };
 
 export const logout = async () => {
