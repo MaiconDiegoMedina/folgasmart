@@ -137,15 +137,13 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
   // Arrastar a barra muda o horário do dia (o mesmo ajuste da sub-aba de horários)
   const saveShift = async (o, s) => {
     const k = String(day);
-    const before = shifts[k]?.[o.key] || null;
     const put = (times) => http.put("/shifts", { week, day, employee_id: o.key, ...(times ? shiftPayload(times) : {}) });
     setShifts((prev) => ({ ...prev, [k]: { ...(prev[k] || {}), [o.key]: s } }));
     try {
       await put(s);
       const extra = o.base ? dayMinutes(s) - o.base : 0;
       toast.success(
-        `${o.emp.name.split(" ")[0]}: ${s[0]} às ${s[s.length - 1]}${extra > 0 ? ` · ${fmtDur(extra)} de hora extra` : extra < 0 ? ` · ${fmtDur(-extra)} a menos que a jornada` : ""}`,
-        { action: { label: "Desfazer", onClick: () => put(o.lvl === "help" ? before || o.shift : before).then(loadShifts).catch((e) => toast.error(errMsg(e))) } }
+        `${o.emp.name.split(" ")[0]}: ${s[0]} às ${s[s.length - 1]}${extra > 0 ? ` · ${fmtDur(extra)} de hora extra` : extra < 0 ? ` · ${fmtDur(-extra)} a menos que a jornada` : ""}`
       );
     } catch (e) {
       toast.error(errMsg(e));

@@ -348,15 +348,13 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
   // Arrastar a barra muda o horário do dia (salvo como ajuste na sub-aba de horários)
   const saveShift = async (o, s) => {
     const key = String(day);
-    const before = shifts[key]?.[o.emp.id] || null;
     const put = (times) => http.put("/shifts", { week, day, employee_id: o.emp.id, ...(times ? shiftPayload(times) : {}) });
     setShifts((prev) => ({ ...prev, [key]: { ...(prev[key] || {}), [o.emp.id]: s } }));
     try {
       await put(s);
       const extra = o.base ? dayMinutes(s) - o.base : 0;
       toast.success(
-        `${o.emp.name.split(" ")[0]}: ${s[0]} às ${s[s.length - 1]}${extra > 0 ? ` · ${fmtDur(extra)} de hora extra` : extra < 0 ? ` · ${fmtDur(-extra)} a menos que a jornada` : ""}`,
-        { action: { label: "Desfazer", onClick: () => put(before).then(loadShifts).catch((e) => toast.error(errMsg(e))) } }
+        `${o.emp.name.split(" ")[0]}: ${s[0]} às ${s[s.length - 1]}${extra > 0 ? ` · ${fmtDur(extra)} de hora extra` : extra < 0 ? ` · ${fmtDur(-extra)} a menos que a jornada` : ""}`
       );
     } catch (e) {
       toast.error(errMsg(e));
