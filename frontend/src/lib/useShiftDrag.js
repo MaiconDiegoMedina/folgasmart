@@ -14,6 +14,23 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 // Horas extras permitidas no dia: até 2h para jornada acima de 6h; nenhuma para jornada de até 6h
 export const extraAllowed = (base) => (base > SIX_HOURS ? MAX_EXTRA : 0);
 
+// Intervalo conforme as horas trabalhadas: 15 min entre 4h e 6h; o da jornada (1h ou mais) acima de 6h.
+// Mantém as horas trabalhadas e ajusta a saída (ou a entrada, se foi ela que mudou).
+export const fitBreak = (t, mode = "end", long = 60) => {
+  if (t.length !== 4) return t;
+  const [s, b0, b1, e] = t;
+  const blen = b1 - b0;
+  const w = e - s - blen;
+  let want = null;
+  if (w > 240 && w <= SIX_HOURS && blen > 15) want = 15;
+  else if (w > SIX_HOURS && blen < long) want = long;
+  if (want === null) return t;
+  const d = want - blen;
+  const next = mode === "start" ? [s - d, b0, b0 + want, e] : [s, b0, b0 + want, e + d];
+  if (next[0] < 0 || next[3] > LAST || next[1] - next[0] < MIN_WORK || next[3] - next[2] < MIN_WORK) return t;
+  return next;
+};
+
 // Limites do arrasto: hora extra (2h acima de 6h, nenhuma até 6h) e intervalo de 1h a 2h acima de 6h
 export const limitsOf = (base, orig) => {
   const work = workOf(orig);
@@ -21,6 +38,7 @@ export const limitsOf = (base, orig) => {
     maxWork: base ? Math.max(base + extraAllowed(base), work) : null,
     capLabel: base && base > SIX_HOURS ? "máx. 2h extra" : "sem hora extra",
     brk: orig.length === 4 && Math.max(work, base || 0) > SIX_HOURS ? BREAK_RANGE : null,
+    long: orig.length === 4 ? Math.max(60, orig[2] - orig[1]) : 60,
   };
 };
 
@@ -40,14 +58,14 @@ const shiftWith = (orig, mode, delta, lim) => {
     if (max) lo = Math.max(lo, e - blen - max);
     const want = s + delta;
     const ns = clamp(want, lo, (brk ? brk[0] : e) - MIN_WORK);
-    return { next: [ns, ...orig.slice(1)], capped: !!max && want < lo };
+    return { next: fitBreak([ns, ...orig.slice(1)], "start", lim.long), capped: !!max && want < lo };
   }
   if (mode === "end") {
     let hi = LAST;
     if (max) hi = Math.min(hi, s + blen + max);
     const want = e + delta;
     const ne = clamp(want, (brk ? brk[1] : s) + MIN_WORK, hi);
-    return { next: [...orig.slice(0, -1), ne], capped: !!max && want > hi };
+    return { next: fitBreak([...orig.slice(0, -1), ne], "end", lim.long), capped: !!max && want > hi };
   }
   if (!brk) return { next: orig, capped: false };
   if (mode === "break") {
