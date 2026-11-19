@@ -51,7 +51,6 @@ export default function Dashboard() {
     // Cada pedido é independente: se um falhar (ex.: servidor ainda sem a rota nova), o resto carrega
     const requests = [
       ["/employees", setEmployees],
-      ["/movement", setMovement],
       ["/sectors/modes", setSectorModes],
       ["/workloads", setWorkloads],
       ["/vacations", setVacations],
@@ -68,6 +67,9 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    http.get("/movement", { params: { week } }).then(({ data }) => setMovement(data)).catch(() => setMovement(null));
+  }, [week]);
   useEffect(() => {
     http.get("/schedule", { params: { week } }).then(({ data }) => setSchedule(data)).catch((err) => toast.error(errMsg(err)));
   }, [week, employees]);
@@ -131,7 +133,7 @@ export default function Dashboard() {
           )}
           {tab === "movimento" && (
             <>
-              <MovementPanel movement={movement} onChange={setMovement} />
+              <MovementPanel movement={movement} onChange={setMovement} week={week} onWeek={setWeek} />
             </>
           )}
           {tab === "caixas" && (

@@ -38,8 +38,8 @@ export const HomePanel = ({ employees, schedule, movement, week, onTab }) => {
   const day = idx >= 0 ? idx : 0;
   const [hourly, setHourly] = useState([]);
   useEffect(() => {
-    http.get("/hourly").then(({ data }) => setHourly(data || [])).catch(() => setHourly([]));
-  }, []);
+    http.get("/hourly", { params: { week } }).then(({ data }) => setHourly(data || [])).catch(() => setHourly([]));
+  }, [week]);
 
   const has = (key, id, d) => (schedule[key]?.[id] || []).includes(d);
   const closedOn = (d) => (schedule.closed_days || []).includes(d);

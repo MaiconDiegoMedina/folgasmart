@@ -221,8 +221,8 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    http.get("/hourly").then(({ data }) => setHourlyAll(data)).catch((e) => toast.error(errMsg(e)));
-  }, []);
+    http.get("/hourly", { params: { week } }).then(({ data }) => setHourlyAll(data)).catch((e) => toast.error(errMsg(e)));
+  }, [week]);
   useEffect(() => {
     setShifts({});
     http.get("/shifts", { params: { week, day } }).then(({ data }) => setShifts(data.shifts)).catch((e) => toast.error(errMsg(e)));
@@ -312,10 +312,10 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
   const saveReport = async (period, targetDay) => {
     setSaving(true);
     try {
-      const { data } = await http.put("/hourly", { day: targetDay, label: period.label, hours: period.hours });
+      const { data } = await http.put("/hourly", { week, day: targetDay, label: period.label, hours: period.hours });
       setHourlyAll((all) => [...all.filter((h) => h.day !== targetDay), data]);
       setPreview(null);
-      toast.success(`Movimento por horário salvo para ${DAYS[targetDay]}`);
+      toast.success(`Movimento por horário salvo para ${DAYS[targetDay]} desta semana`);
     } catch (e) {
       toast.error(errMsg(e));
     } finally {
@@ -325,8 +325,9 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
 
   const removeReport = async () => {
     try {
-      await http.delete(`/hourly/${day}`);
-      setHourlyAll((all) => all.filter((h) => h.day !== day));
+      await http.delete(`/hourly/${day}`, { params: { week } });
+      const { data } = await http.get("/hourly", { params: { week } });
+      setHourlyAll(data);
     } catch (e) {
       toast.error(errMsg(e));
     }
@@ -549,11 +550,12 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
           <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#8A85A3]">Horários de pico · {sector}</p>
           <h3 className="font-display text-2xl font-bold tracking-tight mt-1">{DAYS[day]}, {fmtDayMonth(date)}</h3>
           <p className="text-xs text-[#5E5880] mt-1">
-            {report ? <>Movimento da loja: <b>{report.label || "relatório importado"}</b></> : "Nenhum relatório de horários para este dia da semana."}
+            {report ? <>Movimento da loja: <b>{report.label || "relatório importado"}</b></> : "Nenhum relatório de horários para este dia nesta semana."}
+            {report && report.week !== week && <span className="ml-1 font-semibold text-[#7A5500]">· {report.week ? `da semana de ${report.week.slice(8, 10)}/${report.week.slice(5, 7)}` : "importação antiga"}. Importe o desta semana.</span>}
           </p>
         </div>
         <div className="flex gap-2 no-print">
-          {report && (
+          {report && report.week === week && (
             <Button size="sm" variant="ghost" onClick={removeReport} className="hover:bg-[#EEEBFB]">
               <Trash2 className="h-4 w-4 mr-1" /> Remover relatório
             </Button>

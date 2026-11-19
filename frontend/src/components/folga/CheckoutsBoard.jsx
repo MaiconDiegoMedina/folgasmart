@@ -67,8 +67,8 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
     loadShifts();
   }, [week, loadAssign, loadShifts]);
   useEffect(() => {
-    http.get("/hourly").then(({ data }) => setHourly(data || [])).catch(() => setHourly([]));
-  }, []);
+    http.get("/hourly", { params: { week } }).then(({ data }) => setHourly(data || [])).catch(() => setHourly([]));
+  }, [week]);
 
   const allocate = async (employee_id, checkout_id) => {
     setPicking(null);

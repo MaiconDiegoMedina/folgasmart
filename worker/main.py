@@ -145,6 +145,8 @@ SCHEMA_STATEMENTS = [
     closed INTEGER NOT NULL DEFAULT 0)""",
     """CREATE TABLE IF NOT EXISTS checkout_assign (week TEXT NOT NULL, day INTEGER NOT NULL, data TEXT NOT NULL,
     PRIMARY KEY (week, day))""",
+    """CREATE TABLE IF NOT EXISTS hourly_week (week TEXT NOT NULL, day INTEGER NOT NULL, label TEXT NOT NULL DEFAULT '',
+    hours TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (week, day))""",
 ]
 DEFAULT_WORKLOADS = [
     ("8h_4h", "8h seg–sex + 4h sáb", [480, 480, 480, 480, 480, 240, 480], 60, 528),
@@ -154,7 +156,7 @@ DEFAULT_WORKLOADS = [
 NEW_COLUMNS = [("employees", "gender"), ("employees", "workload"), ("schedule", "sector_modes"),
                ("schedule", "absence_days"), ("employees", "contract"), ("schedule", "convocations"),
                ("workloads", "times"), ("workloads", "times_5x2"),
-               ("vacations", "kind")]
+               ("vacations", "kind"), ("movement", "source")]
 
 
 async def ensure_schema(request: Request) -> None:
@@ -219,14 +221,18 @@ class Movement(BaseModel):
     peak_days: List[int] = Field(default_factory=list)
     total_records: int = 0
     updated_at: str | None = None
+    week: str | None = None  # semana dona destes dados (None = importação antiga, sem semana)
+    source_week: str | None = None  # semana em que o CSV foi importado
 
 
 class CsvImport(BaseModel):
     csv: str
+    week: str | None = None
 
 
 class PeaksIn(BaseModel):
     peak_days: List[int]
+    week: str | None = None
 
 
 class Schedule(BaseModel):
@@ -372,10 +378,11 @@ class HourlyIn(BaseModel):
     day: int = Field(ge=0, le=6)
     label: str = ""
     hours: List[HourPoint] = Field(min_length=1, max_length=24)
+    week: str | None = None
 
 
 class Hourly(HourlyIn):
-    updated_at: str | None = None
+    updated_at: str | None = None  # week: semana de onde veio o relatório (None = importação antiga)
 
 
 class ShiftIn(BaseModel):
@@ -414,27 +421,38 @@ async def list_employees(request: Request) -> List[Employee]:
     ) for row in result.results]
 
 
-async def get_movement(request: Request) -> Movement:
-    row = await db(request).prepare(
-        "SELECT avg, samples, peak_days, total_records, updated_at FROM movement WHERE key = ?"
-    ).bind("main").first()
+MOVEMENT_COLS = "key, avg, samples, peak_days, total_records, updated_at, source"
+
+
+async def get_movement(request: Request, week: str | None = None) -> Movement:
+    """Movimento da semana; sem importação nela, o da última semana anterior importada (ou o antigo)."""
+    database = db(request)
+    row = None
+    if week:
+        row = await database.prepare(
+            f"SELECT {MOVEMENT_COLS} FROM movement WHERE key LIKE '____-__-__' AND key <= ? ORDER BY key DESC LIMIT 1"
+        ).bind(week_start(week)).first()
+    if not row:
+        row = await database.prepare(f"SELECT {MOVEMENT_COLS} FROM movement WHERE key = ?").bind("main").first()
     if not row:
         return Movement()
+    key = None if row["key"] == "main" else row["key"]
     return Movement(
         avg=json.loads(row["avg"]), samples=json.loads(row["samples"]),
         peak_days=json.loads(row["peak_days"]), total_records=row["total_records"],
-        updated_at=row["updated_at"],
+        updated_at=row["updated_at"], week=key, source_week=row["source"] or key,
     )
 
 
-async def save_movement(request: Request, movement: Movement) -> None:
+async def save_movement(request: Request, movement: Movement, key: str = "main") -> None:
     await db(request).prepare(
-        """INSERT INTO movement (key, avg, samples, peak_days, total_records, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET
+        """INSERT INTO movement (key, avg, samples, peak_days, total_records, updated_at, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET
         avg=excluded.avg, samples=excluded.samples, peak_days=excluded.peak_days,
-        total_records=excluded.total_records, updated_at=excluded.updated_at"""
-    ).bind("main", json.dumps(movement.avg), json.dumps(movement.samples),
-           json.dumps(movement.peak_days), movement.total_records, movement.updated_at).run()
+        total_records=excluded.total_records, updated_at=excluded.updated_at, source=excluded.source"""
+    ).bind(key, json.dumps(movement.avg), json.dumps(movement.samples),
+           json.dumps(movement.peak_days), movement.total_records, movement.updated_at,
+           movement.source_week).run()
 
 
 async def vacation_days_for(request: Request, week: str, kind: str = "ferias") -> Dict[str, List[int]]:
@@ -871,8 +889,8 @@ async def delete_employee(emp_id: str, request: Request):
 
 
 @api.get("/movement", response_model=Movement)
-async def movement_api(request: Request):
-    return await get_movement(request)
+async def movement_api(request: Request, week: str | None = None):
+    return await get_movement(request, week)
 
 
 @api.post("/movement/import", response_model=Movement)
@@ -896,18 +914,23 @@ async def import_movement(data: CsvImport, request: Request):
     peaks = sorted([i for i in range(7) if averages[i] >= mean * 1.15], key=lambda i: -averages[i])[:3]
     if not peaks:
         peaks = [max(range(7), key=lambda i: averages[i])]
+    key = week_start(data.week) if data.week else "main"
     mov = Movement(avg=averages, samples=counts, peak_days=sorted(peaks),
-                   total_records=records, updated_at=now_iso())
-    await save_movement(request, mov)
+                   total_records=records, updated_at=now_iso(),
+                   week=None if key == "main" else key, source_week=None if key == "main" else key)
+    await save_movement(request, mov, key)
     return mov
 
 
 @api.put("/movement/peaks", response_model=Movement)
 async def set_peaks(data: PeaksIn, request: Request):
-    mov = await get_movement(request)
+    # Pico marcado numa semana sem importação própria: vale só para ela (copia o movimento usado)
+    key = week_start(data.week) if data.week else "main"
+    mov = await get_movement(request, data.week)
     mov.peak_days = sorted({day for day in data.peak_days if 0 <= day <= 6})
     mov.updated_at = now_iso()
-    await save_movement(request, mov)
+    mov.week = None if key == "main" else key
+    await save_movement(request, mov, key)
     return mov
 
 
@@ -1082,7 +1105,7 @@ async def generate(data: GenerateIn, request: Request):
         raise HTTPException(423, "Esta semana já começou e os dias passados estão bloqueados. "
                                  "Para gerar de novo, desbloqueie com a senha do administrador.")
     employees = await list_employees(request)
-    mov = await get_movement(request)
+    mov = await get_movement(request, week)
     week_date = date.fromisoformat(week)
     previous_week = (week_date - timedelta(days=7)).isoformat()
     rotate = week_date.isocalendar()[1]
@@ -1221,29 +1244,56 @@ async def toggle_cell(data: CellToggle, request: Request):
 
 
 @api.get("/hourly", response_model=List[Hourly])
-async def hourly_api(request: Request):
-    rows = (await db(request).prepare(
+async def hourly_api(request: Request, week: str | None = None):
+    """Relatório por hora de cada dia da semana. Dia sem relatório nesta semana usa o da última
+    semana anterior que tiver (o campo week diz de qual semana veio; None = importação antiga)."""
+    database = db(request)
+    picked: Dict[int, Hourly] = {}
+    if week:
+        rows = (await database.prepare(
+            "SELECT week, day, label, hours, updated_at FROM hourly_week WHERE week <= ? ORDER BY week DESC"
+        ).bind(week_start(week)).all()).results
+        for row in rows:
+            if row["day"] not in picked:
+                picked[row["day"]] = Hourly(day=row["day"], label=row["label"] or "", hours=json.loads(row["hours"]),
+                                            updated_at=row["updated_at"], week=row["week"])
+    rows = (await database.prepare(
         "SELECT day, label, hours, updated_at FROM hourly_movement ORDER BY day"
     ).all()).results
-    return [Hourly(day=row["day"], label=row["label"] or "", hours=json.loads(row["hours"]),
-                   updated_at=row["updated_at"]) for row in rows]
+    for row in rows:
+        if row["day"] not in picked:
+            picked[row["day"]] = Hourly(day=row["day"], label=row["label"] or "", hours=json.loads(row["hours"]),
+                                        updated_at=row["updated_at"])
+    return [picked[d] for d in sorted(picked)]
 
 
 @api.put("/hourly", response_model=Hourly)
 async def save_hourly(data: HourlyIn, request: Request):
     hours = sorted({h.hour: h for h in data.hours}.values(), key=lambda h: h.hour)
-    item = Hourly(day=data.day, label=data.label.strip()[:120], hours=hours, updated_at=now_iso())
-    await db(request).prepare(
-        """INSERT INTO hourly_movement (day, label, hours, updated_at) VALUES (?, ?, ?, ?)
-        ON CONFLICT(day) DO UPDATE SET label=excluded.label, hours=excluded.hours,
-        updated_at=excluded.updated_at"""
-    ).bind(item.day, item.label, json.dumps([h.model_dump() for h in item.hours]), item.updated_at).run()
+    week = week_start(data.week) if data.week else None
+    item = Hourly(day=data.day, label=data.label.strip()[:120], hours=hours, updated_at=now_iso(), week=week)
+    payload = json.dumps([h.model_dump() for h in item.hours])
+    if week:
+        await db(request).prepare(
+            """INSERT INTO hourly_week (week, day, label, hours, updated_at) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(week, day) DO UPDATE SET label=excluded.label, hours=excluded.hours,
+            updated_at=excluded.updated_at"""
+        ).bind(week, item.day, item.label, payload, item.updated_at).run()
+    else:
+        await db(request).prepare(
+            """INSERT INTO hourly_movement (day, label, hours, updated_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT(day) DO UPDATE SET label=excluded.label, hours=excluded.hours,
+            updated_at=excluded.updated_at"""
+        ).bind(item.day, item.label, payload, item.updated_at).run()
     return item
 
 
 @api.delete("/hourly/{day}")
-async def delete_hourly(day: int, request: Request):
-    await db(request).prepare("DELETE FROM hourly_movement WHERE day = ?").bind(day).run()
+async def delete_hourly(day: int, request: Request, week: str | None = None):
+    if week:
+        await db(request).prepare("DELETE FROM hourly_week WHERE week = ? AND day = ?").bind(week_start(week), day).run()
+    else:
+        await db(request).prepare("DELETE FROM hourly_movement WHERE day = ?").bind(day).run()
     return {"ok": True}
 
 
