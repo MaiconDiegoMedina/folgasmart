@@ -198,7 +198,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
           <section className="glass rounded-[26px] p-[22px]" aria-label={`Equipe de ${conf.label} ao longo do dia`}>
             <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="m-0 text-lg font-bold">Equipe no dia</h2>
+                <h2 className="m-0 text-lg font-bold">Posição da equipe no dia</h2>
                 <p className="mt-1 text-[13px] text-[#5E5880]">Cada barra é uma pessoa. Parte listrada = intervalo. Passe o mouse para ver o horário.</p>
               </div>
               <div className="flex flex-wrap gap-3 text-xs text-[#4A4566]">
@@ -214,17 +214,17 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
             ) : (
               <div className="-mx-1.5 overflow-x-auto px-1.5 pb-1 pt-2.5">
                 <div className="flex min-w-[820px] flex-col gap-1.5">
-                  <div className="grid grid-cols-[130px_1fr] items-center gap-2.5">
+                  <div className="grid grid-cols-[110px_1fr] items-center gap-2.5">
                     <span />
                     <div className="grid font-display text-[11px] font-medium text-[#5E5880]" style={{ gridTemplateColumns: `repeat(${HOURS.length}, 1fr)` }}>
                       {HOURS.map((h) => <span key={h} className={peaks.includes(h) ? "font-semibold text-[#7A5500]" : ""}>{String(h).padStart(2, "0")}h</span>)}
                     </div>
                   </div>
                   {team.map((o) => (
-                    <div key={`${o.emp.id}${o.lvl}`} className="grid grid-cols-[130px_1fr] items-center gap-2.5">
+                    <div key={`${o.emp.id}${o.lvl}`} className="grid grid-cols-[110px_1fr] items-center gap-2.5">
                       <div className="truncate font-display text-[13px] font-semibold" title={o.emp.name}>
-                        {o.emp.name}
-                        <small className="block font-sans text-[11px] font-medium text-[#5E5880]">{o.shift ? `${o.shift[0]}–${o.shift[o.shift.length - 1]}` : "sem horário"}</small>
+                        {o.emp.name.split(" ").slice(0, 2).join(" ")}
+                        <small className="block truncate font-sans text-[11px] font-medium text-[#5E5880]">{o.lvl === "help" ? `ajuda · ${o.emp.sector}` : o.shift ? (o.a < 12 * 60 ? "1º turno" : "2º turno") : "sem horário"}</small>
                       </div>
                       <div className="relative h-[34px] rounded-xl" style={trackStyle}>
                         {nowMin !== null && nowMin > START && nowMin < END && <div className="absolute -top-1.5 -bottom-1.5 z-[2] w-0.5 rounded bg-[#6D5BD0]" style={{ left: pct(nowMin) }} />}
@@ -235,6 +235,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
                             style={{ left: pct(Math.max(o.a, START)), width: `calc(${width(Math.max(o.a, START), Math.min(o.b, END))} - 2px)`, background: LVL[o.lvl].bar, color: LVL[o.lvl].barInk }}
                           >
                             {o.emp.name.split(" ")[0]}
+                            {Math.min(o.b, END) - Math.max(o.a, START) >= SPAN / 4 && <i className="text-[11px] font-medium not-italic opacity-80">{o.shift[0]} – {o.shift[o.shift.length - 1]}</i>}
                           </div>
                         )}
                         {o.brk && o.brk[1] > START && o.brk[0] < END && (
@@ -247,8 +248,8 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
                       </div>
                     </div>
                   ))}
-                  <div className="mt-[18px] grid grid-cols-[130px_1fr] items-end gap-2.5">
-                    <div className="font-display text-[13px] font-semibold">Na loja<small className="block font-sans text-[11px] font-medium text-[#5E5880]">pessoas por hora</small></div>
+                  <div className="mt-[18px] grid grid-cols-[110px_1fr] items-end gap-2.5">
+                    <div className="font-display text-[13px] font-semibold">Escalados<small className="block font-sans text-[11px] font-medium text-[#5E5880]">por hora</small></div>
                     <div className="grid h-16 items-end gap-1" style={{ gridTemplateColumns: `repeat(${HOURS.length}, 1fr)` }}>
                       {HOURS.map((h) => {
                         const n = cover[idxOf(h)];
@@ -256,7 +257,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
                         return (
                           <div
                             key={h}
-                            title={`${String(h).padStart(2, "0")}h: ${n} ${n === 1 ? "pessoa" : "pessoas"}${pk ? " · horário de pico" : ""}`}
+                            title={`${String(h).padStart(2, "0")}h: ${n} ${n === 1 ? "pessoa escalada" : "pessoas escaladas"}${pk ? " · horário de pico" : ""}`}
                             className="relative flex justify-center rounded-t-md rounded-b-[3px]"
                             style={{ height: `${Math.max(6, (n / maxCover) * 100)}%`, background: pk ? (n ? "#F2C94C" : "#EE9A9A") : n ? "#C9BFFF" : "#ECE8FB" }}
                           >
