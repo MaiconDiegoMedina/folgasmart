@@ -682,7 +682,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
           <div className="glass flex flex-col gap-2.5 rounded-[26px] p-[22px]">
             <p className="m-0 text-[13px] font-semibold text-[#5E5880]">Cobertura do dia por turno</p>
             {!hasNeed ? (
-              <p className="m-0 text-[13px] text-[#5E5880]">Importe o movimento por hora deste dia na sub-aba de horários da Escala para ver quantos caixas precisam estar abertos.</p>
+              <p className="m-0 text-[13px] text-[#5E5880]">Importe o relatório por hora deste dia na aba Movimento para ver quantos caixas precisam estar abertos.</p>
             ) : (
               coverage.map(({ name, st }) => (
                 <div key={name} className="flex items-center justify-between">
