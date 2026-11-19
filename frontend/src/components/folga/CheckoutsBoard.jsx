@@ -8,6 +8,8 @@ import { WeekNav } from "@/components/folga/WeekNav";
 import { PageTitle } from "@/components/folga/Header";
 import { CheckoutsPanel } from "@/components/folga/CheckoutsPanel";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ShiftBar } from "@/components/folga/ShiftBar";
+import { useShiftDrag, shiftPayload } from "@/lib/useShiftDrag";
 
 const ALL_HOURS = Array.from({ length: 18 }, (_, i) => 6 + i); // 6h..23h
 const TURNOS = [
@@ -109,6 +111,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
         b: s ? toMin(s[s.length - 1]) : null,
         brk: s && s.length === 4 ? [toMin(s[1]), toMin(s[2])] : null,
         daily: s ? `${fmtDur(dayMinutes(s))} por dia` : "sem horário",
+        base: isIntermittent(e) ? null : dayMinutes(defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), day)) || null,
         contract: e.contract || (isIntermittent(e) ? "intermitente" : "efetivo"),
       };
     };
@@ -342,31 +345,41 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
     else lanes.push([o]);
   });
 
-  const Bar = ({ o, where }) =>
-    !visible(o) ? null : (
-      <>
-        <div
-          title={`${o.emp.name} · ${where} · ${o.shift[0]} às ${o.shift[o.shift.length - 1]}${o.brk ? ` · intervalo ${o.shift[1]}–${o.shift[2]}` : ""} · ${o.note}`}
-          className={`absolute top-[3px] bottom-[3px] flex cursor-pointer items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-[10px] px-2 text-xs font-semibold ${where === "sem caixa" ? "border-[1.5px] border-dashed border-[#B9B2DA] bg-white/60 text-[#4B3DA8]" : ""}`}
-          style={{
-            left: pct(Math.max(o.a, START)),
-            width: `calc(${width(Math.max(o.a, START), Math.min(o.b, END))} - 2px)`,
-            ...(where === "sem caixa" ? {} : { background: LVL[o.lvl].bar, color: LVL[o.lvl].barInk }),
-          }}
-        >
-          {o.emp.name.split(" ")[0]}
-          {Math.min(o.b, END) - Math.max(o.a, START) >= SPAN / 4 && <i className="text-[11px] font-medium not-italic opacity-80">{o.shift[0]} – {o.shift[o.shift.length - 1]}</i>}
-        </div>
-        {o.brk && o.brk[1] > START && o.brk[0] < END && (
-          <div
-            title={`Intervalo de ${o.emp.name.split(" ")[0]} · ${o.shift[1]}–${o.shift[2]}`}
-            className="absolute top-[3px] bottom-[3px]"
-            style={{ left: pct(Math.max(o.brk[0], START)), width: width(Math.max(o.brk[0], START), Math.min(o.brk[1], END)), background: "repeating-linear-gradient(135deg,rgba(255,255,255,.9) 0 3px,rgba(255,255,255,.35) 3px 6px)" }}
-          />
-        )}
-      </>
-    );
+  // Arrastar a barra muda o horário do dia (salvo como ajuste na sub-aba de horários)
+  const saveShift = async (o, s) => {
+    const key = String(day);
+    const before = shifts[key]?.[o.emp.id] || null;
+    const put = (times) => http.put("/shifts", { week, day, employee_id: o.emp.id, ...(times ? shiftPayload(times) : {}) });
+    setShifts((prev) => ({ ...prev, [key]: { ...(prev[key] || {}), [o.emp.id]: s } }));
+    try {
+      await put(s);
+      const extra = o.base ? dayMinutes(s) - o.base : 0;
+      toast.success(
+        `${o.emp.name.split(" ")[0]}: ${s[0]} às ${s[s.length - 1]}${extra > 0 ? ` · ${fmtDur(extra)} de hora extra` : extra < 0 ? ` · ${fmtDur(-extra)} a menos que a jornada` : ""}`,
+        { action: { label: "Desfazer", onClick: () => put(before).then(loadShifts).catch((e) => toast.error(errMsg(e))) } }
+      );
+    } catch (e) {
+      toast.error(errMsg(e));
+    }
+    loadShifts();
+  };
+  const { grab, preview, shiftFor } = useShiftDrag({ span: SPAN, onCommit: saveShift });
 
+  const Bar = ({ o, where }) => {
+    const s = shiftFor(o);
+    return (
+      <ShiftBar
+        o={o}
+        shift={s}
+        win={{ START, END, SPAN }}
+        colors={where === "sem caixa" ? { dashed: true } : { bg: LVL[o.lvl].bar, ink: LVL[o.lvl].barInk }}
+        title={`${o.emp.name} · ${where} · ${o.note}.`}
+        grab={grab}
+        dragging={preview?.key === o.emp.id}
+        extra={o.base && s ? dayMinutes(s) - o.base : 0}
+      />
+    );
+  };
   const trackStyle = { background: `repeating-linear-gradient(90deg,rgba(94,88,128,.10) 0 1px,transparent 1px calc(100% / ${HOURS.length})),rgba(255,255,255,.55)` };
   const dayName = DAYS[day].toLowerCase();
   const dm = `${String(dates[day].getDate()).padStart(2, "0")}/${String(dates[day].getMonth() + 1).padStart(2, "0")}`;
@@ -407,7 +420,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
         <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="m-0 text-lg font-bold">Posição dos caixas no dia</h2>
-            <p className="mt-1 text-[13px] text-[#5E5880]">Cada barra é uma operadora no seu caixa. Parte listrada = intervalo. Passe o mouse para ver o horário.</p>
+            <p className="mt-1 text-[13px] text-[#5E5880]">Cada barra é uma operadora no seu caixa. Parte listrada = intervalo. Arraste a barra para mudar o horário; puxe a ponta direita para hora extra. No celular, segure a barra antes de arrastar.</p>
           </div>
           <div className="flex flex-wrap gap-3 text-xs text-[#4A4566]">
             <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#BFE6D1]" />Na jornada</span>
@@ -434,7 +447,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                     {r.name}
                     <small className="block font-sans text-[11px] font-medium text-[#5E5880]">{r.ops.length ? `${r.ops.length} ${r.ops.length > 1 ? "turnos" : "turno"}` : "livre"}</small>
                   </div>
-                  <div className="relative h-[34px] rounded-xl" style={trackStyle}>
+                  <div data-track className="relative h-[34px] rounded-xl" style={trackStyle}>
                     {nowMin !== null && nowMin > START && nowMin < END && <div className="absolute -top-1.5 -bottom-1.5 z-[2] w-0.5 rounded bg-[#6D5BD0]" style={{ left: pct(nowMin) }} />}
                     {r.ops.map((o) => <Bar key={o.emp.id} o={o} where={r.name} />)}
                   </div>
@@ -445,7 +458,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                   <div className="font-display text-[13px] font-semibold">Sem caixa<small className="block font-sans text-[11px] font-medium text-[#5E5880]">{loose.length} {loose.length === 1 ? "pessoa" : "pessoas"}</small></div>
                   <div className="flex flex-col gap-1">
                     {(lanes.length ? lanes : [[]]).map((l, i) => (
-                      <div key={i} className="relative h-[34px] rounded-xl border border-dashed border-[#D6D0EE]">{l.map((o) => <Bar key={o.emp.id} o={o} where="sem caixa" />)}</div>
+                      <div key={i} data-track className="relative h-[34px] rounded-xl border border-dashed border-[#D6D0EE]">{l.map((o) => <Bar key={o.emp.id} o={o} where="sem caixa" />)}</div>
                     ))}
                   </div>
                 </div>

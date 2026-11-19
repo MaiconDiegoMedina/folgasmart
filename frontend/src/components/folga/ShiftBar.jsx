@@ -1,0 +1,50 @@
+import { toMin } from "@/lib/workloadTimes";
+
+const fmtDur = (m) => `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}`;
+const STRIPES = "repeating-linear-gradient(135deg,rgba(255,255,255,.9) 0 3px,rgba(255,255,255,.35) 3px 6px)";
+
+/**
+ * Barra de horário arrastável do gráfico do dia (Caixas e setores).
+ * shift: horário a mostrar (o do arrasto, enquanto arrasta); extra: minutos acima (+) ou abaixo (−) da jornada.
+ */
+export const ShiftBar = ({ o, shift, win, colors, title, grab, dragging, extra = 0 }) => {
+  if (!shift) return null;
+  const { START, END, SPAN } = win;
+  const a = toMin(shift[0]);
+  const b = toMin(shift[shift.length - 1]);
+  if (b <= START || a >= END) return null;
+  const brk = shift.length === 4 ? [toMin(shift[1]), toMin(shift[2])] : null;
+  const pct = (m) => `${(((m - START) / SPAN) * 100).toFixed(2)}%`;
+  const width = (x, y) => `${(((y - x) / SPAN) * 100).toFixed(2)}%`;
+  const from = Math.max(a, START);
+  const to = Math.min(b, END);
+  const first = o.emp.name.split(" ")[0];
+  const handle = "absolute top-0 bottom-0 z-[3] w-2.5 cursor-ew-resize touch-none";
+  return (
+    <>
+      <div
+        {...grab(o, "move")}
+        title={`${title} Arraste para mudar o horário; puxe as pontas para mudar só a entrada ou a saída.`}
+        className={`absolute top-[3px] bottom-[3px] flex cursor-grab select-none items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-[10px] px-2.5 text-xs font-semibold [-webkit-touch-callout:none] active:cursor-grabbing ${colors.dashed ? "border-[1.5px] border-dashed border-[#B9B2DA] bg-white/60 text-[#4B3DA8]" : ""} ${dragging ? "z-[4] shadow-[0_8px_20px_-8px_rgba(40,30,110,0.55)] ring-2 ring-[#6D5BD0]" : ""}`}
+        style={{ left: pct(from), width: `calc(${width(from, to)} - 2px)`, ...(colors.dashed ? {} : { background: colors.bg, color: colors.ink }) }}
+      >
+        {a >= START && <span {...grab(o, "start")} className={`${handle} left-0`} aria-hidden="true" />}
+        {first}
+        {(to - from >= SPAN / 4 || dragging) && <i className="text-[11px] font-medium not-italic opacity-80">{shift[0]} – {shift[shift.length - 1]}</i>}
+        {extra > 0 && <b className="rounded-md bg-[#6D5BD0] px-1 text-[10px] font-bold text-white" title={`${fmtDur(extra)} de hora extra`}>+{fmtDur(extra)}</b>}
+        {extra < 0 && dragging && <b className="rounded-md bg-white/80 px-1 text-[10px] font-bold text-[#7A5500]">−{fmtDur(-extra)}</b>}
+        {b <= END && <span {...grab(o, "end")} className={`${handle} right-0`} aria-hidden="true" />}
+      </div>
+      {brk && brk[1] > START && brk[0] < END && (
+        <div
+          {...grab(o, "break")}
+          title={`Intervalo de ${first} · ${shift[1]}–${shift[2]}. Arraste para mudar o intervalo.`}
+          className="absolute top-[3px] bottom-[3px] z-[5] cursor-grab select-none active:cursor-grabbing"
+          style={{ left: pct(Math.max(brk[0], START)), width: width(Math.max(brk[0], START), Math.min(brk[1], END)), background: STRIPES }}
+        />
+      )}
+    </>
+  );
+};
+
+export { fmtDur };

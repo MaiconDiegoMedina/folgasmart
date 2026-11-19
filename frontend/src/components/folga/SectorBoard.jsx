@@ -7,6 +7,8 @@ import { defaultShiftOf, toMin, dayMinutes } from "@/lib/workloadTimes";
 import { isIntermittent, acceptedOn } from "@/lib/convocation";
 import { WeekNav } from "@/components/folga/WeekNav";
 import { PageTitle } from "@/components/folga/Header";
+import { ShiftBar } from "@/components/folga/ShiftBar";
+import { useShiftDrag, shiftPayload } from "@/lib/useShiftDrag";
 
 // Abas de setor: o setor do funcionário é reconhecido pelo nome (ex.: "Açougue", "Hortifruti", "FLV")
 export const SECTOR_TABS = [
@@ -87,8 +89,8 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
     shifts[String(d)]?.[e.id] || (isIntermittent(e) ? null : defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), d));
 
   const { team, away, cover } = useMemo(() => {
-    const person = (e, s, lvl, note) => ({
-      emp: e, shift: s, lvl, note,
+    const person = (e, s, lvl, note, key = e.id, base = null) => ({
+      emp: e, shift: s, lvl, note, key, base,
       a: s ? toMin(s[0]) : null,
       b: s ? toMin(s[s.length - 1]) : null,
       brk: s && s.length === 4 ? [toMin(s[1]), toMin(s[2])] : null,
@@ -104,7 +106,8 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
       }
       const streak = (schedule.streak_alerts?.[e.id] || []).includes(day);
       const extra = has("extra_days", e.id, day);
-      team.push(person(e, shiftOf(e, day), streak ? "risk" : extra ? "warn" : "ok", streak ? "Passou de 6 dias seguidos" : extra ? "Extra no dia de folga" : "Na jornada"));
+      const base = isIntermittent(e) ? null : dayMinutes(defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), day)) || null;
+      team.push(person(e, shiftOf(e, day), streak ? "risk" : extra ? "warn" : "ok", streak ? "Passou de 6 dias seguidos" : extra ? "Extra no dia de folga" : "Na jornada", e.id, base));
     }
     // Ajuda de outro setor salva na sub-aba de horários (chave "funcionário@setor")
     const byId = Object.fromEntries(employees.map((e) => [e.id, e]));
@@ -112,7 +115,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
       const parts = key.split("@");
       if (parts.length !== 2 || !sectorNames.some((n) => n.toLowerCase() === parts[1].toLowerCase())) continue;
       const e = byId[parts[0]];
-      if (e && !conf.match.test(e.sector || "")) team.push(person(e, s, "help", `Ajuda vinda de ${e.sector}`));
+      if (e && !conf.match.test(e.sector || "")) team.push(person(e, s, "help", `Ajuda vinda de ${e.sector}`, key));
     }
     team.sort((x, y) => (x.a ?? 9999) - (y.a ?? 9999) || x.emp.name.localeCompare(y.emp.name, "pt-BR"));
     away.sort((x, y) => x.why.localeCompare(y.why) || x.emp.name.localeCompare(y.emp.name, "pt-BR"));
@@ -130,6 +133,26 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
   const pct = (m) => `${(((m - START) / SPAN) * 100).toFixed(2)}%`;
   const width = (a, b) => `${(((b - a) / SPAN) * 100).toFixed(2)}%`;
   const visible = (o) => o.a !== null && o.b > START && o.a < END;
+
+  // Arrastar a barra muda o horário do dia (o mesmo ajuste da sub-aba de horários)
+  const saveShift = async (o, s) => {
+    const k = String(day);
+    const before = shifts[k]?.[o.key] || null;
+    const put = (times) => http.put("/shifts", { week, day, employee_id: o.key, ...(times ? shiftPayload(times) : {}) });
+    setShifts((prev) => ({ ...prev, [k]: { ...(prev[k] || {}), [o.key]: s } }));
+    try {
+      await put(s);
+      const extra = o.base ? dayMinutes(s) - o.base : 0;
+      toast.success(
+        `${o.emp.name.split(" ")[0]}: ${s[0]} às ${s[s.length - 1]}${extra > 0 ? ` · ${fmtDur(extra)} de hora extra` : extra < 0 ? ` · ${fmtDur(-extra)} a menos que a jornada` : ""}`,
+        { action: { label: "Desfazer", onClick: () => put(o.lvl === "help" ? before || o.shift : before).then(loadShifts).catch((e) => toast.error(errMsg(e))) } }
+      );
+    } catch (e) {
+      toast.error(errMsg(e));
+    }
+    loadShifts();
+  };
+  const { grab, preview, shiftFor } = useShiftDrag({ span: SPAN, onCommit: saveShift });
   const nowMin = todayIdx === day ? new Date().getHours() * 60 + new Date().getMinutes() : null;
   const idxOf = (h) => ALL_HOURS.indexOf(h);
   const maxCover = Math.max(1, ...cover);
@@ -252,7 +275,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
             <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="m-0 text-lg font-bold">Posição da equipe no dia</h2>
-                <p className="mt-1 text-[13px] text-[#5E5880]">Cada barra é uma pessoa. Parte listrada = intervalo. Passe o mouse para ver o horário.</p>
+                <p className="mt-1 text-[13px] text-[#5E5880]">Cada barra é uma pessoa. Parte listrada = intervalo. Arraste a barra para mudar o horário; puxe a ponta direita para hora extra. No celular, segure a barra antes de arrastar.</p>
               </div>
               <div className="flex flex-wrap gap-3 text-xs text-[#4A4566]">
                 <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#BFE6D1]" />Na jornada</span>
@@ -279,25 +302,18 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
                         {o.emp.name.split(" ").slice(0, 2).join(" ")}
                         <small className="block truncate font-sans text-[11px] font-medium text-[#5E5880]">{o.lvl === "help" ? `ajuda · ${o.emp.sector}` : o.shift ? (o.a < 12 * 60 ? "1º turno" : "2º turno") : "sem horário"}</small>
                       </div>
-                      <div className="relative h-[34px] rounded-xl" style={trackStyle}>
+                      <div data-track className="relative h-[34px] rounded-xl" style={trackStyle}>
                         {nowMin !== null && nowMin > START && nowMin < END && <div className="absolute -top-1.5 -bottom-1.5 z-[2] w-0.5 rounded bg-[#6D5BD0]" style={{ left: pct(nowMin) }} />}
-                        {visible(o) && (
-                          <div
-                            title={`${o.emp.name} · ${o.shift[0]} às ${o.shift[o.shift.length - 1]}${o.brk ? ` · intervalo ${o.shift[1]}–${o.shift[2]}` : ""} · ${o.note}`}
-                            className="absolute top-[3px] bottom-[3px] flex items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-[10px] px-2 text-xs font-semibold"
-                            style={{ left: pct(Math.max(o.a, START)), width: `calc(${width(Math.max(o.a, START), Math.min(o.b, END))} - 2px)`, background: LVL[o.lvl].bar, color: LVL[o.lvl].barInk }}
-                          >
-                            {o.emp.name.split(" ")[0]}
-                            {Math.min(o.b, END) - Math.max(o.a, START) >= SPAN / 4 && <i className="text-[11px] font-medium not-italic opacity-80">{o.shift[0]} – {o.shift[o.shift.length - 1]}</i>}
-                          </div>
-                        )}
-                        {o.brk && o.brk[1] > START && o.brk[0] < END && (
-                          <div
-                            title={`Intervalo · ${o.shift[1]}–${o.shift[2]}`}
-                            className="absolute top-[3px] bottom-[3px]"
-                            style={{ left: pct(Math.max(o.brk[0], START)), width: width(Math.max(o.brk[0], START), Math.min(o.brk[1], END)), background: "repeating-linear-gradient(135deg,rgba(255,255,255,.9) 0 3px,rgba(255,255,255,.35) 3px 6px)" }}
-                          />
-                        )}
+                        <ShiftBar
+                          o={o}
+                          shift={shiftFor(o)}
+                          win={{ START, END, SPAN }}
+                          colors={{ bg: LVL[o.lvl].bar, ink: LVL[o.lvl].barInk }}
+                          title={`${o.emp.name} · ${o.note}.`}
+                          grab={grab}
+                          dragging={preview?.key === o.key}
+                          extra={o.base && shiftFor(o) ? dayMinutes(shiftFor(o)) - o.base : 0}
+                        />
                       </div>
                     </div>
                   ))}
