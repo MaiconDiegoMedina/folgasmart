@@ -33,6 +33,12 @@ const TONE = {
   none: { background: "#F2F0F8", color: "#4A4566" },
 };
 const BAR_BG = { ok: "#8FD0AE", warn: "#F2C94C", risk: "#EE9A9A" };
+// Quadros fixos ao lado do Self-Checkout, pelo cargo de quem trabalha no dia
+const STAFF = [
+  { id: "pack", name: "Pacoteiros", match: /pacot/i, one: "pacoteiro", many: "pacoteiros" },
+  { id: "desk", name: "Fiscal e Recepcionista", match: /fiscal|recep/i, one: "pessoa", many: "pessoas" },
+];
+const staffOf = (e) => STAFF.find((g) => g.match.test(e.role || ""))?.id || null;
 const initials = (n) => n.split(" ").filter(Boolean).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 const CHIP = "inline-flex h-[26px] items-center whitespace-nowrap rounded-[13px] px-2.5 text-xs font-semibold";
 const PILL = "h-[38px] rounded-[19px] border px-4 text-sm font-medium";
@@ -97,7 +103,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
   const shiftOf = (e, d) =>
     shifts[String(d)]?.[e.id] || (isIntermittent(e) ? null : defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), d));
 
-  const { rows, loose, cover } = useMemo(() => {
+  const { rows, loose, staff, cover } = useMemo(() => {
     const dayAssign = assign[String(day)] || {};
     const op = (e) => {
       const s = shiftOf(e, day);
@@ -120,12 +126,15 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
       ...c,
       ops: onDay.filter((e) => dayAssign[e.id] === c.id).map(op).sort((x, y) => (x.a ?? 0) - (y.a ?? 0)),
     }));
-    const loose = onDay.filter((e) => /caixa/i.test(e.sector || "") && !dayAssign[e.id]).map(op);
+    const loose = onDay.filter((e) => /caixa/i.test(e.sector || "") && !dayAssign[e.id] && !staffOf(e)).map(op);
+    const staff = Object.fromEntries(
+      STAFF.map((g) => [g.id, onDay.filter((e) => staffOf(e) === g.id && !dayAssign[e.id]).map(op).sort((x, y) => (x.a ?? 9999) - (y.a ?? 9999) || x.emp.name.localeCompare(y.emp.name, "pt-BR"))])
+    );
     const cover = ALL_HOURS.map((h) => {
       const t = h * 60 + 30;
       return rows.filter((r) => r.ops.some((o) => o.a !== null && o.a <= t && o.b > t)).length;
     });
-    return { rows, loose, cover };
+    return { rows, loose, staff, cover };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assign, shifts, day, employees, checkouts, schedule, workloads, sectorModes]);
 
@@ -172,7 +181,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
 
   const isSelf = (c) => /self/i.test(c.name);
   const turnoOf = (o) => (o?.a == null ? null : o.a < 12 * 60 ? 0 : 1);
-  const opOf = (id) => rows.flatMap((r) => r.ops).concat(loose).find((o) => o.emp.id === id);
+  const opOf = (id) => rows.flatMap((r) => r.ops).concat(loose, ...Object.values(staff)).find((o) => o.emp.id === id);
   const caixaOf = (id) => (assign[String(day)] || {})[id] || null;
   const caixaName = (id) => checkouts.find((c) => c.id === id)?.name || "caixa";
   const firstName = (o) => o.emp.name.split(" ")[0];
@@ -493,7 +502,57 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
 
       <div className="flex flex-wrap items-start gap-5">
         <section className="grid min-w-0 gap-4" style={{ flex: "3 1 600px", gridTemplateColumns: "repeat(auto-fill, minmax(min(330px, 100%), 1fr))" }}>
-          {rows.map((r) => {
+          {(() => {
+            const at = rows.findIndex(isSelf);
+            const list = rows.map((r) => ({ kind: "caixa", r }));
+            list.splice(at >= 0 ? at + 1 : list.length, 0, ...STAFF.map((g) => ({ kind: "staff", g })));
+            return list;
+          })().map(({ kind, r, g }) => {
+            if (kind === "staff") {
+              const people = staff[g.id] || [];
+              const turnos = [0, 1].map((t) => people.filter((o) => (turnoOf(o) ?? 0) === t));
+              return (
+                <div
+                  key={g.id}
+                  {...dropAt("none")}
+                  data-staff={g.id}
+                  className="flex flex-col gap-3.5 rounded-[22px] border border-white bg-white/80 p-[18px] shadow-[0_10px_30px_-20px_rgba(70,50,160,0.25)]"
+                >
+                  <div className="flex items-center justify-between">
+                    <h3 className="m-0 font-display text-lg font-semibold">{g.name}</h3>
+                    <span className={CHIP} style={people.length ? TONE.ok : TONE.none}>{people.length ? `${people.length} ${people.length === 1 ? g.one : g.many} no dia` : "Ninguém no dia"}</span>
+                  </div>
+                  <div className="grid grid-cols-2 items-start gap-2.5">
+                    {turnos.map((list, t) => (
+                      <div key={t} className="flex flex-col gap-2">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.04em] text-[#8A85A3]">{t + 1}º turno</span>
+                        {list.length === 0 ? (
+                          <span className="rounded-[14px] border-[1.5px] border-dashed border-[#D6D0EE] px-2 py-3 text-center text-[12px] font-medium text-[#8A85A3]">Ninguém</span>
+                        ) : (
+                          list.map((o) => (
+                            <div
+                              key={o.emp.id}
+                              {...dragProps(o)}
+                              title={`${o.emp.name} · ${o.emp.role || g.name} · ${o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]}` : "sem horário"} · ${o.note}. Arraste para um caixa se precisar cobrir.`}
+                              className={`flex cursor-grab select-none items-start gap-2 rounded-[14px] border-[1.5px] p-2 text-[13px] font-semibold text-[#1B1830] [-webkit-touch-callout:none] active:cursor-grabbing ${dragId === o.emp.id ? "opacity-40" : ""}`}
+                              style={LVL[o.lvl].tile}
+                            >
+                              <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-[10px] font-bold" style={LVL[o.lvl].avatar}>{initials(o.emp.name)}</div>
+                              <div className="min-w-0">
+                                <span className="block truncate">{o.emp.name}</span>
+                                <small className="block text-[11px] font-medium text-[#5E5880]">{o.shift ? `${o.shift[0]} – ${o.shift[o.shift.length - 1]}` : "sem horário"}</small>
+                                {g.id === "desk" && <span className="block text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A85A3]">{/recep/i.test(o.emp.role || "") ? "recepcionista" : "fiscal"}</span>}
+                                <span className="mt-0.5 block text-[11px] font-bold" style={{ color: LVL[o.lvl].ink }}>{o.tag}</span>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
             const dark = isSelf(r);
             // Duas vagas por caixa: 1º turno (entra antes das 12h) e 2º turno (entra a partir das 12h)
             const slots = r.ops.length >= 2 ? r.ops : r.ops.length === 1 ? (turnoOf(r.ops[0]) === 1 ? [null, r.ops[0]] : [r.ops[0], null]) : [null, null];
