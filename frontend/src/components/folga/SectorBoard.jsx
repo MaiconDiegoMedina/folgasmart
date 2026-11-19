@@ -7,7 +7,7 @@ import { defaultShiftOf, toMin, dayMinutes } from "@/lib/workloadTimes";
 import { isIntermittent, acceptedOn } from "@/lib/convocation";
 import { WeekNav } from "@/components/folga/WeekNav";
 import { PageTitle } from "@/components/folga/Header";
-import { ShiftBar } from "@/components/folga/ShiftBar";
+import { ShiftBar, dayLabel } from "@/components/folga/ShiftBar";
 import { useShiftDrag, shiftPayload } from "@/lib/useShiftDrag";
 
 // Abas de setor: o setor do funcionário é reconhecido pelo nome (ex.: "Açougue", "Hortifruti", "FLV")
@@ -91,6 +91,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
   const { team, away, cover } = useMemo(() => {
     const person = (e, s, lvl, note, key = e.id, base = null) => ({
       emp: e, shift: s, lvl, note, key, base,
+      label: dayLabel(s, base),
       a: s ? toMin(s[0]) : null,
       b: s ? toMin(s[s.length - 1]) : null,
       brk: s && s.length === 4 ? [toMin(s[1]), toMin(s[2])] : null,
@@ -347,7 +348,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
                   <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-bold" style={LVL[o.lvl].avatar}>{initials(o.emp.name)}</div>
                   <div className="min-w-0">
                     <span className="block truncate">{o.emp.name}</span>
-                    <small className="block text-xs font-medium text-[#5E5880]">{o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]} · ${o.daily}` : "Sem horário definido"}</small>
+                    <small className="block text-xs font-medium text-[#5E5880]">{o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]} · ${o.label}` : "Sem horário definido"}</small>
                     {o.brk && <small className="block text-xs font-medium text-[#5E5880]">Intervalo {o.shift[1]}–{o.shift[2]}</small>}
                     <span className="mt-1 block text-[11px] font-bold" style={{ color: LVL[o.lvl].ink }}>{o.shift ? o.note : "Defina o horário na sub-aba de horários"}</span>
                   </div>

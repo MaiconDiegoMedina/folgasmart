@@ -5,17 +5,21 @@ const STEP = 5; // minutos
 const MIN_WORK = 30; // trecho mínimo antes/depois do intervalo
 const LAST = 23 * 60 + 55;
 const SIX_HOURS = 6 * 60;
-export const MAX_EXTRA = 2 * 60; // hora extra por dia para quem trabalha mais de 6h
+export const MAX_EXTRA = 2 * 60; // hora extra por dia para jornada acima de 6h (até 6h: sem hora extra)
 export const BREAK_RANGE = [60, 120]; // intervalo de 1h a 2h para quem trabalha mais de 6h
 
 const workOf = (t) => t[t.length - 1] - t[0] - (t.length === 4 ? t[2] - t[1] : 0);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-// Limites do arrasto: hora extra até 2h e intervalo de 1h a 2h para quem trabalha mais de 6h
+// Horas extras permitidas no dia: até 2h para jornada acima de 6h; nenhuma para jornada de até 6h
+export const extraAllowed = (base) => (base > SIX_HOURS ? MAX_EXTRA : 0);
+
+// Limites do arrasto: hora extra (2h acima de 6h, nenhuma até 6h) e intervalo de 1h a 2h acima de 6h
 export const limitsOf = (base, orig) => {
   const work = workOf(orig);
   return {
-    maxWork: base && base > SIX_HOURS ? Math.max(base + MAX_EXTRA, work) : null,
+    maxWork: base ? Math.max(base + extraAllowed(base), work) : null,
+    capLabel: base && base > SIX_HOURS ? "máx. 2h extra" : "sem hora extra",
     brk: orig.length === 4 && Math.max(work, base || 0) > SIX_HOURS ? BREAK_RANGE : null,
   };
 };
@@ -138,7 +142,7 @@ export const useShiftDrag = ({ span, onCommit }) => {
       const delta = Math.round((effDx * p.mpp) / STEP) * STEP;
       const { next, capped } = shiftWith(p.orig, p.mode, delta, p.lim);
       p.next = next;
-      setPreview({ key: p.key, shift: next.map(fromMin), mode: p.mode, dy: p.fromRow !== null && p.mode === "move" ? dy : 0, row, capped });
+      setPreview({ key: p.key, shift: next.map(fromMin), mode: p.mode, dy: p.fromRow !== null && p.mode === "move" ? dy : 0, row, capped: capped ? p.lim.capLabel : null });
     };
     const up = (e) => {
       const p = ref.current;

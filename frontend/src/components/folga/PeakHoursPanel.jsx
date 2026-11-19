@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { http, errMsg, DAYS, fmtDayMonth } from "@/lib/api";
 import { isIntermittent, acceptedOn } from "@/lib/convocation";
 import { defaultShiftOf, fromMin, toMin, dayMinutes } from "@/lib/workloadTimes";
+import { extraAllowed } from "@/lib/useShiftDrag";
 import { groupByRole } from "@/lib/groupByRole";
 import { isTrial } from "@/components/folga/RoleDialog";
 
@@ -334,6 +335,19 @@ export const PeakHoursPanel = ({ day, date, sector, sectorMode = "6x1", workload
   };
 
   const saveShift = async (employee_id, times) => {
+    // Hora extra: até 2h para jornada acima de 6h; nenhuma para jornada de até 6h
+    const emp = !employee_id.includes("@") && members.find((m) => m.id === employee_id);
+    if (emp && times?.start && times?.end && !isIntermittent(emp)) {
+      const base = minutesOf(emp);
+      const work = toMin(times.end) - toMin(times.start) - (times.break_start && times.break_end ? toMin(times.break_end) - toMin(times.break_start) : 0);
+      if (base && work > base + extraAllowed(base)) {
+        return toast.error(
+          base > 360
+            ? `${emp.name.split(" ")[0]} passaria de 2h de hora extra (jornada de ${fmtHours(base)}). Ajuste a entrada ou a saída.`
+            : `${emp.name.split(" ")[0]} tem jornada de ${fmtHours(base)}, que não permite hora extra. Ajuste a entrada ou a saída.`
+        );
+      }
+    }
     try {
       const { data } = await http.put("/shifts", { week, day, employee_id, ...(times || {}) });
       setShifts(data.shifts);

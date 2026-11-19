@@ -37,7 +37,7 @@ export const ShiftBar = ({ o, shift, win, colors, title, grab, drag, extra = 0 }
         {first}
         {(to - from >= SPAN / 4 || dragging) && <i className="text-[11px] font-medium not-italic opacity-80">{shift[0]} – {shift[shift.length - 1]}</i>}
         {drag?.capped ? (
-          <b className="rounded-md bg-[#A12828] px-1 text-[10px] font-bold text-white">máx. 2h extra</b>
+          <b className="rounded-md bg-[#A12828] px-1 text-[10px] font-bold text-white">{drag.capped}</b>
         ) : extra > 0 ? (
           <b className="rounded-md bg-[#6D5BD0] px-1 text-[10px] font-bold text-white" title={`${fmtDur(extra)} de hora extra`}>+{fmtDur(extra)}</b>
         ) : null}
@@ -61,3 +61,12 @@ export const ShiftBar = ({ o, shift, win, colors, title, grab, drag, extra = 0 }
 };
 
 export { fmtDur };
+
+// Texto das horas do dia: só a jornada, ou jornada e horas de hoje quando há ajuste
+export const dayLabel = (s, base) => {
+  if (!s) return "sem horário";
+  const t = s.map(toMin);
+  const w = t[t.length - 1] - t[0] - (t.length === 4 ? t[2] - t[1] : 0);
+  if (!base || w === base) return `${fmtDur(w)} por dia`;
+  return `jornada ${fmtDur(base)} · hoje ${fmtDur(w)} (${w > base ? "+" : "−"}${fmtDur(Math.abs(w - base))})`;
+};

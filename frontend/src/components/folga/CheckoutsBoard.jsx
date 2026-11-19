@@ -8,7 +8,7 @@ import { WeekNav } from "@/components/folga/WeekNav";
 import { PageTitle } from "@/components/folga/Header";
 import { CheckoutsPanel } from "@/components/folga/CheckoutsPanel";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ShiftBar } from "@/components/folga/ShiftBar";
+import { ShiftBar, dayLabel } from "@/components/folga/ShiftBar";
 import { useShiftDrag, shiftPayload } from "@/lib/useShiftDrag";
 
 const ALL_HOURS = Array.from({ length: 18 }, (_, i) => 6 + i); // 6h..23h
@@ -110,8 +110,10 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
         a: s ? toMin(s[0]) : null,
         b: s ? toMin(s[s.length - 1]) : null,
         brk: s && s.length === 4 ? [toMin(s[1]), toMin(s[2])] : null,
-        daily: s ? `${fmtDur(dayMinutes(s))} por dia` : "sem horário",
-        base: isIntermittent(e) ? null : dayMinutes(defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), day)) || null,
+        ...(() => {
+          const base = isIntermittent(e) ? null : dayMinutes(defaultShiftOf(workloads.find((w) => w.id === e.workload), modeOf(e.sector), day)) || null;
+          return { base, daily: dayLabel(s, base) };
+        })(),
         contract: e.contract || (isIntermittent(e) ? "intermitente" : "efetivo"),
       };
     };
