@@ -377,7 +377,8 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   useEffect(() => {
     http.get("/checkouts/assign/week", { params: { week } }).then(({ data }) => setWeekCheckouts(data)).catch(() => setWeekCheckouts({}));
   }, [week]);
-  const checkoutName = (id) => checkouts.find((c) => c.id === id)?.name || null;
+  const BOARDS = { "@pack": "Pacoteiros", "@desk": "Fiscal/Recep." };
+  const checkoutName = (id) => BOARDS[id] || checkouts.find((c) => c.id === id)?.name || null;
   const shiftOf = (emp, d) =>
     weekShifts[String(d)]?.[emp.id] ||
     defaultShiftOf(workloads.find((w) => w.id === emp.workload), modeOf(emp.sector), d);

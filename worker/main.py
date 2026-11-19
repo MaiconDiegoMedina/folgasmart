@@ -1362,6 +1362,9 @@ class Checkout(CheckoutIn):
     id: str
 
 
+STAFF_BOARDS = ("@pack", "@desk")
+
+
 class CheckoutAssignIn(BaseModel):
     week: str
     day: int = Field(ge=0, le=6)
@@ -1413,7 +1416,9 @@ async def set_checkout_assign(data: CheckoutAssignIn, request: Request) -> Dict[
     ).bind(week, data.day).first()
     current = json.loads(row["data"]) if row else {}
     if data.checkout_id:
-        if not await database.prepare("SELECT id FROM checkouts WHERE id = ?").bind(data.checkout_id).first():
+        # "@pack" (Pacoteiros) e "@desk" (Fiscal e Recepcionista): quadros fixos, sem caixa cadastrado
+        if data.checkout_id not in STAFF_BOARDS and \
+                not await database.prepare("SELECT id FROM checkouts WHERE id = ?").bind(data.checkout_id).first():
             raise HTTPException(404, "Caixa não encontrado")
         current[data.employee_id] = data.checkout_id
     else:
