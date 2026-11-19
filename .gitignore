@@ -85,3 +85,13 @@ android-sdk/
 **/.emergent/recordings/
 frontend/node_modules/.cache/default-development/1.pack
 frontend/node_modules/.cache/default-development/0.pack
+
+# Gerados localmente (Cloudflare/Wrangler, Python e banco de teste)
+.wrangler/
+worker/python_modules/
+worker/pylock.toml
+worker/uv.lock
+backend/folgasmart.db
+backend/static/
+frontend/package-lock.json
+worker/.dev.vars
