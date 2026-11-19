@@ -54,8 +54,11 @@ export function LoginGate({ children }) {
 
   if (!authenticated) {
     return (
-      <main className="min-h-screen grid place-items-center bg-[#F3F1FA] px-4">
-        <form onSubmit={submit} className="w-full max-w-sm glass rounded-[26px] p-7 shadow-sm">
+      <main
+        className="min-h-screen grid place-items-center bg-[#17142E] bg-cover bg-center md:bg-right-bottom px-4"
+        style={{ backgroundImage: `url(${process.env.PUBLIC_URL}/login-bg.jpg)` }}
+      >
+        <form onSubmit={submit} className="w-full max-w-sm glass rounded-[26px] p-7 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.6)]">
           <div className="mb-6 text-center">
             <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-xl bg-[#17142E] text-xl text-white">F</div>
             <h1 className="text-2xl font-bold text-[#1B1830]">EscalaSmart</h1>
