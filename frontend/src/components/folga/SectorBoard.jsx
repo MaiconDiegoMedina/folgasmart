@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Beef, Croissant, Apple, PackageOpen } from "lucide-react";
-import { DAYS, weekDates, isoDate, http } from "@/lib/api";
+import { Beef, Croissant, Apple, PackageOpen, UserPlus } from "lucide-react";
+import { toast } from "sonner";
+import { DAYS, weekDates, isoDate, http, errMsg } from "@/lib/api";
 import { peakHours } from "@/lib/hourlyReport";
 import { defaultShiftOf, toMin, dayMinutes } from "@/lib/workloadTimes";
 import { isIntermittent, acceptedOn } from "@/lib/convocation";
@@ -51,9 +52,16 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
   const [shifts, setShifts] = useState({});
   const [hourly, setHourly] = useState([]);
 
+  const [helpId, setHelpId] = useState("");
+  const [helpFrom, setHelpFrom] = useState("");
+  const [helpTo, setHelpTo] = useState("");
+  const [saving, setSaving] = useState(false);
+  const loadShifts = () => http.get("/shifts/week", { params: { week } }).then(({ data }) => setShifts(data)).catch(() => setShifts({}));
+
   useEffect(() => {
-    http.get("/shifts/week", { params: { week } }).then(({ data }) => setShifts(data)).catch(() => setShifts({}));
+    loadShifts();
     http.get("/hourly", { params: { week } }).then(({ data }) => setHourly(data || [])).catch(() => setHourly([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [week]);
 
   const members = employees.filter((e) => conf.match.test(e.sector || ""));
@@ -142,6 +150,51 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
     ...(peaks.length ? [{ name: `Pico ${peakLabel}`, st: rangeStat(peaks) }] : []),
   ];
   const LABEL = { ok: "Ok", warn: "Atenção", risk: "Descoberto" };
+
+  // Ajuda de outro setor (a mesma da sub-aba de horários): turno salvo como "funcionário@setor"
+  const counts = members.reduce((m, e) => ({ ...m, [e.sector]: (m[e.sector] || 0) + 1 }), {});
+  const sectorName = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || conf.hint;
+  const helpKeyOf = (id) => Object.keys(shifts[String(day)] || {}).find((k) => {
+    const parts = k.split("@");
+    return parts.length === 2 && parts[0] === id && sectorNames.some((n) => n.toLowerCase() === parts[1].toLowerCase());
+  });
+  const helpers = team.filter((o) => o.lvl === "help");
+  const candidates = employees
+    .filter((e) => !conf.match.test(e.sector || "") && !awayOf(e, day) && !helpKeyOf(e.id))
+    .sort((a, b) => (a.sector || "").localeCompare(b.sector || "", "pt-BR") || a.name.localeCompare(b.name, "pt-BR"));
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const defFrom = `${pad2(peaks.length ? peaks[0] : 11)}:00`;
+  const defTo = `${pad2(Math.min(peaks.length ? peaks[peaks.length - 1] + 1 : 14, 23))}:00`;
+  const callHelp = async () => {
+    const start = helpFrom || defFrom;
+    const end = helpTo || defTo;
+    if (!helpId) return toast.error("Escolha quem vai ajudar.");
+    if (!start || !end || end <= start) return toast.error("Informe de que horas até que horas a pessoa ajuda.");
+    setSaving(true);
+    try {
+      await http.put("/shifts", { week, day, employee_id: `${helpId}@${sectorName}`, start, end });
+      const e = employees.find((x) => x.id === helpId);
+      toast.success(`${e?.name.split(" ")[0] || "Pessoa"} vai ajudar em ${conf.label} das ${start} às ${end}`);
+      setHelpId("");
+      setHelpFrom("");
+      setHelpTo("");
+      await loadShifts();
+    } catch (err) {
+      toast.error(errMsg(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const dropHelp = async (id) => {
+    const key = helpKeyOf(id);
+    if (!key) return;
+    try {
+      await http.put("/shifts", { week, day, employee_id: key });
+      await loadShifts();
+    } catch (err) {
+      toast.error(errMsg(err));
+    }
+  };
 
   const alerts = team.filter((o) => o.lvl === "risk" || o.lvl === "warn" || !o.shift);
   const own = team.filter((o) => o.lvl !== "help");
@@ -315,6 +368,48 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
                     ))}
                   </div>
                 )}
+
+                <div className="mt-4 border-t border-[#E4E0F3] pt-4">
+                  <h3 className="m-0 flex items-center gap-1.5 text-sm font-bold text-[#4B3DA8]"><UserPlus className="h-4 w-4" /> Chamar alguém de outro setor</h3>
+                  <p className="mb-3 mt-1 text-xs text-[#5E5880]">Quem trabalha neste dia em outro setor pode ajudar aqui por algumas horas. É a mesma ajuda da sub-aba de horários.</p>
+                  {helpers.length > 0 && (
+                    <div className="mb-3 flex flex-col gap-2">
+                      {helpers.map((o) => (
+                        <div key={o.emp.id} className="flex items-center gap-2.5 rounded-xl border border-[#C9BFFF] bg-[#F3F1FA] px-2.5 py-2 text-[13px] font-semibold">
+                          <span className="min-w-0 flex-1 truncate">{o.emp.name}<small className="block text-[11px] font-medium text-[#5E5880]">vem de {o.emp.sector} · {o.shift[0]} às {o.shift[o.shift.length - 1]}</small></span>
+                          <button onClick={() => dropHelp(o.emp.id)} aria-label={`Tirar ${o.emp.name} da ajuda`} title="Tirar da ajuda" className="grid h-7 w-7 place-items-center rounded-full text-[#8A85A3] hover:bg-white hover:text-[#A12828]">
+                            <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {closed ? (
+                    <p className="m-0 text-xs text-[#5E5880]">Loja fechada neste dia.</p>
+                  ) : candidates.length === 0 ? (
+                    <p className="m-0 text-xs text-[#5E5880]">Ninguém de outro setor trabalha neste dia para chamar.</p>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <select aria-label="Quem vai ajudar" value={helpId} onChange={(e) => setHelpId(e.target.value)} className="h-10 rounded-xl border border-[#C9BFFF] bg-white px-2 text-sm text-[#1B1830]">
+                        <option value="">Quem vai ajudar?</option>
+                        {candidates.map((e) => {
+                          const own = shiftOf(e, day);
+                          return <option key={e.id} value={e.id}>{e.sector} · {e.name}{own ? ` (${own[0]}–${own[own.length - 1]})` : ""}</option>;
+                        })}
+                      </select>
+                      <div className="flex items-center gap-2 text-xs text-[#5E5880]">
+                        <span>das</span>
+                        <input type="time" step={300} aria-label="Ajuda de" value={helpFrom || defFrom} onChange={(e) => setHelpFrom(e.target.value)} className="h-9 min-w-0 flex-1 rounded-lg border border-[#E4E0F3] bg-white px-2 text-sm text-[#1B1830]" />
+                        <span>às</span>
+                        <input type="time" step={300} aria-label="Ajuda até" value={helpTo || defTo} onChange={(e) => setHelpTo(e.target.value)} className="h-9 min-w-0 flex-1 rounded-lg border border-[#E4E0F3] bg-white px-2 text-sm text-[#1B1830]" />
+                      </div>
+                      <button onClick={callHelp} disabled={saving || !helpId} className="h-10 rounded-[20px] bg-[#17142E] px-4 text-sm font-semibold text-white disabled:opacity-40">
+                        Chamar para {conf.label.replace(/ \(.*\)$/, "")}
+                      </button>
+                      {peaks.length > 0 && <p className="m-0 text-[11px] text-[#8A85A3]">O horário já vem no pico da loja ({peakLabel}); mude se precisar.</p>}
+                    </div>
+                  )}
+                </div>
               </div>
             </aside>
           </div>
