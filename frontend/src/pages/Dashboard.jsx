@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { http, errMsg, isoDate, mondayOf } from "@/lib/api";
+import { http, errMsg, isoDate, mondayOf, addDays, parseIso } from "@/lib/api";
+import { isIntermittent } from "@/lib/convocation";
 import { PageTitle } from "@/components/folga/Header";
 import { AppRail, TABS } from "@/components/folga/AppRail";
 import { HomePanel } from "@/components/folga/HomePanel";
@@ -26,6 +27,39 @@ const readTab = () => {
   } catch {
     return "inicio";
   }
+};
+
+// Próximo estado da célula, igual ao servidor: TRAB. -> FOLGA -> SUSP. -> FALTA -> TRAB.;
+// EXTRA liga/desliga numa folga; intermitente: convocado -> aceitou -> recusou -> nada
+const nextCell = (s, emp, day, markExtra) => {
+  if (isIntermittent(emp)) {
+    if (markExtra) return null;
+    const days = { ...(s.convocations?.[emp.id] || {}) };
+    const key = String(day);
+    const cur = days[key]?.status;
+    if (cur == null) days[key] = { status: "pending", at: isoDate(new Date()) };
+    else if (cur === "pending") days[key] = { ...days[key], status: "accepted" };
+    else if (cur === "accepted") days[key] = { ...days[key], status: "declined" };
+    else delete days[key];
+    return { ...s, convocations: { ...(s.convocations || {}), [emp.id]: days } };
+  }
+  const list = (k) => [...(s[k]?.[emp.id] || [])];
+  const off = list("off_days");
+  const susp = list("suspension_days");
+  const abs = list("absence_days");
+  const ext = list("extra_days");
+  const drop = (a) => a.splice(a.indexOf(day), 1);
+  if (markExtra) {
+    if (!off.includes(day) || emp.status === "ferias") return null;
+    if (ext.includes(day)) drop(ext);
+    else ext.push(day);
+  } else if (ext.includes(day)) drop(ext);
+  else if (off.includes(day)) { drop(off); susp.push(day); }
+  else if (susp.includes(day)) { drop(susp); abs.push(day); }
+  else if (abs.includes(day)) drop(abs);
+  else off.push(day);
+  const set = (k, a) => ({ ...(s[k] || {}), [emp.id]: a.sort((x, y) => x - y) });
+  return { ...s, off_days: set("off_days", off), suspension_days: set("suspension_days", susp), absence_days: set("absence_days", abs), extra_days: set("extra_days", ext) };
 };
 
 export default function Dashboard() {
@@ -103,11 +137,29 @@ export default function Dashboard() {
     } catch (err) { toast.error(errMsg(err)); }
   };
 
-  const toggleCell = async (employee_id, day, markExtra = false) => {
-    try {
-      const { data } = await http.put("/schedule/cell", { employee_id, day, week, extra: markExtra });
-      setSchedule(data);
-    } catch (err) { toast.error(errMsg(err)); }
+  // Clique na escala: o ícone troca na hora (mesmo ciclo do servidor) e o salvamento segue em fila.
+  // Vale a resposta do último clique; se o servidor recusar, a escala volta ao que está salvo.
+  const cellQueue = useRef(Promise.resolve());
+  const cellSeq = useRef(0);
+  const weekRef = useRef(week);
+  weekRef.current = week;
+  const toggleCell = (employee_id, day, markExtra = false) => {
+    const emp = employees.find((e) => e.id === employee_id);
+    const quick = emp && !(schedule.closed_days || []).includes(day) && isoDate(addDays(parseIso(week), day)) >= isoDate(new Date());
+    if (quick) setSchedule((s) => nextCell(s, emp, day, markExtra) || s);
+    const seq = ++cellSeq.current;
+    const w = week;
+    cellQueue.current = cellQueue.current.then(async () => {
+      try {
+        const { data } = await http.put("/schedule/cell", { employee_id, day, week: w, extra: markExtra });
+        if (seq === cellSeq.current && weekRef.current === w) setSchedule(data);
+      } catch (err) {
+        toast.error(errMsg(err));
+        if (seq === cellSeq.current && weekRef.current === w) {
+          http.get("/schedule", { params: { week: w } }).then(({ data }) => weekRef.current === w && setSchedule(data)).catch(() => {});
+        }
+      }
+    });
   };
 
   return (
