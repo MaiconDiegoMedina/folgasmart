@@ -111,30 +111,35 @@ export default function Dashboard() {
     http.get("/schedule", { params: { week } }).then(({ data }) => setSchedule(data)).catch((err) => toast.error(errMsg(err)));
   }, [week, employees]);
 
-  // Com um setor selecionado, gera só ele; os outros setores ficam como estão
-  const generate = async () => {
+  // Com um setor selecionado, gera só ele; os outros setores ficam como estão.
+  // mode (6x1/5x2) vem da pergunta do botão e passa a ser a escala do setor; null mantém a de cada setor.
+  const generate = async (mode = null) => {
     if (!scheduled.length) return toast.error("Cadastre ao menos um funcionário ativo.");
-    if (schedule.generated_at) {
-      const msg = activeSector
-        ? `Gerar de novo a escala do setor ${activeSector}? Os ajustes manuais desse setor nesta semana serão refeitos. Os outros setores não mudam.`
-        : "Gerar de novo a escala de TODOS os setores? Os ajustes manuais da semana serão refeitos.";
-      if (!window.confirm(msg)) return;
-    }
     setGenerating(true);
+    // O servidor gera com a escala salva de cada setor, então ela é gravada antes; se a geração falhar, volta como era
+    const modeOf = (s) => sectorModes[s.toLowerCase()] || "6x1";
+    const targets = activeSector ? [activeSector] : [...new Set(scheduled.map((e) => e.sector))];
+    const changed = mode ? targets.filter((s) => modeOf(s) !== mode).map((s) => [s, modeOf(s)]) : [];
+    const saved = [];
     try {
+      for (const [sector] of changed) {
+        const { data: modes } = await http.put("/sectors/mode", { sector, mode });
+        saved.push(changed.find(([s]) => s === sector));
+        setSectorModes(modes);
+      }
       const { data } = await http.post("/schedule/generate", { mode: "6x1", week, sector: activeSector });
       setSchedule(data);
-      toast.success(activeSector ? `Escala do setor ${activeSector} gerada` : "Escala de todos os setores gerada");
-    } catch (err) { toast.error(errMsg(err)); }
+      toast.success(`${activeSector ? `Escala do setor ${activeSector}` : "Escala de todos os setores"} gerada${mode ? ` em ${mode}` : ""}`);
+    } catch (err) {
+      toast.error(errMsg(err));
+      for (const [sector, previous] of saved) {
+        try {
+          const { data: modes } = await http.put("/sectors/mode", { sector, mode: previous });
+          setSectorModes(modes);
+        } catch { /* fica a escala nova; a próxima geração pergunta de novo */ }
+      }
+    }
     finally { setGenerating(false); }
-  };
-
-  const changeSectorMode = async (sector, mode) => {
-    try {
-      const { data } = await http.put("/sectors/mode", { sector, mode });
-      setSectorModes(data);
-      toast.success(`${sector} agora usa a escala ${mode}. Clique em Gerar escala para aplicar nesta semana.`);
-    } catch (err) { toast.error(errMsg(err)); }
   };
 
   // Clique na escala: o ícone troca na hora (mesmo ciclo do servidor) e o salvamento segue em fila.
@@ -173,7 +178,7 @@ export default function Dashboard() {
           {tab === "inicio" && <HomePanel employees={scheduled} schedule={schedule} movement={movement} week={week} onTab={setTab} />}
           {tab === "escala" && (
             <>
-              <ScheduleGrid employees={scheduled} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} onSectorMode={changeSectorMode} workloads={workloads} checkouts={checkouts} sector={sector} onSectorChange={setSector} onGenerate={generate} generating={generating} generateSector={activeSector} />
+              <ScheduleGrid employees={scheduled} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} workloads={workloads} checkouts={checkouts} sector={sector} onSectorChange={setSector} onGenerate={generate} generating={generating} generateSector={activeSector} />
             </>
           )}
           {tab === "funcionarios" && (

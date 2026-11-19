@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { toast } from "sonner";
-import { Flame, AlertTriangle, Users, CalendarDays, Printer, Lock, ChevronLeft, ChevronRight, Hand, Sparkles, Loader2 } from "lucide-react";
+import { Flame, AlertTriangle, Users, Printer, Lock, ChevronLeft, ChevronRight, Hand, Sparkles, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ExportMenu } from "@/components/folga/ExportMenu";
 import { UnlockButton, useUnlock } from "@/components/folga/UnlockDialog";
 import { groupByRole } from "@/lib/groupByRole";
-import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate, http, errMsg, addDays, parseIso, mondayOf } from "@/lib/api";
+import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate, http, addDays, parseIso, mondayOf } from "@/lib/api";
 import { defaultShiftOf } from "@/lib/workloadTimes";
-import { PeakHoursPanel } from "@/components/folga/PeakHoursPanel";
+import { GenerateDialog } from "@/components/folga/GenerateDialog";
 import { isIntermittent, convocationOf, acceptedOn, shortNotice, CONVOCATION_LABEL, MIN_NOTICE_DAYS } from "@/lib/convocation";
 
 // Célula do intermitente: — -> CONVOCADO -> ACEITO -> RECUSOU -> —
@@ -289,50 +289,6 @@ const SectorTabs = ({ sectors, value, onChange }) => (
   </div>
 );
 
-const DayTabs = ({ dates, peaks, value, onChange }) => (
-  <div data-testid="day-tabs" className="no-print flex flex-wrap items-center gap-1.5 px-5 sm:px-6 pt-3">
-    <button
-      onClick={() => onChange(null)}
-      className={`px-3 py-1 rounded-md text-xs font-semibold border transition-colors duration-200 inline-flex items-center gap-1 ${
-        value === null ? "bg-[#EEEBFB] border-[#1B1830] text-[#1B1830]" : "bg-white border-[#E4E0F3] text-[#5E5880] hover:border-[#1B1830]"
-      }`}
-    >
-      <CalendarDays className="h-3.5 w-3.5" /> Semana
-    </button>
-    <span className="text-[11px] text-[#8A85A3] mx-1">Horários do dia:</span>
-    {DAYS_SHORT.map((d, i) => (
-      <button
-        key={d}
-        data-testid={`day-tab-${i}`}
-        onClick={() => onChange(i)}
-        className={`px-3 py-1 rounded-md text-xs font-semibold border transition-colors duration-200 inline-flex items-center gap-1 ${
-          value === i ? "bg-[#EEEBFB] border-[#1B1830] text-[#1B1830]" : "bg-white border-[#E4E0F3] text-[#5E5880] hover:border-[#1B1830]"
-        }`}
-      >
-        {peaks.includes(i) && <Flame className="h-3 w-3 text-[#B98500]" />}
-        {d} <span className="font-mono-data text-[10px] opacity-70">{fmtDayMonth(dates[i])}</span>
-      </button>
-    ))}
-  </div>
-);
-
-const SectorModeToggle = ({ sector, mode, onChange }) => (
-  <div className="inline-flex items-center gap-1.5">
-    <span className="text-[11px] text-[#8A85A3]">Escala do setor:</span>
-    <div data-testid="sector-mode-toggle" className="inline-flex rounded-md border border-[#E4E0F3] bg-white p-0.5">
-      {["6x1", "5x2"].map((m) => (
-        <button
-          key={m}
-          onClick={() => m !== mode && onChange(sector, m)}
-          className={`px-2.5 py-0.5 rounded text-xs font-semibold font-mono-data transition-colors ${m === mode ? "bg-[#17142E] text-white" : "text-[#5E5880] hover:bg-[#EEEBFB]"}`}
-        >
-          {m}
-        </button>
-      ))}
-    </div>
-  </div>
-);
-
 const SectorHeader = ({ name, members, worksOn, peaks, mode, showCount, mural, newPage }) => (
   <tr data-testid={`sector-group-${name}`} className={mural && newPage ? "print:break-before-page" : ""}>
     <td className="pt-5 pb-2 sticky left-0 bg-[#FBFAFE] z-10">
@@ -353,13 +309,13 @@ const SectorHeader = ({ name, members, worksOn, peaks, mode, showCount, mural, n
   </tr>
 );
 
-export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange, onToggle, sectorModes = {}, onSectorMode, workloads = [], checkouts = [], sector: sectorProp, onSectorChange, onGenerate, generating, generateSector }) => {
+export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange, onToggle, sectorModes = {}, workloads = [], checkouts = [], sector: sectorProp, onSectorChange, onGenerate, generating, generateSector }) => {
   const dates = weekDates(week);
   const today = isoDate(new Date());
   const [sectorLocal, setSectorLocal] = useState("all");
   const sector = sectorProp ?? sectorLocal;
   const setSector = onSectorChange ?? setSectorLocal;
-  const [dayView, setDayView] = useState(null);
+  const [genOpen, setGenOpen] = useState(false);
   // Versão para o mural: ligada pelo botão ou automaticamente ao imprimir
   const [muralOn, setMuralOn] = useState(false);
   const [printing, setPrinting] = useState(false);
@@ -402,7 +358,6 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
     (!offsOf(id).includes(d) || extrasOf(id).includes(d)) && !suspensionsOf(id).includes(d) && !absencesOf(id).includes(d) && !vacationOf(id).includes(d) && !sickOf(id).includes(d) && !closedDays.includes(d);
   const sectors = [...new Set(employees.map((e) => e.sector))].sort((a, b) => a.localeCompare(b));
   const activeSector = sectors.includes(sector) ? sector : "all";
-  const activeDay = activeSector === "all" ? null : dayView;
   const visible = activeSector === "all" ? employees : employees.filter((e) => e.sector === activeSector);
   // No mural fica de fora o intermitente sem nenhum dia aceito na semana
   const onBoard = (e) => !isIntermittent(e) || DAYS_SHORT.some((_, d) => acceptedOn(schedule, e.id, d));
@@ -415,23 +370,14 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
 
   const [weekShifts, setWeekShifts] = useState({});
   useEffect(() => {
-    if (activeDay !== null) return; // recarrega ao voltar da sub-aba, onde os turnos podem ter mudado
     http.get("/shifts/week", { params: { week } }).then(({ data }) => setWeekShifts(data)).catch(() => setWeekShifts({}));
-  }, [week, activeDay]);
+  }, [week]);
   // Caixa de cada operadora por dia
   const [weekCheckouts, setWeekCheckouts] = useState({});
   useEffect(() => {
     http.get("/checkouts/assign/week", { params: { week } }).then(({ data }) => setWeekCheckouts(data)).catch(() => setWeekCheckouts({}));
   }, [week]);
   const checkoutName = (id) => checkouts.find((c) => c.id === id)?.name || null;
-  const assignCheckout = async (day, employee_id, checkout_id) => {
-    try {
-      const { data } = await http.put("/checkouts/assign", { week, day, employee_id, checkout_id: checkout_id || null });
-      setWeekCheckouts((all) => ({ ...all, [String(day)]: data }));
-    } catch (err) {
-      toast.error(errMsg(err));
-    }
-  };
   const shiftOf = (emp, d) =>
     weekShifts[String(d)]?.[emp.id] ||
     (isIntermittent(emp) ? null : defaultShiftOf(workloads.find((w) => w.id === emp.workload), modeOf(emp.sector), d));
@@ -497,12 +443,15 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
           </button>
           <ExportMenu employees={employees} schedule={schedule} />
           {onGenerate && (
-            <Button data-testid="btn-generate-roster" onClick={() => onGenerate()} disabled={generating} className="h-11 rounded-full bg-[#6D5BD0] px-[18px] text-white hover:bg-[#5B4BC4]">
+            <Button data-testid="btn-generate-roster" onClick={() => setGenOpen(true)} disabled={generating} className="h-11 rounded-full bg-[#6D5BD0] px-[18px] text-white hover:bg-[#5B4BC4]">
               {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
               {generateSector ? `Gerar escala · ${generateSector}` : "Gerar escala"}
             </Button>
           )}
           {DAYS_SHORT.some((_, d) => pastDay(d)) && <UnlockButton />}
+          {onGenerate && (
+            <GenerateDialog open={genOpen} onOpenChange={setGenOpen} sector={activeSector === "all" ? null : activeSector} sectors={sectors} modeOf={configuredMode} regenerating={!!schedule.generated_at} onConfirm={onGenerate} />
+          )}
         </div>
       </header>
 
@@ -539,26 +488,6 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
         </div>
       ) : (
         <>
-          {activeSector === "all" ? (
-            <p className="no-print px-5 sm:px-6 pt-4 text-[11px] text-[#8A85A3]">Selecione um setor para escalar os horários de pico de cada dia.</p>
-          ) : (
-            <>
-              <div className="no-print px-5 sm:px-6 pt-4">
-                <SectorModeToggle sector={activeSector} mode={configuredMode(activeSector)} onChange={onSectorMode} />
-                {configuredMode(activeSector) !== modeOf(activeSector) && (
-                  <span className="ml-2 text-[11px] text-[#7A5500]">Esta semana foi gerada em {modeOf(activeSector)}. Clique em Gerar escala · {activeSector} para aplicar.</span>
-                )}
-              </div>
-              <DayTabs dates={dates} peaks={peaks} value={activeDay} onChange={setDayView} />
-            </>
-          )}
-          {activeDay !== null ? (
-            <PeakHoursPanel day={activeDay} date={dates[activeDay]} sector={activeSector} sectorMode={modeOf(activeSector)} workloads={workloads} members={visible} allEmployees={employees} schedule={schedule} week={week} locked={lockedDay(activeDay)}
-              checkouts={checkouts}
-              assign={weekCheckouts[String(activeDay)] || {}}
-              onAssign={(empId, checkoutId) => assignCheckout(activeDay, empId, checkoutId)}
-            />
-          ) : (
           <div className="overflow-x-auto p-3 sm:p-5">
             <table className="w-full border-separate border-spacing-0">
               <thead>
@@ -568,9 +497,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                     <th
                       key={d}
                       data-testid="calendar-header-day"
-                      onClick={activeSector !== "all" ? () => setDayView(i) : undefined}
-                      title={activeSector !== "all" ? "Ver horários de pico deste dia" : undefined}
-                      className={`pb-3 px-1 align-bottom ${activeSector !== "all" ? "cursor-pointer" : ""}`}
+                      className="pb-3 px-1 align-bottom"
                     >
                       <div className="flex flex-col items-center gap-1">
                         <div className="flex h-5 items-center gap-1">
@@ -645,7 +572,6 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
               );
             })}
           </div>
-          )}
         </>
       )}
     </section>
