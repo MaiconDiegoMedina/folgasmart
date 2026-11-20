@@ -202,7 +202,7 @@ export default function Dashboard() {
           {tab === "inicio" && <HomePanel employees={scheduled} schedule={schedule} movement={movement} week={week} onTab={setTab} />}
           {tab === "escala" && (
             <>
-              <ScheduleGrid employees={scheduled} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} sectorModes={sectorModes} workloads={workloads} checkouts={checkouts} sector={sector} onSectorChange={setSector} onGenerate={generate} generating={generating} generateSector={activeSector} />
+              <ScheduleGrid employees={scheduled} movement={movement} schedule={schedule} week={week} onWeekChange={setWeek} onToggle={toggleCell} onSchedule={setSchedule} sectorModes={sectorModes} workloads={workloads} checkouts={checkouts} sector={sector} onSectorChange={setSector} onGenerate={generate} generating={generating} generateSector={activeSector} />
             </>
           )}
           {tab === "funcionarios" && (

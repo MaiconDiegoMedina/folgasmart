@@ -16,7 +16,9 @@ import { weekModeOf } from "@/lib/weekMode";
 // Comparação sem acento e sem diferenciar maiúsculas
 const fold = (t) => (t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
-const EMPTY = { name: "", role: "", sector: "", status: "ativo", gender: "", workload: "", contract: "efetivo" };
+const EMPTY = { name: "", role: "", sector: "", status: "ativo", gender: "", workload: "", contract: "efetivo", phone: "" };
+// Celular para exibir: (11) 98765-4321
+const fmtPhone = (p) => { const d = (p || "").replace(/\D/g, ""); return d.length >= 10 ? `(${d.slice(0, 2)}) ${d.slice(2, -4)}-${d.slice(-4)}` : d; };
 const selectCls = "text-xs bg-[#F7F5FC] border border-[#E4E0F3] rounded-lg px-2 py-1.5 text-[#5E5880] font-medium outline-none focus:border-[#17142E] transition-colors";
 
 const EmployeeForm = ({ sectors, roles, workloads, onSaved }) => {
@@ -38,7 +40,8 @@ const EmployeeForm = ({ sectors, roles, workloads, onSaved }) => {
         status: "ativo",
         gender: form.gender,
         workload: form.workload,
-        contract: form.contract
+        contract: form.contract,
+        phone: form.phone.trim() || null
       });
       toast.success("Funcionário adicionado — clique em Gerar escala para recalcular as folgas");
       setForm(EMPTY);
@@ -71,6 +74,7 @@ const EmployeeForm = ({ sectors, roles, workloads, onSaved }) => {
         <option value="efetivo">Efetivo</option>
         <option value="intermitente">Intermitente</option>
       </select>
+      <Input data-testid="input-employee-phone" type="tel" inputMode="tel" placeholder={form.contract === "intermitente" ? "Celular com DDD (para a convocação)" : "Celular com DDD (opcional)"} value={form.phone} onChange={set("phone")} />
       <datalist id="roles">{roles.map((r) => <option key={r} value={r} />)}</datalist>
       <Button data-testid="btn-save-employee" type="submit" disabled={busy} className="sm:col-span-2 bg-[#17142E] hover:bg-[#2A2550] text-white">
         {busy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />} Adicionar funcionário
@@ -158,6 +162,7 @@ export const EmployeesPanel = ({ sectorList = [], employees, workloads = [], vac
         gender: emp.gender || null,
         workload: emp.workload || null,
         contract: emp.contract || null,
+        phone: emp.phone || null,
         ...patch
       });
       toast.success(message);
@@ -361,6 +366,21 @@ export const EmployeesPanel = ({ sectorList = [], employees, workloads = [], vac
                     <option value="">Jornada?</option>
                     {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
                   </select>
+                </label>
+                <label className="space-y-1 text-xs font-semibold text-[#5E5880]">
+                  <span>Celular (WhatsApp){editing.contract === "intermitente" ? " · convocação" : ""}</span>
+                  <input
+                    key={`${editing.id}-${editing.phone || ""}`}
+                    aria-label="Celular"
+                    data-testid="edit-employee-phone"
+                    type="tel" inputMode="tel" placeholder="(11) 98765-4321"
+                    defaultValue={fmtPhone(editing.phone)}
+                    onBlur={(evt) => {
+                      const digits = evt.target.value.replace(/\D/g, "");
+                      if (digits !== (editing.phone || "")) update(editing, { phone: digits || null }, `Celular de ${editing.name} atualizado`);
+                    }}
+                    className={`${field} ${editing.contract === "intermitente" && !editing.phone ? "border-[#F2CF6B] bg-[#FFF9E6]" : ""}`}
+                  />
                 </label>
                 <label className="space-y-1 text-xs font-semibold text-[#5E5880]">
                   <span>Sexo (domingos da CCT)</span>

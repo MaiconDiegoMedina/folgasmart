@@ -147,7 +147,7 @@ async def require_auth(request: Request) -> str:
 
 
 _SCHEMA_READY = False
-SCHEMA_VERSION = "2026-11-20.4"  # mude ao alterar SCHEMA_STATEMENTS, NEW_COLUMNS ou a migração
+SCHEMA_VERSION = "2026-11-20.5"  # mude ao alterar SCHEMA_STATEMENTS, NEW_COLUMNS ou a migração
 SCHEMA_STATEMENTS = [
     """CREATE TABLE IF NOT EXISTS hourly_movement (day INTEGER PRIMARY KEY, label TEXT NOT NULL DEFAULT '',
     hours TEXT NOT NULL, updated_at TEXT)""",
@@ -180,7 +180,7 @@ DEFAULT_WORKLOADS = [
 NEW_COLUMNS = [("employees", "gender"), ("employees", "workload"), ("schedule", "sector_modes"),
                ("schedule", "absence_days"), ("employees", "contract"), ("schedule", "convocations"),
                ("workloads", "times"), ("workloads", "times_5x2"),
-               ("vacations", "kind"), ("movement", "source"), ("sectors", "icon")]
+               ("vacations", "kind"), ("movement", "source"), ("sectors", "icon"), ("employees", "phone")]
 
 
 async def ensure_schema(request: Request) -> None:
@@ -272,6 +272,8 @@ async def migrate_schema(database) -> None:
 
 api = APIRouter(prefix="/api", dependencies=[Depends(require_auth), Depends(ensure_schema)])
 auth = APIRouter(prefix="/api/auth")
+# Sem login: o intermitente responde a convocação pelo link assinado que recebeu no WhatsApp
+public = APIRouter(prefix="/api/public", dependencies=[Depends(ensure_schema)])
 
 
 def now_iso() -> str:
@@ -289,9 +291,18 @@ class EmployeeIn(BaseModel):
     gender: Gender | None = None
     workload: Workload | None = None
     contract: Contract | None = None
+    # Celular com DDD (só números), usado para mandar a convocação do intermitente pelo WhatsApp
+    phone: str | None = None
 
     @model_validator(mode="after")
     def default_contract(self):
+        if self.phone is not None:
+            digits = re.sub(r"\D", "", self.phone)
+            if digits.startswith("55") and len(digits) in (12, 13):
+                digits = digits[2:]
+            if digits and len(digits) not in (10, 11):
+                raise ValueError("Celular inválido: informe DDD + número (ex.: 11 98765-4321).")
+            self.phone = digits or None
         # Sem contrato informado: intermitente se o cargo disser, senão efetivo
         if self.contract is None:
             self.contract = "intermitente" if "intermitente" in self.role.lower() else "efetivo"
@@ -500,12 +511,12 @@ def week_start(raw: str) -> str:
 
 async def list_employees(request: Request) -> List[Employee]:
     result = await db(request).prepare(
-        "SELECT id, name, role, sector, status, gender, workload, contract, created_at FROM employees ORDER BY created_at ASC"
+        "SELECT id, name, role, sector, status, gender, workload, contract, phone, created_at FROM employees ORDER BY created_at ASC"
     ).all()
     return [Employee(
         id=row["id"], name=row["name"], role=row["role"], sector=row["sector"],
         status=row["status"], gender=row["gender"] or None, workload=row["workload"] or None,
-        contract=row["contract"] or None,
+        contract=row["contract"] or None, phone=row["phone"] or None,
         created_at=row["created_at"],
     ) for row in result.results]
 
@@ -615,6 +626,7 @@ async def get_schedule(request: Request, week: str) -> Schedule:
     schedule.sick_days = await vacation_days_for(request, week, "atestado")
     schedule.holidays = await week_holidays(request, week)
     schedule.closed_days = sorted(int(d) for d, h in schedule.holidays.items() if h["closed"])
+    expire_convocations(schedule)
     return schedule
 
 
@@ -955,21 +967,23 @@ async def create_employee(data: EmployeeIn, request: Request):
     data.sector = await register_sector(request, data.sector)
     emp = Employee(**data.model_dump())
     await db(request).prepare(
-        "INSERT INTO employees (id, name, role, sector, status, gender, workload, contract, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(emp.id, emp.name, emp.role, emp.sector, emp.status, emp.gender, emp.workload, emp.contract, emp.created_at).run()
+        "INSERT INTO employees (id, name, role, sector, status, gender, workload, contract, phone, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(emp.id, emp.name, emp.role, emp.sector, emp.status, emp.gender, emp.workload, emp.contract, emp.phone, emp.created_at).run()
     return emp
 
 
 @api.put("/employees/{emp_id}", response_model=Employee)
 async def update_employee(emp_id: str, data: EmployeeIn, request: Request):
     database = db(request)
-    existing = await database.prepare("SELECT id, created_at FROM employees WHERE id = ?").bind(emp_id).first()
+    existing = await database.prepare("SELECT id, created_at, phone FROM employees WHERE id = ?").bind(emp_id).first()
     if not existing:
         raise HTTPException(404, "Funcionário não encontrado")
     data.sector = await register_sector(request, data.sector)
+    if "phone" not in data.model_fields_set:
+        data.phone = existing["phone"] or None  # tela que não manda o celular não apaga o que está salvo
     await database.prepare(
-        "UPDATE employees SET name=?, role=?, sector=?, status=?, gender=?, workload=?, contract=? WHERE id=?"
-    ).bind(data.name, data.role, data.sector, data.status, data.gender, data.workload, data.contract, emp_id).run()
+        "UPDATE employees SET name=?, role=?, sector=?, status=?, gender=?, workload=?, contract=?, phone=? WHERE id=?"
+    ).bind(data.name, data.role, data.sector, data.status, data.gender, data.workload, data.contract, data.phone, emp_id).run()
     return Employee(id=emp_id, created_at=existing["created_at"], **data.model_dump())
 
 
@@ -1175,8 +1189,8 @@ async def import_employees(data: EmployeesImport, request: Request):
         item.sector = await register_sector(request, item.sector)
         emp = Employee(**item.model_dump())
         await db(request).prepare(
-            "INSERT INTO employees (id, name, role, sector, status, gender, workload, contract, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        ).bind(emp.id, emp.name, emp.role, emp.sector, emp.status, emp.gender, emp.workload, emp.contract, emp.created_at).run()
+            "INSERT INTO employees (id, name, role, sector, status, gender, workload, contract, phone, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        ).bind(emp.id, emp.name, emp.role, emp.sector, emp.status, emp.gender, emp.workload, emp.contract, emp.phone, emp.created_at).run()
         existing.add(key)
         created += 1
     return {"created": created, "skipped": len(data.employees) - created}
@@ -1765,6 +1779,235 @@ async def set_checkout_assign(data: CheckoutAssignIn, request: Request) -> Dict[
     return current
 
 
+# ---------------------------------------------------------------------------
+# Convocação do intermitente (CLT art. 452-A): horário com intervalo, link de resposta e prazo
+# Cada dia guarda: status, at (data do envio), start/end, break_start/break_end, sent_at, due (prazo),
+# nonce (troca a cada envio e invalida links antigos), token, answered_at, answered_by, expired
+# ---------------------------------------------------------------------------
+DAY_NAMES = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
+
+
+def _minutes(t: str) -> int:
+    return int(t[:2]) * 60 + int(t[3:5])
+
+
+def convocation_break_error(start: str, end: str, break_start: str | None, break_end: str | None) -> str | None:
+    """Intervalo da CLT (art. 71): acima de 4h até 6h trabalhadas, 15 min; acima de 6h, de 1h a 2h."""
+    if _minutes(end) <= _minutes(start):
+        return "A saída precisa ser depois da entrada."
+    if bool(break_start) != bool(break_end):
+        return "Informe a saída e a volta do intervalo."
+    brk = 0
+    if break_start:
+        if not _minutes(start) < _minutes(break_start) < _minutes(break_end) < _minutes(end):
+            return "O intervalo precisa ficar dentro do horário, depois da entrada e antes da saída."
+        brk = _minutes(break_end) - _minutes(break_start)
+    worked = _minutes(end) - _minutes(start) - brk
+    if worked > 360 and not 60 <= brk <= 120:
+        return "Para mais de 6h trabalhadas, o intervalo precisa ter de 1h a 2h."
+    if 240 < worked <= 360 and brk < 15:
+        return "Para mais de 4h até 6h trabalhadas, o intervalo mínimo é de 15 minutos."
+    return None
+
+
+def convocation_due(sent: datetime, week: str, day: int, start: str) -> datetime:
+    """Prazo de resposta: 1 dia útil (24h, pulando o domingo), nunca depois do início do turno."""
+    due = sent + timedelta(hours=24)
+    if due.astimezone(BR_TZ).weekday() == 6:
+        due += timedelta(hours=24)
+    shift_start = datetime.combine(date.fromisoformat(week) + timedelta(days=day),
+                                   datetime.strptime(start, "%H:%M").time(), BR_TZ)
+    return min(due, shift_start)
+
+
+def expire_convocations(schedule: Schedule) -> None:
+    """Sem resposta no prazo conta como recusa (só na leitura; fica gravado no próximo salvamento)."""
+    now = datetime.now(timezone.utc)
+    for days in schedule.convocations.values():
+        for conv in days.values():
+            due = conv.get("due")
+            if conv.get("status") == "pending" and due and datetime.fromisoformat(due) <= now:
+                conv["status"] = "declined"
+                conv["expired"] = "1"
+
+
+def _sign(payload: str, signing_key: str) -> str:
+    return _b64encode(hmac.new(signing_key.encode(), f"conv.{payload}".encode(), hashlib.sha256).digest())
+
+
+def convocation_token(request: Request, week: str, day: int, emp_id: str, nonce: str) -> str:
+    _, signing_key = _secrets(request)
+    payload = _b64encode(json.dumps({"w": week, "d": day, "e": emp_id, "n": nonce}, separators=(",", ":")).encode())
+    return f"{payload}.{_sign(payload, signing_key)}"
+
+
+def read_convocation_token(request: Request, token: str) -> Dict[str, Any]:
+    _, signing_key = _secrets(request)
+    try:
+        payload, signature = token.split(".", 1)
+        if not hmac.compare_digest(_sign(payload, signing_key), signature):
+            raise ValueError("assinatura")
+        data = json.loads(_b64decode(payload))
+        return {"week": str(data["w"]), "day": int(data["d"]), "emp": str(data["e"]), "nonce": str(data["n"])}
+    except Exception:
+        raise HTTPException(404, "Link de convocação inválido.")
+
+
+async def write_shift(request: Request, week: str, day: int, emp_id: str, times: List[str] | None) -> None:
+    current = await get_shifts(request, week, day)
+    if times:
+        current.shifts[emp_id] = times
+    elif emp_id not in current.shifts:
+        return
+    else:
+        current.shifts.pop(emp_id, None)
+    await db(request).prepare(
+        """INSERT INTO shifts (week, day, data) VALUES (?, ?, ?)
+        ON CONFLICT(week, day) DO UPDATE SET data=excluded.data"""
+    ).bind(week, day, json.dumps(current.shifts)).run()
+
+
+def convocation_times(conv: Dict[str, str]) -> List[str] | None:
+    if not conv.get("start") or not conv.get("end"):
+        return None
+    if conv.get("break_start"):
+        return [conv["start"], conv["break_start"], conv["break_end"], conv["end"]]
+    return [conv["start"], conv["end"]]
+
+
+async def set_convocation_status(request: Request, sched: Schedule, emp_id: str, day: int, status: str, by: str) -> None:
+    conv = sched.convocations.setdefault(emp_id, {})[str(day)]
+    conv["status"] = status
+    conv["answered_at"] = now_iso()
+    conv["answered_by"] = by
+    conv.pop("expired", None)
+    await save_schedule(request, sched)
+    # Aceito: o horário entra nos quadros (caixas, setor, ponto); recusado: sai
+    await write_shift(request, sched.week, day, emp_id, convocation_times(conv) if status == "accepted" else None)
+
+
+async def intermittent_or_404(request: Request, emp_id: str):
+    employee = await db(request).prepare("SELECT name, sector, contract, role FROM employees WHERE id = ?").bind(emp_id).first()
+    if not employee:
+        raise HTTPException(404, "Funcionário não encontrado")
+    contract = employee["contract"] or ("intermitente" if "intermitente" in (employee["role"] or "").lower() else "efetivo")
+    if contract != "intermitente":
+        raise HTTPException(400, "Convocação é só para funcionário com contrato intermitente.")
+    return employee
+
+
+class ConvocationIn(BaseModel):
+    employee_id: str
+    week: str
+    day: int = Field(ge=0, le=6)
+    start: HHMM
+    end: HHMM
+    break_start: HHMM | None = None
+    break_end: HHMM | None = None
+
+
+class ConvocationStatusIn(BaseModel):
+    employee_id: str
+    week: str
+    day: int = Field(ge=0, le=6)
+    status: Literal["accepted", "declined", "cancel"]
+
+
+@api.put("/schedule/convocation", response_model=Schedule)
+async def convoke(data: ConvocationIn, request: Request):
+    """Convoca (ou reenvia com novo horário). Gera um link novo; o link anterior deixa de valer."""
+    week = week_start(data.week)
+    ensure_unlocked(request, week, data.day)
+    await intermittent_or_404(request, data.employee_id)
+    error = convocation_break_error(data.start, data.end, data.break_start, data.break_end)
+    if error:
+        raise HTTPException(400, error)
+    sched = await get_schedule(request, week)
+    if data.day in sched.closed_days:
+        raise HTTPException(400, "Feriado com a loja fechada: ninguém trabalha nesse dia.")
+    if data.day in sched.vacation_days.get(data.employee_id, []) or data.day in sched.sick_days.get(data.employee_id, []):
+        raise HTTPException(400, "Funcionário de férias ou de atestado nesse dia.")
+    sent = datetime.now(timezone.utc)
+    nonce = uuid.uuid4().hex[:12]
+    conv = {"status": "pending", "at": today_br().isoformat(), "sent_at": sent.isoformat(),
+            "due": convocation_due(sent, week, data.day, data.start).isoformat(),
+            "start": data.start, "end": data.end, "nonce": nonce,
+            "token": convocation_token(request, week, data.day, data.employee_id, nonce)}
+    if data.break_start:
+        conv |= {"break_start": data.break_start, "break_end": data.break_end}
+    sched.convocations.setdefault(data.employee_id, {})[str(data.day)] = conv
+    await save_schedule(request, sched)
+    await write_shift(request, week, data.day, data.employee_id, None)  # volta a valer só depois do aceite
+    return await with_alerts(request, sched)
+
+
+@api.put("/schedule/convocation/status", response_model=Schedule)
+async def convocation_status(data: ConvocationStatusIn, request: Request):
+    """Gerente marca a resposta que recebeu por fora (telefone, pessoalmente) ou cancela a convocação."""
+    week = week_start(data.week)
+    ensure_unlocked(request, week, data.day)
+    await intermittent_or_404(request, data.employee_id)
+    sched = await get_schedule(request, week)
+    days = sched.convocations.get(data.employee_id, {})
+    if str(data.day) not in days:
+        raise HTTPException(404, "Não há convocação nesse dia.")
+    if data.status == "cancel":
+        days.pop(str(data.day))
+        await save_schedule(request, sched)
+        await write_shift(request, week, data.day, data.employee_id, None)
+    else:
+        await set_convocation_status(request, sched, data.employee_id, data.day, data.status, "gerente")
+    return await with_alerts(request, sched)
+
+
+async def public_convocation(request: Request, token: str):
+    ref = read_convocation_token(request, token)
+    sched = await get_schedule(request, ref["week"])
+    conv = sched.convocations.get(ref["emp"], {}).get(str(ref["day"]))
+    if not conv or conv.get("nonce") != ref["nonce"]:
+        raise HTTPException(410, "Esta convocação foi cancelada ou substituída por outra. Procure seu gestor.")
+    employee = await db(request).prepare("SELECT name, sector FROM employees WHERE id = ?").bind(ref["emp"]).first()
+    if not employee:
+        raise HTTPException(410, "Esta convocação não está mais disponível.")
+    return ref, sched, conv, employee
+
+
+def public_view(ref, conv, employee) -> Dict[str, Any]:
+    day = date.fromisoformat(ref["week"]) + timedelta(days=ref["day"])
+    return {
+        "name": employee["name"].split()[0], "sector": employee["sector"],
+        "date": day.isoformat(), "weekday": DAY_NAMES[ref["day"]],
+        "start": conv.get("start"), "end": conv.get("end"),
+        "break_start": conv.get("break_start"), "break_end": conv.get("break_end"),
+        "status": conv.get("status"), "expired": bool(conv.get("expired")), "due": conv.get("due"),
+        "answered_at": conv.get("answered_at"),
+    }
+
+
+class ConvocationAnswer(BaseModel):
+    answer: Literal["accept", "decline"]
+
+
+@public.get("/convocations/{token}")
+async def public_convocation_get(token: str, request: Request):
+    ref, _, conv, employee = await public_convocation(request, token)
+    return public_view(ref, conv, employee)
+
+
+@public.post("/convocations/{token}")
+async def public_convocation_answer(token: str, data: ConvocationAnswer, request: Request):
+    ref, sched, conv, employee = await public_convocation(request, token)
+    status = "accepted" if data.answer == "accept" else "declined"
+    if conv.get("status") != "pending":
+        if conv.get("status") == status and not conv.get("expired"):
+            return public_view(ref, conv, employee)  # mesma resposta de novo: nada muda
+        if conv.get("expired"):
+            raise HTTPException(409, "O prazo para responder terminou e a convocação foi considerada recusada.")
+        raise HTTPException(409, "Esta convocação já foi respondida. Para mudar, fale com seu gestor.")
+    await set_convocation_status(request, sched, ref["emp"], ref["day"], status, "funcionario")
+    return public_view(ref, conv, employee)
+
+
 @api.get("/shifts/week")
 async def week_shifts_api(week: str, request: Request) -> Dict[str, Dict[str, List[str]]]:
     """Turnos ajustados de todos os dias da semana: {"dia": {funcionário: horários}}."""
@@ -1800,5 +2043,6 @@ async def set_shift(data: ShiftIn, request: Request):
 
 
 app.include_router(auth)
+app.include_router(public)
 app.include_router(api)
 Default = asgi.entrypoint(app)

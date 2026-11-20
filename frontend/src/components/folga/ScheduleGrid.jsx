@@ -10,10 +10,11 @@ import { modeLabel, offsOf as modeOffs } from "@/lib/scaleModels";
 import { DAYS_SHORT, weekDates, fmtDayMonth, isoDate, http, addDays, parseIso, mondayOf } from "@/lib/api";
 import { defaultShiftOf } from "@/lib/workloadTimes";
 import { GenerateDialog } from "@/components/folga/GenerateDialog";
-import { isIntermittent, convocationOf, acceptedOn, shortNotice, CONVOCATION_LABEL, MIN_NOTICE_DAYS } from "@/lib/convocation";
+import { isIntermittent, convocationOf, acceptedOn, shortNotice, convocationLabel, MIN_NOTICE_DAYS } from "@/lib/convocation";
+import { ConvocationDialog } from "@/components/folga/ConvocationDialog";
 import { weekModeOf, streakLimitOf } from "@/lib/weekMode";
 
-// Célula do intermitente: — -> CONVOCADO -> ACEITO -> RECUSOU -> —
+// Célula do intermitente: clique abre a convocação (horário, WhatsApp e resposta)
 const OK = "bg-[#E3F5EC] border-[#E3F5EC] text-[#1D6B45] hover:border-[#8FD0AE]";
 const WARN = "bg-[#FFF4D1] border-[#F2CF6B] text-[#7A5500]";
 const RISK = "bg-[#FDE2E2] border-[#EE9A9A] text-[#A12828]";
@@ -24,7 +25,7 @@ const CONVOCATION_STYLE = {
   accepted: OK,
   declined: "bg-[#F8FAFC] border-[#E2E8F0] text-[#94A3B8] line-through hover:bg-[#F1F5F9]",
 };
-const CONVOCATION_NEXT = { none: "convocar", pending: "marcar aceite", accepted: "marcar recusa", declined: "limpar" };
+const CONVOCATION_NEXT = { none: "convocar", pending: "ver convocação", accepted: "ver convocação", declined: "ver convocação" };
 
 // streak: limite de dias seguidos que foi passado (6 no 6x1, 5 no 5x2)
 const Tags = ({ checkout, doublePay, streak }) =>
@@ -54,13 +55,18 @@ const ConvocationCell = ({ conv, date, vacation, sick, closed, doublePay, shift,
     <button
       data-testid={testId}
       onClick={onClick}
-      title={`${state === "none" ? "Não convocado" : CONVOCATION_LABEL[state]}${conv?.at ? ` em ${conv.at.split("-").reverse().join("/")}` : ""} · clique: ${CONVOCATION_NEXT[state]}${
+      title={`${state === "none" ? "Não convocado" : convocationLabel(conv)}${conv?.start ? ` · ${conv.start}–${conv.end}` : ""}${conv?.at ? ` em ${conv.at.split("-").reverse().join("/")}` : ""} · clique: ${CONVOCATION_NEXT[state]}${
         late ? ` · convocação com menos de ${MIN_NOTICE_DAYS} dias de antecedência` : ""
       }${excess ? ` · ${excess} — fica fora do mural` : ""}`}
       className={`${CELL} text-[10px] font-bold tracking-wider transition-colors duration-200 focus:outline-none ${excess ? RISK : state === "accepted" && doublePay ? WARN : CONVOCATION_STYLE[state]} ${late && !excess ? "ring-2 ring-[#F2CF6B] ring-offset-1" : ""} ${state === "accepted" && (checkout || doublePay || excess) ? "pt-3" : ""}`}
     >
       {state === "accepted" && <Tags checkout={checkout} doublePay={doublePay} streak={excess ? streakLimit : 0} />}
-      {state === "none" ? "—" : state === "accepted" ? (shift ? <ShiftText shift={shift} /> : "TRAB.") : CONVOCATION_LABEL[state]}
+      {state === "none" ? "—" : state === "accepted" ? (shift ? <ShiftText shift={shift} /> : "TRAB.") : (
+        <span className="flex flex-col items-center leading-tight">
+          <span>{convocationLabel(conv)}</span>
+          {state === "pending" && conv?.start && <span className="mt-0.5 text-[11px] font-semibold tracking-normal">{conv.start}–{conv.end}</span>}
+        </span>
+      )}
     </button>
   );
 };
@@ -184,7 +190,7 @@ const Alert = ({ title, testId, children }) => (
   </span>
 );
 
-const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onExtra, cctAlert, streakDays, idx, schedule, dates, shiftOn, mural, streakLimit = 6, sickDays = [], lockedDay = () => false, checkoutOn = () => null, closedDays = [], openHolidays = [] }) => {
+const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peaks, required, onToggle, onConvoke, onExtra, cctAlert, streakDays, idx, schedule, dates, shiftOn, mural, streakLimit = 6, sickDays = [], lockedDay = () => false, checkoutOn = () => null, closedDays = [], openHolidays = [] }) => {
   const intermittent = isIntermittent(emp);
   // Intermitente: dias aceitos depois do limite de dias seguidos (6 no 6x1, 5 no 5x2)
   const excessDays = new Set();
@@ -235,7 +241,8 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
               mural={mural}
               excess={excessDays.has(d) ? `Passou de ${streakLimit} dias seguidos` : null}
               streakLimit={streakLimit}
-              onClick={() => onToggle(emp.id, d)}
+              // Dia passado (bloqueado): só lança ou tira falta; nos demais abre a convocação
+              onClick={() => (lockedDay(d) ? onToggle(emp.id, d) : onConvoke(emp, d))}
               testId={`cell-${emp.id}-${d}`}
             />
           ) : (
@@ -313,7 +320,7 @@ const SectorHeader = ({ name, members, worksOn, peaks, mode, showCount, mural, n
   </tr>
 );
 
-export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange, onToggle, sectorModes = {}, workloads = [], checkouts = [], sector: sectorProp, onSectorChange, onGenerate, generating, generateSector }) => {
+export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange, onToggle, onSchedule, sectorModes = {}, workloads = [], checkouts = [], sector: sectorProp, onSectorChange, onGenerate, generating, generateSector }) => {
   const dates = weekDates(week);
   const today = isoDate(new Date());
   const [sectorLocal, setSectorLocal] = useState("all");
@@ -370,9 +377,14 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   const coverage = DAYS_SHORT.map((_, d) => visible.filter((e) => worksOn(e.id, d)).length);
 
   const [weekShifts, setWeekShifts] = useState({});
-  useEffect(() => {
-    http.get("/shifts/week", { params: { week } }).then(({ data }) => setWeekShifts(data)).catch(() => setWeekShifts({}));
-  }, [week]);
+  const loadShifts = () => http.get("/shifts/week", { params: { week } }).then(({ data }) => setWeekShifts(data)).catch(() => setWeekShifts({}));
+  useEffect(() => { loadShifts(); }, [week]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Convocação aberta: {emp, day, date, conv, defaultShift}
+  const [convFor, setConvFor] = useState(null);
+  const openConvocation = (emp, d) => setConvFor({
+    emp, day: d, date: dates[d], conv: convocationOf(schedule, emp.id, d),
+    defaultShift: defaultShiftOf(workloads.find((w) => w.id === emp.workload), modeOf(emp.sector), d),
+  });
   // Caixa de cada operadora por dia
   const [weekCheckouts, setWeekCheckouts] = useState({});
   useEffect(() => {
@@ -418,6 +430,8 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
 
   return (
     <div className="space-y-5">
+      <ConvocationDialog target={convFor} week={week} onClose={() => setConvFor(null)}
+        onSchedule={(data) => { onSchedule?.(data); loadShifts(); }} />
       <header className="no-print flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="mb-2 text-[13px] font-medium text-[#5E5880]">
@@ -554,6 +568,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       openHolidays={mural ? [] : openHolidays}
                       lockedDay={lockedDay}
                       onToggle={onToggle}
+                      onConvoke={openConvocation}
                       onExtra={onExtra}
                       shiftOn={(d) => shiftOf(emp, d)}
                       checkoutOn={(d) => checkoutName(weekCheckouts[String(d)]?.[emp.id])}
