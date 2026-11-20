@@ -1,5 +1,4 @@
 import csv
-import asyncio
 import base64
 import hashlib
 import hmac
@@ -148,8 +147,7 @@ async def require_auth(request: Request) -> str:
 
 
 _SCHEMA_READY = False
-_SCHEMA_LOCK = asyncio.Lock()
-SCHEMA_VERSION = "2026-11-20.2"  # mude ao alterar SCHEMA_STATEMENTS, NEW_COLUMNS ou a migração
+SCHEMA_VERSION = "2026-11-20.3"  # mude ao alterar SCHEMA_STATEMENTS, NEW_COLUMNS ou a migração
 SCHEMA_STATEMENTS = [
     """CREATE TABLE IF NOT EXISTS hourly_movement (day INTEGER PRIMARY KEY, label TEXT NOT NULL DEFAULT '',
     hours TEXT NOT NULL, updated_at TEXT)""",
@@ -188,42 +186,42 @@ NEW_COLUMNS = [("employees", "gender"), ("employees", "workload"), ("schedule", 
 async def ensure_schema(request: Request) -> None:
     """Atualiza o banco uma vez. Cada pedido custa 1 consulta (a versão gravada); a atualização completa
     só roda quando a versão muda. Pode rodar em paralelo sem duplicar nada (índices únicos + OR IGNORE)."""
+    # Sem trava entre pedidos: no Workers um pedido não pode esperar o I/O de outro (trava o pedido)
     global _SCHEMA_READY
     if _SCHEMA_READY:
         return
-    async with _SCHEMA_LOCK:
-        if _SCHEMA_READY:
+    database = db(request)
+    try:
+        row = await database.prepare("SELECT value FROM app_settings WHERE key = 'schema_version'").first()
+        if row and row["value"] == SCHEMA_VERSION:
+            _SCHEMA_READY = True
             return
-        database = db(request)
-        try:
-            row = await database.prepare("SELECT value FROM app_settings WHERE key = 'schema_version'").first()
-            if row and row["value"] == SCHEMA_VERSION:
-                _SCHEMA_READY = True
-                return
-        except Exception:
-            pass  # banco antigo, sem app_settings
+    except Exception:
+        pass  # banco antigo, sem app_settings
+    try:
         await migrate_schema(database)
         await database.prepare(
             """INSERT INTO app_settings (key, value) VALUES ('schema_version', ?)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value"""
         ).bind(SCHEMA_VERSION).run()
         _SCHEMA_READY = True
+    except Exception as exc:
+        # A atualização não derruba o app: registra no log e tenta de novo no próximo pedido
+        print("Falha ao atualizar o banco:", repr(exc))
 
 
 async def migrate_schema(database) -> None:
     # Poucas consultas: o plano gratuito do D1 aceita 50 por pedido
-    tables = {r["name"] for r in (await database.prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table'").all()).results}
+    # Uma consulta traz as tabelas e o SQL de cada uma (pragma_table_info não é autorizado no Worker)
+    rows = (await database.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table'").all()).results
+    tables = {r["name"]: (r["sql"] or "") for r in rows}
     for statement in SCHEMA_STATEMENTS:
         name = statement.split("EXISTS", 1)[1].split("(", 1)[0].strip()
         if name not in tables:
             await database.prepare(statement).run()
-    columns = (await database.prepare(
-        "SELECT m.name AS t, p.name AS c FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type = 'table'"
-    ).all()).results
-    existing = {(r["t"], r["c"]) for r in columns}
     for table, column in NEW_COLUMNS:
-        if (table, column) not in existing:
+        sql = tables.get(table, "")
+        if not re.search(r'[(,]\s*["`\[]?' + column + r'["`\]]?\s', sql):
             await database.prepare(f"ALTER TABLE {table} ADD COLUMN {column} TEXT").run()
     await database.prepare(
         "UPDATE employees SET contract = 'intermitente' WHERE contract IS NULL AND lower(role) LIKE '%intermitente%'"
@@ -241,24 +239,30 @@ async def migrate_schema(database) -> None:
     # Remove repetições (versão anterior podia gravar em dobro com pedidos simultâneos) e impede novas
     await database.prepare(
         "DELETE FROM sectors WHERE rowid NOT IN (SELECT min(rowid) FROM sectors GROUP BY lower(trim(name)))").run()
-    await database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS sectors_name_uq ON sectors (lower(trim(name)))").run()
+    try:
+        await database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS sectors_name_uq ON sectors (lower(trim(name)))").run()
+    except Exception as exc:  # proteção extra; sem ela o cadastro ainda confere o nome antes de inserir
+        print("Índice de setores não criado:", repr(exc))
     await database.prepare(
         """DELETE FROM sector_mode_changes WHERE rowid NOT IN
         (SELECT min(rowid) FROM sector_mode_changes GROUP BY sector, start_week)""").run()
     await database.prepare(
         "CREATE UNIQUE INDEX IF NOT EXISTS mode_changes_uq ON sector_mode_changes (sector, start_week)").run()
     # Setores: cadastra os que os funcionários já usam
-    await database.prepare(
-        """INSERT OR IGNORE INTO sectors (id, name, created_at)
-        SELECT lower(hex(randomblob(16))), trim(sector), ? FROM employees
-        WHERE trim(COALESCE(sector, '')) <> '' GROUP BY lower(trim(sector))"""
-    ).bind(now_iso()).run()
+    known = {r["name"].strip().lower() for r in (await database.prepare("SELECT name FROM sectors").all()).results}
+    used = (await database.prepare("SELECT DISTINCT trim(sector) AS name FROM employees").all()).results
+    for row in used:
+        name = (row["name"] or "").strip()
+        if name and name.lower() not in known:
+            await database.prepare("INSERT OR IGNORE INTO sectors (id, name, created_at) VALUES (?, ?, ?)").bind(
+                str(uuid.uuid4()), name, now_iso()).run()
+            known.add(name.lower())
     # Uma vez só: a escala de cada setor passa a ter data de início, e entra a troca de 14/12 (5x2 com 42h)
     if not await database.prepare("SELECT value FROM app_settings WHERE key = 'mode_changes_v1'").first():
-        await database.prepare(
-            """INSERT OR IGNORE INTO sector_mode_changes (id, sector, mode, start_week, created_at)
-            SELECT lower(hex(randomblob(16))), lower(sector), mode, ?, ? FROM sector_modes"""
-        ).bind(LEGACY_WEEK, now_iso()).run()
+        for row in (await database.prepare("SELECT sector, mode FROM sector_modes").all()).results:
+            await database.prepare(
+                "INSERT OR IGNORE INTO sector_mode_changes (id, sector, mode, start_week, created_at) VALUES (?, ?, ?, ?, ?)"
+            ).bind(str(uuid.uuid4()), row["sector"].lower(), row["mode"], LEGACY_WEEK, now_iso()).run()
         await database.prepare(
             "INSERT OR IGNORE INTO sector_mode_changes (id, sector, mode, start_week, created_at) VALUES (?, ?, ?, ?, ?)"
         ).bind(str(uuid.uuid4()), "*", REFORM_MODE, REFORM_WEEK, now_iso()).run()
