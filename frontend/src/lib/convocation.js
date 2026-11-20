@@ -9,7 +9,6 @@ export const convocationOf = (schedule, empId, day) => schedule?.convocations?.[
 export const acceptedOn = (schedule, empId, day) => convocationOf(schedule, empId, day)?.status === "accepted";
 
 export const CONVOCATION_LABEL = { pending: "CONVOCADO", accepted: "ACEITO", declined: "RECUSOU" };
-export const convocationLabel = (conv) => (conv?.expired ? "SEM RESPOSTA" : CONVOCATION_LABEL[conv?.status]);
 
 // A convocação precisa ser feita com pelo menos 3 dias corridos de antecedência
 export const MIN_NOTICE_DAYS = 3;
@@ -19,59 +18,4 @@ export const shortNotice = (conv, date) => {
   const sent = new Date(y, m - 1, d);
   const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   return (target - sent) / 86400000 < MIN_NOTICE_DAYS;
-};
-
-// Intervalo da CLT (art. 71): acima de 4h até 6h trabalhadas, 15 min; acima de 6h, de 1h a 2h.
-// Mesma regra do servidor. Recebe entrada, saída e intervalo ("HH:MM" ou vazio) e devolve o erro ou null.
-const toMin = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
-export const convocationSummary = ({ start, end, breakStart, breakEnd }) => {
-  if (!start || !end) return { error: "Informe a entrada e a saída." };
-  if (toMin(end) <= toMin(start)) return { error: "A saída precisa ser depois da entrada." };
-  if (!!breakStart !== !!breakEnd) return { error: "Informe a saída e a volta do intervalo." };
-  let brk = 0;
-  if (breakStart) {
-    if (!(toMin(start) < toMin(breakStart) && toMin(breakStart) < toMin(breakEnd) && toMin(breakEnd) < toMin(end)))
-      return { error: "O intervalo precisa ficar dentro do horário, depois da entrada e antes da saída." };
-    brk = toMin(breakEnd) - toMin(breakStart);
-  }
-  const worked = toMin(end) - toMin(start) - brk;
-  let error = null;
-  if (worked > 360 && !(brk >= 60 && brk <= 120)) error = "Para mais de 6h trabalhadas, o intervalo precisa ter de 1h a 2h.";
-  else if (worked > 240 && worked <= 360 && brk < 15) error = "Para mais de 4h até 6h trabalhadas, o intervalo mínimo é de 15 minutos.";
-  const rule = worked > 360 ? "mais de 6h: intervalo de 1h a 2h" : worked > 240 ? "de 4h a 6h: intervalo mínimo de 15 min" : "até 4h: intervalo não obrigatório";
-  return { worked, brk, error, rule };
-};
-
-export const fmtDuration = (m) => `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}`;
-
-// Link que o intermitente abre para aceitar ou recusar (não precisa de login)
-export const convocationLink = (token) => `${window.location.origin}/?convocacao=${encodeURIComponent(token)}`;
-
-const fmtDue = (iso) => {
-  const d = new Date(iso);
-  const day = d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit", timeZone: "America/Sao_Paulo" }).replace(".", "");
-  const time = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
-  return `${day} às ${time}`;
-};
-export { fmtDue };
-
-// WhatsApp com a mensagem pronta. Sem celular cadastrado, o WhatsApp pede para escolher o contato.
-export const whatsappUrl = (emp, conv, date) => {
-  const first = emp.name.split(" ")[0];
-  const day = date.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit" });
-  const pause = conv.break_start ? ` (intervalo ${conv.break_start} às ${conv.break_end})` : "";
-  const text = [
-    `Olá, ${first}! Você está sendo convocado(a) para trabalhar:`,
-    ``,
-    `Dia: ${day}`,
-    `Horário: ${conv.start} às ${conv.end}${pause}`,
-    `Setor: ${emp.sector}`,
-    ``,
-    `Para aceitar ou recusar, abra o link até ${fmtDue(conv.due)}:`,
-    convocationLink(conv.token),
-    ``,
-    `Sem resposta no prazo, a convocação é considerada recusada (CLT, art. 452-A).`,
-  ].join("\n");
-  const phone = (emp.phone || "").replace(/\D/g, "");
-  return `https://wa.me/${phone ? `55${phone}` : ""}?text=${encodeURIComponent(text)}`;
 };
