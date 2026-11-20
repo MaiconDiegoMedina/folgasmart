@@ -58,7 +58,7 @@ export const AppRail = ({ tab, onTab, onLogout, sectorTabs = [] }) => {
   return (
     <>
       <nav aria-label="Menu principal" className="no-print hidden md:flex sticky top-6 z-20 w-[76px] shrink-0 flex-col items-center gap-1.5 self-start rounded-[38px] bg-[#17142E] py-[18px] min-h-[640px]">
-        <div className="mb-3.5 grid h-11 w-11 place-items-center rounded-[14px] bg-white font-display text-[15px] font-bold text-[#17142E]">ES</div>
+        <img src={`${process.env.PUBLIC_URL}/logo-96.png`} alt="Unit Escala" title="Unit Escala" width="44" height="44" className="mb-3.5 h-11 w-11 rounded-[14px]" />
         {MAIN_TABS.map((t) => railButton(t))}
         {sectors.length > 0 && (
           <>

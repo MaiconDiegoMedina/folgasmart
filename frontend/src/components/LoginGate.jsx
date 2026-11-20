@@ -55,13 +55,14 @@ export function LoginGate({ children }) {
   if (!authenticated) {
     return (
       <main
-        className="min-h-screen grid place-items-center bg-[#17142E] bg-cover bg-center md:bg-right-bottom px-4"
-        style={{ backgroundImage: `url(${process.env.PUBLIC_URL}/login-bg.jpg)` }}
+        // Capa: versão em pé no celular e deitada a partir do tablet (a marca fica no canto inferior direito)
+        className="login-bg min-h-screen grid place-items-center bg-[#17142E] bg-cover bg-right-bottom px-4"
+        style={{ "--bg-mobile": `url(${process.env.PUBLIC_URL}/login-bg-mobile.jpg)`, "--bg-wide": `url(${process.env.PUBLIC_URL}/login-bg.jpg)` }}
       >
         <form onSubmit={submit} className="w-full max-w-sm glass rounded-[26px] p-7 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.6)]">
           <div className="mb-6 text-center">
-            <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-xl bg-[#17142E] text-xl text-white">F</div>
-            <h1 className="text-2xl font-bold text-[#1B1830]">EscalaSmart</h1>
+            <img src={`${process.env.PUBLIC_URL}/logo-96.png`} alt="" width="48" height="48" className="mx-auto mb-3 h-12 w-12 rounded-xl" />
+            <h1 className="text-2xl font-bold text-[#1B1830]">Unit Escala</h1>
             <p className="mt-2 text-sm text-[#5E5880]">Digite a senha de acesso para continuar.</p>
           </div>
           <label htmlFor="access-password" className="mb-2 block text-sm font-medium text-[#1B1830]">Senha</label>
