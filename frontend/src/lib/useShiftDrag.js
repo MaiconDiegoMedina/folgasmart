@@ -7,6 +7,7 @@ const LAST = 23 * 60 + 55;
 const SIX_HOURS = 6 * 60;
 export const MAX_EXTRA = 2 * 60; // hora extra por dia para jornada acima de 6h (até 6h: sem hora extra)
 export const BREAK_RANGE = [60, 120]; // intervalo de 1h a 2h para quem trabalha mais de 6h
+export const SHORT_BREAK_RANGE = [15, 60]; // intervalo de 15 min a 1h para quem trabalha até 6h
 
 const workOf = (t) => t[t.length - 1] - t[0] - (t.length === 4 ? t[2] - t[1] : 0);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -14,16 +15,21 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 // Horas extras permitidas no dia: até 2h para jornada acima de 6h; nenhuma para jornada de até 6h
 export const extraAllowed = (base) => (base > SIX_HOURS ? MAX_EXTRA : 0);
 
-// Intervalo conforme as horas trabalhadas: 15 min entre 4h e 6h; o da jornada (1h ou mais) acima de 6h.
+// Intervalo conforme as horas trabalhadas: entre 4h e 6h, mínimo de 15 min e livre até 1h;
+// acima de 6h, o da jornada (1h ou mais). Ao cair de mais de 6h para até 6h, volta para 15 min.
 // Mantém as horas trabalhadas e ajusta a saída (ou a entrada, se foi ela que mudou).
-export const fitBreak = (t, mode = "end", long = 60) => {
+export const fitBreak = (t, mode = "end", long = 60, wasLong = false) => {
   if (t.length !== 4) return t;
   const [s, b0, b1, e] = t;
   const blen = b1 - b0;
   const w = e - s - blen;
+  const [smin, smax] = SHORT_BREAK_RANGE;
   let want = null;
-  if (w > 240 && w <= SIX_HOURS && blen > 15) want = 15;
-  else if (w > SIX_HOURS && blen < long) want = long;
+  if (w > 240 && w <= SIX_HOURS) {
+    if (wasLong && blen > smin) want = smin;
+    else if (blen < smin) want = smin;
+    else if (blen > smax) want = smax;
+  } else if (w > SIX_HOURS && blen < long) want = long;
   if (want === null) return t;
   const d = want - blen;
   const next = mode === "start" ? [s - d, b0, b0 + want, e] : [s, b0, b0 + want, e + d];
@@ -31,14 +37,17 @@ export const fitBreak = (t, mode = "end", long = 60) => {
   return next;
 };
 
-// Limites do arrasto: hora extra (2h acima de 6h, nenhuma até 6h) e intervalo de 1h a 2h acima de 6h
+// Limites do arrasto: hora extra (2h acima de 6h, nenhuma até 6h) e duração do intervalo
+// (1h a 2h acima de 6h trabalhadas; 15 min a 1h até 6h)
 export const limitsOf = (base, orig) => {
   const work = workOf(orig);
+  const long = work > SIX_HOURS;
   return {
     maxWork: base ? Math.max(base + extraAllowed(base), work) : null,
     capLabel: base && base > SIX_HOURS ? "máx. 2h extra" : "sem hora extra",
-    brk: orig.length === 4 && Math.max(work, base || 0) > SIX_HOURS ? BREAK_RANGE : null,
+    brk: orig.length === 4 ? (long ? BREAK_RANGE : SHORT_BREAK_RANGE) : null,
     long: orig.length === 4 ? Math.max(60, orig[2] - orig[1]) : 60,
+    wasLong: long,
   };
 };
 
@@ -58,21 +67,21 @@ const shiftWith = (orig, mode, delta, lim) => {
     if (max) lo = Math.max(lo, e - blen - max);
     const want = s + delta;
     const ns = clamp(want, lo, (brk ? brk[0] : e) - MIN_WORK);
-    return { next: fitBreak([ns, ...orig.slice(1)], "start", lim.long), capped: !!max && want < lo };
+    return { next: fitBreak([ns, ...orig.slice(1)], "start", lim.long, lim.wasLong), capped: !!max && want < lo };
   }
   if (mode === "end") {
     let hi = LAST;
     if (max) hi = Math.min(hi, s + blen + max);
     const want = e + delta;
     const ne = clamp(want, (brk ? brk[1] : s) + MIN_WORK, hi);
-    return { next: fitBreak([...orig.slice(0, -1), ne], "end", lim.long), capped: !!max && want > hi };
+    return { next: fitBreak([...orig.slice(0, -1), ne], "end", lim.long, lim.wasLong), capped: !!max && want > hi };
   }
   if (!brk) return { next: orig, capped: false };
   if (mode === "break") {
     const bs = clamp(brk[0] + delta, s + MIN_WORK, e - MIN_WORK - blen);
     return { next: [s, bs, bs + blen, e], capped: false };
   }
-  // Pontas do intervalo: muda a duração dentro de 1h–2h (e sem passar da hora extra permitida)
+  // Pontas do intervalo: muda a duração dentro de 1h–2h (acima de 6h) ou 15 min–1h (até 6h), sem passar da hora extra permitida
   const [bmin, bmax] = lim.brk || [blen, blen];
   const minLen = Math.max(bmin, max ? e - s - max : 0);
   if (mode === "brkStart") {
@@ -90,7 +99,7 @@ const shiftWith = (orig, mode, delta, lim) => {
  * Arrastar a barra do horário no gráfico do dia:
  * - corpo da barra: muda entrada e saída juntas (mantém a jornada); para cima/baixo troca de linha (caixa)
  * - pontas: muda só a entrada ou só a saída (hora extra até 2h para quem trabalha mais de 6h)
- * - parte listrada: move o intervalo; as pontas dela mudam a duração (1h a 2h para quem trabalha mais de 6h)
+ * - parte listrada: move o intervalo; as pontas dela mudam a duração (1h a 2h acima de 6h trabalhadas; 15 min a 1h até 6h)
  * No celular: segure a barra um instante e arraste.
  * `onCommit(o, novoHorario | null, linhaDestino | null)` salva.
  */

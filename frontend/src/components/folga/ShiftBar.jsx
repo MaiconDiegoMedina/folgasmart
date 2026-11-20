@@ -23,7 +23,9 @@ export const ShiftBar = ({ o, shift, win, colors, title, grab, drag, extra = 0 }
   const first = o.emp.name.split(" ")[0];
   const dragging = !!drag;
   const lift = drag?.dy ? { transform: `translateY(${drag.dy}px)` } : {};
-  const brkFree = !!(o.shift && limitsOf(o.base, o.shift.map(toMin)).brk);
+  const brkRange = o.shift ? limitsOf(o.base, o.shift.map(toMin)).brk : null;
+  const brkFree = !!brkRange;
+  const brkHint = brkRange ? (brkRange[0] < 60 ? "de 15 min a 1h" : "de 1h a 2h") : "";
   const handle = "absolute top-0 bottom-0 z-[3] w-2.5 cursor-ew-resize touch-none";
   return (
     <>
@@ -48,7 +50,7 @@ export const ShiftBar = ({ o, shift, win, colors, title, grab, drag, extra = 0 }
       {brk && brk[1] > START && brk[0] < END && (
         <div
           {...grab(o, "break")}
-          title={`Intervalo de ${first} · ${shift[1]}–${shift[2]} (${fmtDur(brk[1] - brk[0])}). Arraste para mudar o horário do intervalo${brkFree ? "; puxe as pontas para durar de 1h a 2h" : ""}.`}
+          title={`Intervalo de ${first} · ${shift[1]}–${shift[2]} (${fmtDur(brk[1] - brk[0])}). Arraste para mudar o horário do intervalo${brkFree ? `; puxe as pontas para durar ${brkHint}` : ""}.`}
           className={`absolute top-[3px] bottom-[3px] z-[7] cursor-grab select-none active:cursor-grabbing ${dragging ? "pointer-events-none" : ""}`}
           style={{ left: pct(Math.max(brk[0], START)), width: width(Math.max(brk[0], START), Math.min(brk[1], END)), background: STRIPES, ...lift }}
         >
