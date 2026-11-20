@@ -15,6 +15,9 @@ import { CheckoutsPanel } from "@/components/folga/CheckoutsPanel";
 import { HolidaysPanel } from "@/components/folga/HolidaysPanel";
 import { ScheduleGrid } from "@/components/folga/ScheduleGrid";
 import { UnlockDialog } from "@/components/folga/UnlockDialog";
+import { SettingsPanel } from "@/components/folga/SettingsPanel";
+import { ModeChangeNotice } from "@/components/folga/ModeChangeNotice";
+import { setScaleModels, modeLabel } from "@/lib/scaleModels";
 import { useAuth } from "@/components/LoginGate";
 
 // A aba aberta vale só para o login atual (recarregar a página mantém); cada novo login abre no Início
@@ -65,7 +68,11 @@ const nextCell = (s, emp, day, markExtra) => {
 export default function Dashboard() {
   const { logout } = useAuth();
   const [tab, setTabState] = useState(readTab);
-  const setTab = (t) => {
+  const [settingsSection, setSettingsSection] = useState("setores");
+  // "configuracoes:feriados" abre direto uma seção das Configurações
+  const setTab = (target) => {
+    const [t, section] = target.split(":");
+    if (section) setSettingsSection(section);
     setTabState(t);
     try { sessionStorage.setItem(TAB_KEY, t); } catch { /* sem armazenamento: só não lembra a aba */ }
     window.scrollTo({ top: 0 });
@@ -79,6 +86,8 @@ export default function Dashboard() {
   const [workloads, setWorkloads] = useState([]);
   const [vacations, setVacations] = useState([]);
   const [checkouts, setCheckouts] = useState([]);
+  const [models, setModels] = useState([]);
+  const [sectorList, setSectorList] = useState([]);
   const [sector, setSector] = useState("all");
   // Inativos ficam fora da escala, da geração e da exportação
   const scheduled = employees.filter((e) => e.status !== "inativo");
@@ -88,8 +97,9 @@ export default function Dashboard() {
     // Cada pedido é independente: se um falhar (ex.: servidor ainda sem a rota nova), o resto carrega
     const requests = [
       ["/employees", setEmployees],
-      ["/sectors/modes", setSectorModes],
       ["/workloads", setWorkloads],
+      ["/scale-models", (list) => { setScaleModels(list); setModels(list); }],
+      ["/sectors", setSectorList],
       ["/vacations", setVacations],
       ["/checkouts", setCheckouts],
     ];
@@ -107,6 +117,11 @@ export default function Dashboard() {
   useEffect(() => {
     http.get("/movement", { params: { week } }).then(({ data }) => setMovement(data)).catch(() => setMovement(null));
   }, [week]);
+  // Escala de cada setor vale a partir de uma data: a da semana aberta
+  const loadModes = useCallback(() => {
+    http.get("/sectors/modes", { params: { week } }).then(({ data }) => setSectorModes(data)).catch(() => {});
+  }, [week]);
+  useEffect(() => { loadModes(); }, [loadModes, employees]);
   useEffect(() => {
     http.get("/schedule", { params: { week } }).then(({ data }) => setSchedule(data)).catch((err) => toast.error(errMsg(err)));
   }, [week, employees]);
@@ -123,18 +138,18 @@ export default function Dashboard() {
     const saved = [];
     try {
       for (const [sector] of changed) {
-        const { data: modes } = await http.put("/sectors/mode", { sector, mode });
+        const { data: modes } = await http.put("/sectors/mode", { sector, mode, week });
         saved.push(changed.find(([s]) => s === sector));
         setSectorModes(modes);
       }
       const { data } = await http.post("/schedule/generate", { mode: "6x1", week, sector: activeSector });
       setSchedule(data);
-      toast.success(`${activeSector ? `Escala do setor ${activeSector}` : "Escala de todos os setores"} gerada${mode ? ` em ${mode}` : ""}`);
+      toast.success(`${activeSector ? `Escala do setor ${activeSector}` : "Escala de todos os setores"} gerada${mode ? ` em ${modeLabel(mode)}` : ""}`);
     } catch (err) {
       toast.error(errMsg(err));
       for (const [sector, previous] of saved) {
         try {
-          const { data: modes } = await http.put("/sectors/mode", { sector, mode: previous });
+          const { data: modes } = await http.put("/sectors/mode", { sector, mode: previous, week });
           setSectorModes(modes);
         } catch { /* fica a escala nova; a próxima geração pergunta de novo */ }
       }
@@ -175,6 +190,7 @@ export default function Dashboard() {
         <AppRail tab={tab} onTab={setTab} onLogout={logout} />
         <main className="min-w-0 flex-1 space-y-6">
           <UnlockDialog />
+          <ModeChangeNotice models={models} />
           {tab === "inicio" && <HomePanel employees={scheduled} schedule={schedule} movement={movement} week={week} onTab={setTab} />}
           {tab === "escala" && (
             <>
@@ -183,13 +199,19 @@ export default function Dashboard() {
           )}
           {tab === "funcionarios" && (
             <>
-              <EmployeesPanel employees={employees} workloads={workloads} vacations={vacations} onChange={load} schedule={schedule} week={week} sectorModes={sectorModes} />
+              <EmployeesPanel sectorList={sectorList} employees={employees} workloads={workloads} vacations={vacations} onChange={load} schedule={schedule} week={week} sectorModes={sectorModes} />
             </>
           )}
-          {tab === "jornadas" && (
-            <>
-              <WorkloadsPanel workloads={workloads} employees={employees} onChange={load} />
-            </>
+          {tab === "configuracoes" && (
+            <SettingsPanel
+              section={settingsSection}
+              onSection={setSettingsSection}
+              sectors={sectorList}
+              models={models}
+              onChange={() => { load(); loadModes(); }}
+              workloadsPanel={<WorkloadsPanel workloads={workloads} employees={employees} onChange={load} />}
+              holidaysPanel={<HolidaysPanel onChange={load} />}
+            />
           )}
           {tab === "movimento" && (
             <>
@@ -203,11 +225,6 @@ export default function Dashboard() {
           )}
           {SECTOR_TABS.some((t) => t.id === tab) && (
             <SectorBoard key={tab} tab={tab} employees={scheduled} schedule={schedule} week={week} onWeek={setWeek} workloads={workloads} sectorModes={sectorModes} />
-          )}
-          {tab === "feriados" && (
-            <>
-              <HolidaysPanel onChange={load} />
-            </>
           )}
         </main>
       </div>

@@ -1,3 +1,5 @@
+import { isShortWeek, dailyTargetOf } from "@/lib/scaleModels";
+
 // Horários do ponto por jornada: cada dia é null, [entrada, saída] ou [entrada, saída int., volta int., saída]
 
 const pad = (n) => String(n).padStart(2, "0");
@@ -27,9 +29,23 @@ export const times5x2Of = (wl) => wl?.times_5x2 || (wl?.minutes_5x2 ? legacyDay(
 export const defaultShiftOf = (wl, mode, day) => {
   if (!wl) return null;
   const five = times5x2Of(wl);
-  if (mode === "5x2" && five) return five;
   const all = timesOf(wl);
+  if (isShortWeek(mode)) {
+    const base = five || all[day] || all.find(Boolean) || null;
+    const target = dailyTargetOf(mode);
+    return target ? fitShift(base, target) : base;
+  }
   return all[day] || all.find(Boolean) || five || null;
+};
+
+// Mesmo horário com a saída ajustada para fechar os minutos do dia (ex.: 42h no 5x2 = 8h24)
+export const fitShift = (t, minutes) => {
+  if (!t || !minutes) return t;
+  const brk = t.length === 4 ? toMin(t[2]) - toMin(t[1]) : 0;
+  const end = toMin(t[0]) + minutes + brk;
+  if (end >= 24 * 60) return t;
+  if (t.length === 4 && toMin(t[2]) >= end) return [t[0], fromMin(end)];
+  return t.length === 4 ? [t[0], t[1], t[2], fromMin(end)] : [t[0], fromMin(end)];
 };
 
 // Horário inicial para quem não tem jornada: 6h trabalhadas com 15 min de intervalo (ajuste arrastando a barra)

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { http, errMsg, DAYS, fmtDayMonth } from "@/lib/api";
 import { isIntermittent, acceptedOn } from "@/lib/convocation";
 import { defaultShiftOf, fromMin, toMin, dayMinutes } from "@/lib/workloadTimes";
+import { isShortWeek } from "@/lib/scaleModels";
 import { extraAllowed } from "@/lib/useShiftDrag";
 import { groupByRole } from "@/lib/groupByRole";
 import { isTrial } from "@/components/folga/RoleDialog";
@@ -37,7 +38,7 @@ const toFields = (shift) => (!shift ? ["", "", "", ""] : shift.length === 4 ? [.
 // Minutos de trabalho no dia conforme a jornada cadastrada e a escala do setor
 const dailyMinutes = (wl, mode, day) => {
   if (!wl) return null;
-  if (mode === "5x2" && wl.minutes_5x2) return wl.minutes_5x2;
+  if (isShortWeek(mode)) return dayMinutes(defaultShiftOf(wl, mode, day)) || null;
   return wl.minutes[day] || null;
 };
 // Intervalo: o da jornada acima de 6h; 15 min entre 4h e 6h; nenhum até 4h

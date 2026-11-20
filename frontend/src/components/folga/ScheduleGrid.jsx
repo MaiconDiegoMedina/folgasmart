@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { ExportMenu } from "@/components/folga/ExportMenu";
 import { UnlockButton, useUnlock } from "@/components/folga/UnlockDialog";
 import { groupByRole } from "@/lib/groupByRole";
-import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate, http, addDays, parseIso, mondayOf } from "@/lib/api";
+import { modeLabel, offsOf as modeOffs } from "@/lib/scaleModels";
+import { DAYS_SHORT, weekDates, fmtDayMonth, isoDate, http, addDays, parseIso, mondayOf } from "@/lib/api";
 import { defaultShiftOf } from "@/lib/workloadTimes";
 import { GenerateDialog } from "@/components/folga/GenerateDialog";
 import { isIntermittent, convocationOf, acceptedOn, shortNotice, CONVOCATION_LABEL, MIN_NOTICE_DAYS } from "@/lib/convocation";
@@ -295,7 +296,7 @@ const SectorTabs = ({ sectors, value, onChange }) => (
 const SectorHeader = ({ name, members, worksOn, peaks, mode, showCount, mural, newPage }) => (
   <tr data-testid={`sector-group-${name}`} className={mural && newPage ? "print:break-before-page" : ""}>
     <td className="pt-5 pb-2 sticky left-0 bg-[#FBFAFE] z-10">
-      <span className="text-xs font-bold uppercase tracking-[0.08em] text-[#5E5880]">{name}{!mural && <> · {members.length} {members.length === 1 ? "pessoa" : "pessoas"} · {mode}</>}</span>
+      <span className="text-xs font-bold uppercase tracking-[0.08em] text-[#5E5880]">{name}{!mural && <> · {members.length} {members.length === 1 ? "pessoa" : "pessoas"} · {modeLabel(mode)}</>}</span>
     </td>
     {DAYS_SHORT.map((_, d) => {
       if (!showCount) return <td key={d} />;
@@ -393,7 +394,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   const expected = (d) => visible.filter((e) => !isIntermittent(e) || acceptedOn(schedule, e.id, d)).length;
   const countTone = (c, n) => (!n ? "bg-[#F2F0F8] text-[#5E5880]" : c / n >= 0.75 ? "bg-[#E3F5EC] text-[#1D6B45]" : c / n >= 0.6 ? "bg-[#FFF4D1] text-[#7A5500]" : "bg-[#FDE2E2] text-[#A12828]");
   const pastNames = DAYS_SHORT.filter((_, d) => pastDay(d));
-  const withoutOff = visible.filter((e) => !isIntermittent(e) && e.status !== "ferias" && !vacationOf(e.id).length && offsOf(e.id).length < OFFS_PER_MODE[modeOf(e.sector)]).length;
+  const withoutOff = visible.filter((e) => !isIntermittent(e) && e.status !== "ferias" && !vacationOf(e.id).length && offsOf(e.id).length < modeOffs(modeOf(e.sector))).length;
   const notGenerated = !schedule.generated_at && employees.length > 0;
   const fmtShort = () => {
     const a = dates[0], b = dates[6];
@@ -420,7 +421,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
       <header className="no-print flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="mb-2 text-[13px] font-medium text-[#5E5880]">
-            Escala semanal · {[...new Set(sectors.map(modeOf))].join(" + ") || schedule.mode}
+            Escala semanal · {[...new Set(sectors.map(modeOf))].map(modeLabel).join(" + ") || modeLabel(schedule.mode)}
             {peaks.length > 0 && <> · pico: <b className="font-semibold text-[#9A3A0E]">{peaks.map((d) => DAYS_SHORT[d]).join(", ")}</b></>}
           </p>
           <h1 className="font-serif-title text-[40px] leading-none sm:text-[56px]">Quem trabalha, <em>quem folga</em></h1>
@@ -546,7 +547,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       cctAlert={schedule.cct_alerts?.[emp.id]}
                       streakDays={schedule.streak_alerts?.[emp.id]}
                       peaks={peaks}
-                      required={OFFS_PER_MODE[modeOf(emp.sector)]}
+                      required={modeOffs(modeOf(emp.sector))}
                       streakLimit={streakLimitOf(modeOf(emp.sector))}
                       sickDays={sickOf(emp.id)}
                       closedDays={closedDays}

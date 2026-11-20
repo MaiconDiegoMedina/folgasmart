@@ -65,7 +65,7 @@ export const UnlockDialog = () => {
     setBusy(true);
     try {
       await unlockAdmin(password);
-      toast.success(`Dias passados desbloqueados até ${fmtTime(adminUnlockedUntil())}. Repita a alteração.`);
+      toast.success(`Alterações do administrador liberadas até ${fmtTime(adminUnlockedUntil())}. Repita a alteração.`);
       setOpen(false);
     } catch (err) {
       toast.error(errMsg(err));
@@ -79,9 +79,9 @@ export const UnlockDialog = () => {
       <DialogContent data-testid="unlock-dialog" className="sm:max-w-sm">
         <form onSubmit={submit} className="space-y-4">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Lock className="h-4 w-4" /> Escala bloqueada</DialogTitle>
+            <DialogTitle className="flex items-center gap-2"><Lock className="h-4 w-4" /> Senha do administrador</DialogTitle>
             <DialogDescription>
-              Dias que já passaram só aceitam falta e atestado. Para outras alterações, informe a senha do administrador (vale por 30 minutos).
+              Dias que já passaram só aceitam falta e atestado, e as Configurações são do administrador. Para alterar, informe a senha do administrador (vale por 30 minutos).
             </DialogDescription>
           </DialogHeader>
           <input

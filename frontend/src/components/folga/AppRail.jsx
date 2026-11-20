@@ -1,15 +1,14 @@
-import { Home, CalendarDays, Users, Clock, BarChart3, ShoppingCart, Flag, LogOut } from "lucide-react";
+import { Home, CalendarDays, Users, BarChart3, ShoppingCart, Settings, LogOut } from "lucide-react";
 import { SECTOR_TABS } from "@/components/folga/SectorBoard";
 
 export const TABS = [
   { id: "inicio", label: "Início", icon: Home },
   { id: "escala", label: "Escala", icon: CalendarDays },
   { id: "funcionarios", label: "Funcionários", icon: Users },
-  { id: "jornadas", label: "Jornadas", icon: Clock },
   { id: "movimento", label: "Movimento de clientes", short: "Movimento", icon: BarChart3 },
   { id: "caixas", label: "Caixas", icon: ShoppingCart },
   ...SECTOR_TABS.map(({ id, label, short, icon }) => ({ id, label, short, icon })),
-  { id: "feriados", label: "Feriados", icon: Flag },
+  { id: "configuracoes", label: "Configurações", short: "Config.", icon: Settings },
 ];
 
 // Menu principal: barra escura à esquerda no computador e pílula embaixo no celular

@@ -2,11 +2,8 @@ import { useEffect, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { scaleModels, modeLabel, modelDesc } from "@/lib/scaleModels";
 
-const MODES = [
-  { id: "6x1", title: "6x1", desc: "6 dias de trabalho e 1 folga por semana" },
-  { id: "5x2", title: "5x2", desc: "5 dias de trabalho e 2 folgas por semana" },
-];
 const KEEP = "manter";
 
 // Pergunta a escala (6x1 ou 5x2) antes de gerar. Em "Todos", também dá para manter a escala de cada setor.
@@ -17,7 +14,8 @@ export const GenerateDialog = ({ open, onOpenChange, sector, sectors, modeOf, re
   const [choice, setChoice] = useState(initial);
   useEffect(() => { if (open) setChoice(initial); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const options = all ? [...MODES, { id: KEEP, title: "Manter a de cada setor", desc: sectors.map((s) => `${s}: ${modeOf(s)}`).join(" · ") }] : MODES;
+  const MODES = scaleModels().map((m) => ({ id: m.id, title: m.name, desc: modelDesc(m) }));
+  const options = all ? [...MODES, { id: KEEP, title: "Manter a de cada setor", desc: sectors.map((s) => `${s}: ${modeLabel(modeOf(s))}`).join(" · ") }] : MODES;
   const confirm = () => {
     onOpenChange(false);
     onConfirm(choice === KEEP ? null : choice);

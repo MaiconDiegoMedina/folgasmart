@@ -132,7 +132,7 @@ export const HomePanel = ({ employees, schedule, movement, week, onTab }) => {
           <p className="mt-3 text-[13px]">{risks + warns ? `${risks} ${risks === 1 ? "risco" : "riscos"} · ${warns} ${warns === 1 ? "ponto" : "pontos"} de atenção` : "Tudo certo nesta semana"}</p>
         </button>
         {holiday ? (
-          <button onClick={() => onTab("feriados")} className={`${CARD} text-left`}>
+          <button onClick={() => onTab("configuracoes:feriados")} className={`${CARD} text-left`}>
             <p className="m-0 text-[13px] font-semibold text-[#5E5880]">Feriado nesta semana</p>
             <p className="mt-2.5 font-display text-xl font-semibold leading-tight">{DAYS_SHORT[holiday.d]}, {fmtDayMonth(dates[holiday.d])}</p>
             <p className="mt-1.5 text-[13px] text-[#5E5880]">{holiday.name} · {holiday.closed ? "loja fechada" : "loja aberta, pagamento em dobro"}</p>

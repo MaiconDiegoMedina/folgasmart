@@ -25,8 +25,19 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-Admin-Unlock"],
 )
 
-Mode = Literal["6x1", "5x2"]
-OFFS_PER_MODE = {"6x1": 1, "5x2": 2}
+# Escala (modelo cadastrado em scale_models): "6x1", "5x2", "5x2-42h" ou um id criado pelo administrador
+Mode = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
+OFFS_PER_MODE = {"6x1": 1, "5x2": 2}  # padrão; o restante vem de scale_models (7 - dias de trabalho)
+# Troca automática para 5x2 com 42h semanais
+REFORM_WEEK = "2026-12-14"
+REFORM_MODE = "5x2-42h"
+# Modelos que já vêm no sistema: (id, nome, dias de trabalho, minutos na semana; None = segue a jornada)
+BUILTIN_MODELS = [
+    ("6x1", "6x1", 6, None),
+    ("5x2", "5x2", 5, None),
+    (REFORM_MODE, "5x2 · 42h", 5, 42 * 60),
+]
+LEGACY_WEEK = "2000-01-03"  # segunda-feira usada para a escala que valia antes das datas de início
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 Status = Literal["ativo", "ferias", "suspensao", "falta", "inativo"]
 Gender = Literal["M", "F"]
@@ -104,6 +115,12 @@ def ensure_unlocked(request: Request, week: str, day: int):
         raise HTTPException(423, LOCKED_MSG)
 
 
+def require_admin(request: Request):
+    """Configurações: só com a senha do administrador (até existirem usuários com perfil)."""
+    if not admin_unlocked(request):
+        raise HTTPException(423, "Configurações só podem ser alteradas pelo administrador. Informe a senha do administrador.")
+
+
 async def require_auth(request: Request) -> str:
     _, signing_key = _secrets(request)
     authorization = request.headers.get("authorization", "")
@@ -147,6 +164,12 @@ SCHEMA_STATEMENTS = [
     PRIMARY KEY (week, day))""",
     """CREATE TABLE IF NOT EXISTS hourly_week (week TEXT NOT NULL, day INTEGER NOT NULL, label TEXT NOT NULL DEFAULT '',
     hours TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (week, day))""",
+    """CREATE TABLE IF NOT EXISTS sectors (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS scale_models (id TEXT PRIMARY KEY, name TEXT NOT NULL, work_days INTEGER NOT NULL,
+    weekly_minutes INTEGER, builtin INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS sector_mode_changes (id TEXT PRIMARY KEY, sector TEXT NOT NULL, mode TEXT NOT NULL,
+    start_week TEXT NOT NULL, created_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)""",
 ]
 DEFAULT_WORKLOADS = [
     ("8h_4h", "8h seg–sex + 4h sáb", [480, 480, 480, 480, 480, 240, 480], 60, 528),
@@ -179,6 +202,30 @@ async def ensure_schema(request: Request) -> None:
             await database.prepare(
                 "INSERT INTO workloads (id, name, minutes, break_minutes, minutes_5x2, created_at) VALUES (?, ?, ?, ?, ?, ?)"
             ).bind(wid, name, json.dumps(minutes), break_minutes, minutes_5x2, f"2000-01-0{index + 1}").run()
+    for index, (mid, name, work_days, weekly) in enumerate(BUILTIN_MODELS):
+        await database.prepare(
+            """INSERT OR IGNORE INTO scale_models (id, name, work_days, weekly_minutes, builtin, created_at)
+            VALUES (?, ?, ?, ?, 1, ?)"""
+        ).bind(mid, name, work_days, weekly, f"2000-01-0{index + 1}").run()
+    # Setores: cadastra os que os funcionários já usam
+    known = {r["name"].strip().lower() for r in (await database.prepare("SELECT name FROM sectors").all()).results}
+    used = (await database.prepare("SELECT DISTINCT sector FROM employees").all()).results
+    for row in used:
+        name = (row["sector"] or "").strip()
+        if name and name.lower() not in known:
+            await database.prepare("INSERT INTO sectors (id, name, created_at) VALUES (?, ?, ?)").bind(
+                str(uuid.uuid4()), name, now_iso()).run()
+            known.add(name.lower())
+    # Uma vez só: a escala de cada setor passa a ter data de início, e entra a troca de 14/12 (5x2 com 42h)
+    if not await database.prepare("SELECT value FROM app_settings WHERE key = 'mode_changes_v1'").first():
+        for row in (await database.prepare("SELECT sector, mode FROM sector_modes").all()).results:
+            await database.prepare(
+                "INSERT INTO sector_mode_changes (id, sector, mode, start_week, created_at) VALUES (?, ?, ?, ?, ?)"
+            ).bind(str(uuid.uuid4()), row["sector"].lower(), row["mode"], LEGACY_WEEK, now_iso()).run()
+        await database.prepare(
+            "INSERT INTO sector_mode_changes (id, sector, mode, start_week, created_at) VALUES (?, ?, ?, ?, ?)"
+        ).bind(str(uuid.uuid4()), "*", REFORM_MODE, REFORM_WEEK, now_iso()).run()
+        await database.prepare("INSERT INTO app_settings (key, value) VALUES ('mode_changes_v1', ?)").bind(now_iso()).run()
     _SCHEMA_READY = True
 
 
@@ -345,6 +392,7 @@ class Vacation(VacationIn):
 class SectorModeIn(BaseModel):
     sector: Text
     mode: Mode
+    week: str | None = None  # semana a partir da qual vale (padrão: a atual)
 
 
 class GenerateIn(BaseModel):
@@ -723,7 +771,8 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
                      sunday_rule: Dict[str, str] | None = None,
                      sector_modes: Dict[str, str] | None = None,
                      vacation: Dict[str, List[int]] | None = None,
-                     closed: List[int] | None = None) -> Dict[str, List[int]]:
+                     closed: List[int] | None = None,
+                     offs_per_mode: Dict[str, int] | None = None) -> Dict[str, List[int]]:
     shut = set(closed or [])
     max_avg = max(movement.avg) or 1
     weight = [1 + 4 * (value / max_avg) for value in movement.avg]
@@ -741,7 +790,7 @@ def compute_schedule(employees: List[Employee], movement: Movement, mode: str,
         ordered.extend(group[k:] + group[:k])
     for emp in ordered:
         sec = off_sector.setdefault(emp.sector.lower(), [0] * 7)
-        offs_needed = OFFS_PER_MODE[(sector_modes or {}).get(emp.sector.lower(), mode)]
+        offs_needed = (offs_per_mode or OFFS_PER_MODE).get((sector_modes or {}).get(emp.sector.lower(), mode), 1)
         # Último dia de folga da semana anterior (6 = domingo, sem restrição se não houver histórico)
         last_day = (previous_days or {}).get(emp.id, SUNDAY)
         rule = (sunday_rule or {}).get(emp.id)
@@ -848,8 +897,21 @@ async def employees(request: Request):
     return await list_employees(request)
 
 
+async def register_sector(request: Request, name: str) -> str:
+    """Nome do setor como está cadastrado; setor novo entra na lista de setores."""
+    name = name.strip()
+    rows = (await db(request).prepare("SELECT name FROM sectors").all()).results
+    for row in rows:
+        if row["name"].strip().lower() == name.lower():
+            return row["name"]
+    await db(request).prepare("INSERT INTO sectors (id, name, created_at) VALUES (?, ?, ?)").bind(
+        str(uuid.uuid4()), name, now_iso()).run()
+    return name
+
+
 @api.post("/employees", response_model=Employee)
 async def create_employee(data: EmployeeIn, request: Request):
+    data.sector = await register_sector(request, data.sector)
     emp = Employee(**data.model_dump())
     await db(request).prepare(
         "INSERT INTO employees (id, name, role, sector, status, gender, workload, contract, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -863,6 +925,7 @@ async def update_employee(emp_id: str, data: EmployeeIn, request: Request):
     existing = await database.prepare("SELECT id, created_at FROM employees WHERE id = ?").bind(emp_id).first()
     if not existing:
         raise HTTPException(404, "Funcionário não encontrado")
+    data.sector = await register_sector(request, data.sector)
     await database.prepare(
         "UPDATE employees SET name=?, role=?, sector=?, status=?, gender=?, workload=?, contract=? WHERE id=?"
     ).bind(data.name, data.role, data.sector, data.status, data.gender, data.workload, data.contract, emp_id).run()
@@ -947,6 +1010,7 @@ async def workloads_api(request: Request):
 
 @api.post("/workloads", response_model=WorkloadOut)
 async def create_workload(data: WorkloadIn, request: Request):
+    require_admin(request)
     item = WorkloadOut(id=str(uuid.uuid4()), **data.model_dump())
     await db(request).prepare(
         """INSERT INTO workloads (id, name, minutes, break_minutes, minutes_5x2, times, times_5x2, created_at)
@@ -959,6 +1023,7 @@ async def create_workload(data: WorkloadIn, request: Request):
 
 @api.put("/workloads/{workload_id}", response_model=WorkloadOut)
 async def update_workload(workload_id: str, data: WorkloadIn, request: Request):
+    require_admin(request)
     database = db(request)
     if not await database.prepare("SELECT id FROM workloads WHERE id = ?").bind(workload_id).first():
         raise HTTPException(404, "Jornada não encontrada")
@@ -974,6 +1039,7 @@ async def update_workload(workload_id: str, data: WorkloadIn, request: Request):
 
 @api.delete("/workloads/{workload_id}")
 async def delete_workload(workload_id: str, request: Request):
+    require_admin(request)
     database = db(request)
     await database.prepare("DELETE FROM workloads WHERE id = ?").bind(workload_id).run()
     await database.prepare("UPDATE employees SET workload = NULL WHERE workload = ?").bind(workload_id).run()
@@ -1065,6 +1131,7 @@ async def import_employees(data: EmployeesImport, request: Request):
         key = item.name.strip().lower()
         if key in existing:
             continue
+        item.sector = await register_sector(request, item.sector)
         emp = Employee(**item.model_dump())
         await db(request).prepare(
             "INSERT INTO employees (id, name, role, sector, status, gender, workload, contract, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -1074,23 +1141,244 @@ async def import_employees(data: EmployeesImport, request: Request):
     return {"created": created, "skipped": len(data.employees) - created}
 
 
-async def get_sector_modes(request: Request) -> Dict[str, str]:
-    rows = (await db(request).prepare("SELECT sector, mode FROM sector_modes").all()).results
-    return {row["sector"].lower(): row["mode"] for row in rows}
+async def list_models(request: Request) -> List[Dict[str, Any]]:
+    rows = (await db(request).prepare(
+        "SELECT id, name, work_days, weekly_minutes, builtin FROM scale_models ORDER BY builtin DESC, created_at"
+    ).all()).results
+    return [{"id": r["id"], "name": r["name"], "work_days": int(r["work_days"]),
+             "weekly_minutes": int(r["weekly_minutes"]) if r["weekly_minutes"] is not None else None,
+             "builtin": bool(r["builtin"])} for r in rows]
+
+
+async def offs_by_mode(request: Request) -> Dict[str, int]:
+    return {m["id"]: max(0, 7 - m["work_days"]) for m in await list_models(request)}
+
+
+async def ensure_model(request: Request, mode: str) -> str:
+    if not await db(request).prepare("SELECT id FROM scale_models WHERE id = ?").bind(mode).first():
+        raise HTTPException(400, "Escala não cadastrada.")
+    return mode
+
+
+async def known_sectors(request: Request) -> List[str]:
+    names = {r["name"].strip().lower() for r in (await db(request).prepare("SELECT name FROM sectors").all()).results}
+    names |= {(r["sector"] or "").strip().lower()
+              for r in (await db(request).prepare("SELECT DISTINCT sector FROM employees").all()).results}
+    return sorted(n for n in names if n)
+
+
+async def resolve_modes(request: Request, week: str) -> Dict[str, str]:
+    """Escala de cada setor (nome em minúsculas) na semana, pelas datas de início.
+
+    Vale a alteração mais recente que já começou. Uma alteração para todos os setores ("*") substitui
+    as de cada setor feitas antes dela; na mesma data, a do setor vale mais que a geral."""
+    rows = (await db(request).prepare(
+        """SELECT sector, mode, start_week FROM sector_mode_changes WHERE start_week <= ?
+        ORDER BY start_week, CASE WHEN sector = '*' THEN 0 ELSE 1 END, created_at"""
+    ).bind(week).all()).results
+    default, per_sector = "6x1", {}
+    for row in rows:
+        if row["sector"] == "*":
+            default, per_sector = row["mode"], {}
+        else:
+            per_sector[row["sector"].lower()] = row["mode"]
+    sectors = set(await known_sectors(request)) | set(per_sector)
+    return {name: per_sector.get(name, default) for name in sorted(sectors)}
+
+
+def current_week() -> str:
+    today = today_br()
+    return (today - timedelta(days=today.weekday())).isoformat()
 
 
 @api.get("/sectors/modes")
-async def sector_modes_api(request: Request):
-    return await get_sector_modes(request)
+async def sector_modes_api(request: Request, week: str | None = None):
+    return await resolve_modes(request, week_start(week) if week else current_week())
+
+
+async def upsert_mode_change(request: Request, sector: str, mode: str, start_week: str) -> None:
+    database = db(request)
+    await database.prepare("DELETE FROM sector_mode_changes WHERE sector = ? AND start_week = ?").bind(sector, start_week).run()
+    await database.prepare(
+        "INSERT INTO sector_mode_changes (id, sector, mode, start_week, created_at) VALUES (?, ?, ?, ?, ?)"
+    ).bind(str(uuid.uuid4()), sector, mode, start_week, now_iso()).run()
 
 
 @api.put("/sectors/mode")
 async def set_sector_mode(data: SectorModeIn, request: Request):
+    """Escala escolhida ao gerar: vale para o setor a partir da semana gerada."""
+    week = week_start(data.week) if data.week else current_week()
+    await ensure_model(request, data.mode)
+    await upsert_mode_change(request, data.sector.lower(), data.mode, week)
+    return await resolve_modes(request, week)
+
+
+class ModeChangeIn(BaseModel):
+    sector: Text  # "*" = todos os setores
+    mode: Mode
+    start: str  # data de início; vale a partir da segunda-feira dessa semana
+
+
+@api.get("/sectors/mode-changes")
+async def mode_changes_api(request: Request):
+    rows = (await db(request).prepare(
+        "SELECT id, sector, mode, start_week FROM sector_mode_changes ORDER BY start_week DESC, sector"
+    ).all()).results
+    return [{"id": r["id"], "sector": r["sector"], "mode": r["mode"], "start_week": r["start_week"]} for r in rows]
+
+
+@api.post("/sectors/mode-changes")
+async def create_mode_change(data: ModeChangeIn, request: Request):
+    require_admin(request)
+    await ensure_model(request, data.mode)
+    week = week_start(data.start)
+    if week < current_week():
+        raise HTTPException(400, "A data de início precisa ser desta semana em diante. Semanas que já passaram não mudam.")
+    sector = "*" if data.sector.strip() == "*" else data.sector.strip().lower()
+    await upsert_mode_change(request, sector, data.mode, week)
+    return await mode_changes_api(request)
+
+
+@api.delete("/sectors/mode-changes/{change_id}")
+async def delete_mode_change(change_id: str, request: Request):
+    require_admin(request)
+    row = await db(request).prepare("SELECT start_week FROM sector_mode_changes WHERE id = ?").bind(change_id).first()
+    if row and row["start_week"] <= current_week():
+        raise HTTPException(400, "Essa escala já está valendo e faz parte do histórico. Para mudar, cadastre uma nova data de início.")
+    await db(request).prepare("DELETE FROM sector_mode_changes WHERE id = ?").bind(change_id).run()
+    return await mode_changes_api(request)
+
+
+@api.get("/notices")
+async def notices_api(request: Request):
+    """Trocas de escala que começam nos próximos 7 dias (aviso na semana anterior)."""
+    today = today_br()
+    first, last = (today + timedelta(days=1)).isoformat(), (today + timedelta(days=7)).isoformat()
+    rows = (await db(request).prepare(
+        "SELECT sector, mode, start_week FROM sector_mode_changes WHERE start_week >= ? AND start_week <= ? ORDER BY start_week"
+    ).bind(first, last).all()).results
+    models = {m["id"]: m for m in await list_models(request)}
+    names = {r["name"].strip().lower(): r["name"] for r in (await db(request).prepare("SELECT name FROM sectors").all()).results}
+    return [{"start_week": r["start_week"], "sector": "*" if r["sector"] == "*" else names.get(r["sector"], r["sector"]),
+             "mode": r["mode"], "model": models.get(r["mode"])} for r in rows]
+
+
+# ---------- Modelos de escala ----------
+class ScaleModelIn(BaseModel):
+    name: Text
+    work_days: int = Field(ge=1, le=6)
+    weekly_minutes: int | None = Field(default=None, ge=60, le=60 * 60)
+
+
+@api.get("/scale-models")
+async def scale_models_api(request: Request):
+    return await list_models(request)
+
+
+@api.post("/scale-models")
+async def create_scale_model(data: ScaleModelIn, request: Request):
+    require_admin(request)
+    if any(m["name"].strip().lower() == data.name.strip().lower() for m in await list_models(request)):
+        raise HTTPException(400, f'Já existe uma escala chamada "{data.name.strip()}".')
     await db(request).prepare(
-        """INSERT INTO sector_modes (sector, mode) VALUES (?, ?)
-        ON CONFLICT(sector) DO UPDATE SET mode=excluded.mode"""
-    ).bind(data.sector.lower(), data.mode).run()
-    return await get_sector_modes(request)
+        "INSERT INTO scale_models (id, name, work_days, weekly_minutes, builtin, created_at) VALUES (?, ?, ?, ?, 0, ?)"
+    ).bind(str(uuid.uuid4()), data.name.strip(), data.work_days, data.weekly_minutes, now_iso()).run()
+    return await list_models(request)
+
+
+@api.put("/scale-models/{model_id}")
+async def update_scale_model(model_id: str, data: ScaleModelIn, request: Request):
+    require_admin(request)
+    row = await db(request).prepare("SELECT builtin FROM scale_models WHERE id = ?").bind(model_id).first()
+    if not row:
+        raise HTTPException(404, "Escala não encontrada.")
+    if row["builtin"]:
+        raise HTTPException(400, "As escalas que vêm no sistema não podem ser alteradas. Cadastre uma nova.")
+    await db(request).prepare("UPDATE scale_models SET name=?, work_days=?, weekly_minutes=? WHERE id=?").bind(
+        data.name.strip(), data.work_days, data.weekly_minutes, model_id).run()
+    return await list_models(request)
+
+
+@api.delete("/scale-models/{model_id}")
+async def delete_scale_model(model_id: str, request: Request):
+    require_admin(request)
+    database = db(request)
+    row = await database.prepare("SELECT builtin FROM scale_models WHERE id = ?").bind(model_id).first()
+    if row and row["builtin"]:
+        raise HTTPException(400, "As escalas que vêm no sistema não podem ser excluídas.")
+    if await database.prepare("SELECT id FROM sector_mode_changes WHERE mode = ? LIMIT 1").bind(model_id).first():
+        raise HTTPException(400, "Essa escala está em uso por algum setor. Troque a escala do setor antes de excluir.")
+    await database.prepare("DELETE FROM scale_models WHERE id = ?").bind(model_id).run()
+    return await list_models(request)
+
+
+# ---------- Setores ----------
+class SectorIn(BaseModel):
+    name: Text
+
+
+@api.get("/sectors")
+async def sectors_api(request: Request):
+    rows = (await db(request).prepare("SELECT id, name FROM sectors ORDER BY name COLLATE NOCASE").all()).results
+    counts: Dict[str, int] = {}
+    for e in await list_employees(request):
+        if e.status != "inativo":
+            key = e.sector.strip().lower()
+            counts[key] = counts.get(key, 0) + 1
+    return [{"id": r["id"], "name": r["name"], "employees": counts.get(r["name"].strip().lower(), 0)} for r in rows]
+
+
+@api.post("/sectors")
+async def create_sector(data: SectorIn, request: Request):
+    require_admin(request)
+    name = data.name.strip()
+    if any(r["name"].strip().lower() == name.lower()
+           for r in (await db(request).prepare("SELECT name FROM sectors").all()).results):
+        raise HTTPException(400, f'O setor "{name}" já está cadastrado.')
+    await register_sector(request, name)
+    return await sectors_api(request)
+
+
+@api.put("/sectors/{sector_id}")
+async def rename_sector(sector_id: str, data: SectorIn, request: Request):
+    require_admin(request)
+    database = db(request)
+    row = await database.prepare("SELECT name FROM sectors WHERE id = ?").bind(sector_id).first()
+    if not row:
+        raise HTTPException(404, "Setor não encontrado.")
+    old, new = row["name"].strip(), data.name.strip()
+    if old.lower() != new.lower() and any(
+            r["name"].strip().lower() == new.lower()
+            for r in (await database.prepare("SELECT name FROM sectors").all()).results):
+        raise HTTPException(400, f'O setor "{new}" já está cadastrado.')
+    await database.prepare("UPDATE sectors SET name = ? WHERE id = ?").bind(new, sector_id).run()
+    await database.prepare("UPDATE employees SET sector = ? WHERE lower(trim(sector)) = ?").bind(new, old.lower()).run()
+    await database.prepare("UPDATE sector_mode_changes SET sector = ? WHERE sector = ?").bind(new.lower(), old.lower()).run()
+    # Semanas já geradas guardam a escala de cada setor pelo nome: acompanha o nome novo
+    rows = (await database.prepare("SELECT week, sector_modes FROM schedule WHERE sector_modes LIKE ?").bind(
+        f"%{old}%").all()).results
+    for row in rows:
+        modes = json.loads(row["sector_modes"] or "{}")
+        renamed = {(new if k.strip().lower() == old.lower() else k): v for k, v in modes.items()}
+        if renamed != modes:
+            await database.prepare("UPDATE schedule SET sector_modes = ? WHERE week = ?").bind(
+                json.dumps(renamed), row["week"]).run()
+    return await sectors_api(request)
+
+
+@api.delete("/sectors/{sector_id}")
+async def delete_sector(sector_id: str, request: Request):
+    require_admin(request)
+    database = db(request)
+    row = await database.prepare("SELECT name FROM sectors WHERE id = ?").bind(sector_id).first()
+    if not row:
+        return await sectors_api(request)
+    if await database.prepare("SELECT id FROM employees WHERE lower(trim(sector)) = ? LIMIT 1").bind(
+            row["name"].strip().lower()).first():
+        raise HTTPException(400, "Há funcionários neste setor. Mude o setor deles antes de excluir.")
+    await database.prepare("DELETE FROM sectors WHERE id = ?").bind(sector_id).run()
+    await database.prepare("DELETE FROM sector_mode_changes WHERE sector = ?").bind(row["name"].strip().lower()).run()
+    return await sectors_api(request)
 
 
 @api.get("/schedule", response_model=Schedule)
@@ -1119,7 +1407,7 @@ async def generate(data: GenerateIn, request: Request):
     target = [e for e in employees if not sector_key or e.sector.lower() == sector_key]
     if not target:
         raise HTTPException(400, "Nenhum funcionário nesse setor.")
-    sector_modes = await get_sector_modes(request)
+    sector_modes = await resolve_modes(request, week)
     snapshot = {}
     for emp in target:
         snapshot[emp.sector] = sector_modes.get(emp.sector.lower(), "6x1")
@@ -1137,7 +1425,8 @@ async def generate(data: GenerateIn, request: Request):
     sick = await vacation_days_for(request, week, "atestado")
     off_days = compute_schedule(target, mov, data.mode, rotate, previous_days, sunday_rule,
                                 {k.lower(): v for k, v in snapshot.items()}, merge_days(vacation, sick),
-                                [int(d) for d, h in (await week_holidays(request, week)).items() if h["closed"]])
+                                [int(d) for d, h in (await week_holidays(request, week)).items() if h["closed"]],
+                                await offs_by_mode(request))
     if sector_key:
         # Refaz só o setor escolhido: folgas, EXTRA e suspensões dos outros setores ficam como estão
         sched = await get_schedule(request, week)
@@ -1325,6 +1614,7 @@ async def holidays_api(year: int, request: Request):
 
 @api.put("/holidays")
 async def set_holiday(data: HolidayIn, request: Request):
+    require_admin(request)
     try:
         day = date.fromisoformat(data.date)
     except ValueError:
@@ -1343,6 +1633,7 @@ async def set_holiday(data: HolidayIn, request: Request):
 @api.delete("/holidays/{holiday_date}")
 async def delete_holiday(holiday_date: str, request: Request):
     """Remove um feriado cadastrado; um nacional volta ao padrão (loja aberta)."""
+    require_admin(request)
     try:
         day = date.fromisoformat(holiday_date)
     except ValueError:

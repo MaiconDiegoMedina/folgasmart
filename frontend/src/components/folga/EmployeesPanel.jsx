@@ -3,7 +3,8 @@ import { Plus, Trash2, Loader2, Search, Pencil, BadgeCheck, MoreHorizontal } fro
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { http, errMsg, isoDate, addDays, parseIso, weekDates, DAYS_SHORT, OFFS_PER_MODE } from "@/lib/api";
+import { http, errMsg, isoDate, addDays, parseIso, weekDates, DAYS_SHORT } from "@/lib/api";
+import { offsOf as modeOffs } from "@/lib/scaleModels";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageTitle } from "@/components/folga/Header";
 import { isIntermittent, acceptedOn } from "@/lib/convocation";
@@ -53,7 +54,10 @@ const EmployeeForm = ({ sectors, roles, workloads, onSaved }) => {
     <form data-testid="employee-form" onSubmit={submit} className="grid grid-cols-1 sm:grid-cols-3 gap-2">
       <Input data-testid="input-employee-name" placeholder="Nome" value={form.name} onChange={set("name")} />
       <Input data-testid="input-employee-role" placeholder="Cargo (ex.: Teste)" list="roles" value={form.role} onChange={set("role")} />
-      <Input data-testid="select-employee-sector" placeholder="Setor" list="sectors" value={form.sector} onChange={set("sector")} />
+      <select data-testid="select-employee-sector" value={form.sector} onChange={set("sector")} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm">
+        <option value="">Setor</option>
+        {sectors.map((s) => <option key={s} value={s}>{s}</option>)}
+      </select>
       <select data-testid="select-employee-gender" value={form.gender} onChange={set("gender")} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm">
         <option value="">Sexo</option>
         <option value="M">Masculino</option>
@@ -67,7 +71,6 @@ const EmployeeForm = ({ sectors, roles, workloads, onSaved }) => {
         <option value="efetivo">Efetivo</option>
         <option value="intermitente">Intermitente</option>
       </select>
-      <datalist id="sectors">{sectors.map((s) => <option key={s} value={s} />)}</datalist>
       <datalist id="roles">{roles.map((r) => <option key={r} value={r} />)}</datalist>
       <Button data-testid="btn-save-employee" type="submit" disabled={busy} className="sm:col-span-2 bg-[#17142E] hover:bg-[#2A2550] text-white">
         {busy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />} Adicionar funcionário
@@ -93,7 +96,7 @@ const Stat = ({ label, value, tone = "", active, onClick }) => (
 );
 
 // Equipe em cartões: situação, vínculo, jornada e a folga da semana
-export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onChange, schedule = {}, week, sectorModes = {} }) => {
+export const EmployeesPanel = ({ sectorList = [], employees, workloads = [], vacations = [], onChange, schedule = {}, week, sectorModes = {} }) => {
   const sectors = [...new Set(employees.map((e) => e.sector))];
   const roles = [...new Set(employees.map((e) => e.role))].sort((a, b) => a.localeCompare(b, "pt-BR"));
   const [roleFor, setRoleFor] = useState(null);
@@ -114,7 +117,7 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
   const modeOf = (s) => weekModeOf(schedule, sectorModes, s);
   const offsOf = (e) => (schedule.off_days?.[e.id] || []).filter((d) => !(schedule.extra_days?.[e.id] || []).includes(d));
   const weekVacation = (e) => (schedule.vacation_days?.[e.id] || []).length > 0;
-  const noOff = (e) => e.status !== "inativo" && !isIntermittent(e) && !away(e) && !weekVacation(e) && !!schedule.generated_at && offsOf(e).length < OFFS_PER_MODE[modeOf(e.sector)];
+  const noOff = (e) => e.status !== "inativo" && !isIntermittent(e) && !away(e) && !weekVacation(e) && !!schedule.generated_at && offsOf(e).length < modeOffs(modeOf(e.sector));
   const streakDays = (e) => schedule.streak_alerts?.[e.id] || [];
   const active = employees.filter((e) => e.status !== "inativo");
 
@@ -312,7 +315,7 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
             <DialogTitle>Novo funcionário</DialogTitle>
             <DialogDescription>Depois de adicionar, clique em Gerar escala para recalcular as folgas.</DialogDescription>
           </DialogHeader>
-          <EmployeeForm sectors={sectors} roles={roles} workloads={workloads} onSaved={() => { setAdding(false); onChange(); }} />
+          <EmployeeForm sectors={sectorList.length ? sectorList.map((s) => s.name) : sectors} roles={roles} workloads={workloads} onSaved={() => { setAdding(false); onChange(); }} />
         </DialogContent>
       </Dialog>
 
@@ -394,6 +397,7 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
       <RoleDialog
         employee={roleFor}
         employees={employees}
+        sectorNames={sectorList.map((s) => s.name)}
         onClose={() => setRoleFor(null)}
         onSave={(emp, patch) =>
           update(emp, patch, isTrial(emp) ? `${emp.name} aprovado: ${patch.role} · ${patch.sector}` : `${emp.name}: ${patch.role} · ${patch.sector}`)

@@ -8,7 +8,7 @@ export const isTrial = (emp) => /teste/i.test(emp?.role || "");
 const sorted = (items) => [...new Set(items.filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
 
 // Troca de cargo e setor; para quem está em teste, é a aprovação
-export const RoleDialog = ({ employee, employees, onClose, onSave }) => {
+export const RoleDialog = ({ employee, employees, sectorNames = [], onClose, onSave }) => {
   const [role, setRole] = useState("");
   const [sector, setSector] = useState("");
   const [busy, setBusy] = useState(false);
@@ -22,7 +22,7 @@ export const RoleDialog = ({ employee, employees, onClose, onSave }) => {
 
   // Só cargos e setores já cadastrados (o cargo de teste não aparece como destino)
   const roles = sorted(employees.map((e) => e.role).filter((r) => !/teste/i.test(r)));
-  const sectors = sorted(employees.map((e) => e.sector));
+  const sectors = sorted([...sectorNames, ...employees.map((e) => e.sector)]);
 
   const save = async () => {
     setBusy(true);
