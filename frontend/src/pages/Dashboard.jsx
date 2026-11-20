@@ -34,19 +34,9 @@ const readTab = () => {
 };
 
 // Próximo estado da célula, igual ao servidor: TRAB. -> FOLGA -> SUSP. -> FALTA -> TRAB.;
-// EXTRA liga/desliga numa folga; intermitente: convocado -> aceitou -> recusou -> nada
+// EXTRA liga/desliga numa folga. Intermitente fica de fora: a convocação tem a própria janela.
 const nextCell = (s, emp, day, markExtra) => {
-  if (isIntermittent(emp)) {
-    if (markExtra) return null;
-    const days = { ...(s.convocations?.[emp.id] || {}) };
-    const key = String(day);
-    const cur = days[key]?.status;
-    if (cur == null) days[key] = { status: "pending", at: isoDate(new Date()) };
-    else if (cur === "pending") days[key] = { ...days[key], status: "accepted" };
-    else if (cur === "accepted") days[key] = { ...days[key], status: "declined" };
-    else delete days[key];
-    return { ...s, convocations: { ...(s.convocations || {}), [emp.id]: days } };
-  }
+  if (isIntermittent(emp)) return null;
   const list = (k) => [...(s[k]?.[emp.id] || [])];
   const off = list("off_days");
   const susp = list("suspension_days");
