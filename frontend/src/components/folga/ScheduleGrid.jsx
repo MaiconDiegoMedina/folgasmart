@@ -10,6 +10,7 @@ import { DAYS_SHORT, OFFS_PER_MODE, weekDates, fmtDayMonth, isoDate, http, addDa
 import { defaultShiftOf } from "@/lib/workloadTimes";
 import { GenerateDialog } from "@/components/folga/GenerateDialog";
 import { isIntermittent, convocationOf, acceptedOn, shortNotice, CONVOCATION_LABEL, MIN_NOTICE_DAYS } from "@/lib/convocation";
+import { weekModeOf, streakLimitOf } from "@/lib/weekMode";
 
 // Célula do intermitente: — -> CONVOCADO -> ACEITO -> RECUSOU -> —
 const OK = "bg-[#E3F5EC] border-[#E3F5EC] text-[#1D6B45] hover:border-[#8FD0AE]";
@@ -24,16 +25,17 @@ const CONVOCATION_STYLE = {
 };
 const CONVOCATION_NEXT = { none: "convocar", pending: "marcar aceite", accepted: "marcar recusa", declined: "limpar" };
 
+// streak: limite de dias seguidos que foi passado (6 no 6x1, 5 no 5x2)
 const Tags = ({ checkout, doublePay, streak }) =>
   checkout || doublePay || streak ? (
     <span className="absolute top-1 right-1.5 flex max-w-[calc(100%-8px)] gap-[3px]">
       {checkout && <b title={`Caixa: ${checkout}`} className="truncate rounded-md bg-[#17142E] px-[5px] py-[2px] text-[9px] font-bold leading-none tracking-normal text-white">{checkout}</b>}
       {doublePay && <b title="Trabalha no feriado: pagamento em dobro" className="shrink-0 rounded-md bg-[#7A5500] px-[5px] py-[2px] text-[9px] font-bold leading-none tracking-normal text-[#FFF4D1]">2×</b>}
-      {streak && <b title="Passou de 6 dias seguidos sem folga" className="shrink-0 rounded-md bg-[#A12828] px-[5px] py-[2px] text-[9px] font-bold leading-none tracking-normal text-white">+6 DIAS</b>}
+      {streak && <b title={`Passou de ${streak} dias seguidos sem folga`} className="shrink-0 rounded-md bg-[#A12828] px-[5px] py-[2px] text-[9px] font-bold leading-none tracking-normal text-white">+{streak} DIAS</b>}
     </span>
   ) : null;
 
-const ConvocationCell = ({ conv, date, vacation, sick, closed, doublePay, shift, checkout, mural, excess, onClick, testId }) => {
+const ConvocationCell = ({ conv, date, vacation, sick, closed, doublePay, shift, checkout, mural, excess, streakLimit, onClick, testId }) => {
   if (closed) return <Cell status="feriado" testId={testId} />;
   if (vacation) return <Cell status="ferias" testId={testId} />;
   if (sick) return <Cell status="atestado" testId={testId} />;
@@ -56,7 +58,7 @@ const ConvocationCell = ({ conv, date, vacation, sick, closed, doublePay, shift,
       }${excess ? ` · ${excess} — fica fora do mural` : ""}`}
       className={`${CELL} text-[10px] font-bold tracking-wider transition-colors duration-200 focus:outline-none ${excess ? RISK : state === "accepted" && doublePay ? WARN : CONVOCATION_STYLE[state]} ${late && !excess ? "ring-2 ring-[#F2CF6B] ring-offset-1" : ""} ${state === "accepted" && (checkout || doublePay || excess) ? "pt-3" : ""}`}
     >
-      {state === "accepted" && <Tags checkout={checkout} doublePay={doublePay} streak={!!excess} />}
+      {state === "accepted" && <Tags checkout={checkout} doublePay={doublePay} streak={excess ? streakLimit : 0} />}
       {state === "none" ? "—" : state === "accepted" ? (shift ? <ShiftText shift={shift} /> : "TRAB.") : CONVOCATION_LABEL[state]}
     </button>
   );
@@ -169,7 +171,7 @@ const Cell = ({ off, susp, absent: absentProp, extra, peak, status, cct: cctProp
       }
       className={`${CELL} text-[12px] font-semibold transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[#6D5BD0] ${classesEstilo} ${cct && !streak ? "ring-2 ring-[#F2CF6B] ring-offset-1" : ""} ${locked && !absent ? "opacity-60" : ""} ${working && (checkout || doublePay || streak) ? "pt-3" : ""}`}
     >
-      {working && <Tags checkout={checkout} doublePay={doublePay} streak={streak} />}
+      {working && <Tags checkout={checkout} doublePay={doublePay} streak={streak ? 6 : 0} />}
       {texto}
     </button>
   );
@@ -231,6 +233,7 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
               checkout={checkoutOn(d)}
               mural={mural}
               excess={excessDays.has(d) ? `Passou de ${streakLimit} dias seguidos` : null}
+              streakLimit={streakLimit}
               onClick={() => onToggle(emp.id, d)}
               testId={`cell-${emp.id}-${d}`}
             />
@@ -331,11 +334,8 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   }, []);
   const mural = muralOn || printing;
   const peaks = movement?.peak_days || [];
-  // Escala de cada setor: a usada na geração desta semana; se não gerada, a configuração atual
-  const modeOf = (sectorName) => {
-    const used = Object.entries(schedule.sector_modes || {}).find(([k]) => k.toLowerCase() === sectorName.toLowerCase());
-    return used?.[1] || sectorModes[sectorName.toLowerCase()] || "6x1";
-  };
+  // Escala de cada setor nesta semana (a da geração dela; a configuração atual só vale para semana não gerada)
+  const modeOf = (sectorName) => weekModeOf(schedule, sectorModes, sectorName);
   const configuredMode = (sectorName) => sectorModes[sectorName.toLowerCase()] || "6x1";
   const offsOf = (id) => schedule.off_days?.[id] || [];
   const suspensionsOf = (id) => schedule.suspension_days?.[id] || [];
@@ -547,7 +547,7 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
                       streakDays={schedule.streak_alerts?.[emp.id]}
                       peaks={peaks}
                       required={OFFS_PER_MODE[modeOf(emp.sector)]}
-                      streakLimit={modeOf(emp.sector) === "5x2" ? 5 : 6}
+                      streakLimit={streakLimitOf(modeOf(emp.sector))}
                       sickDays={sickOf(emp.id)}
                       closedDays={closedDays}
                       openHolidays={mural ? [] : openHolidays}

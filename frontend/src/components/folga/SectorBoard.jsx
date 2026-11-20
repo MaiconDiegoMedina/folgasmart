@@ -9,6 +9,7 @@ import { WeekNav } from "@/components/folga/WeekNav";
 import { PageTitle } from "@/components/folga/Header";
 import { ShiftBar, dayLabel, dayStatus } from "@/components/folga/ShiftBar";
 import { useShiftDrag, shiftPayload } from "@/lib/useShiftDrag";
+import { weekModeOf } from "@/lib/weekMode";
 
 // Abas de setor: o setor do funcionário é reconhecido pelo nome (ex.: "Açougue", "Hortifruti", "FLV")
 export const SECTOR_TABS = [
@@ -70,10 +71,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
   const sectorNames = [...new Set(members.map((e) => e.sector))];
   const has = (key, id, d) => (schedule[key]?.[id] || []).includes(d);
   const closed = (schedule.closed_days || []).includes(day);
-  const modeOf = (sector) => {
-    const used = Object.entries(schedule.sector_modes || {}).find(([k]) => k.toLowerCase() === (sector || "").toLowerCase());
-    return used?.[1] || sectorModes[(sector || "").toLowerCase()] || "6x1";
-  };
+  const modeOf = (sector) => weekModeOf(schedule, sectorModes, sector);
   // Por que a pessoa não trabalha no dia (null = trabalha)
   const awayOf = (e, d) => {
     if ((schedule.closed_days || []).includes(d)) return "Loja fechada";

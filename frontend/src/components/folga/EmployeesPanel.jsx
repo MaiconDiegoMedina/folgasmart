@@ -10,6 +10,7 @@ import { isIntermittent, acceptedOn } from "@/lib/convocation";
 import { ImportEmployees } from "@/components/folga/ImportEmployees";
 import { VacationDialog, fmtDate } from "@/components/folga/VacationDialog";
 import { RoleDialog, isTrial } from "@/components/folga/RoleDialog";
+import { weekModeOf } from "@/lib/weekMode";
 
 // Comparação sem acento e sem diferenciar maiúsculas
 const fold = (t) => (t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -110,10 +111,7 @@ export const EmployeesPanel = ({ employees, workloads = [], vacations = [], onCh
   const upcoming = (emp) => vacations.filter((v) => v.employee_id === emp.id && v.end >= today);
   const current = (emp) => vacations.find((v) => v.employee_id === emp.id && v.start <= today && v.end >= today);
   const away = (e) => e.status === "ferias" || e.status === "atestado" || !!current(e);
-  const modeOf = (s) => {
-    const used = Object.entries(schedule.sector_modes || {}).find(([k]) => k.toLowerCase() === (s || "").toLowerCase());
-    return used?.[1] || sectorModes[(s || "").toLowerCase()] || "6x1";
-  };
+  const modeOf = (s) => weekModeOf(schedule, sectorModes, s);
   const offsOf = (e) => (schedule.off_days?.[e.id] || []).filter((d) => !(schedule.extra_days?.[e.id] || []).includes(d));
   const weekVacation = (e) => (schedule.vacation_days?.[e.id] || []).length > 0;
   const noOff = (e) => e.status !== "inativo" && !isIntermittent(e) && !away(e) && !weekVacation(e) && !!schedule.generated_at && offsOf(e).length < OFFS_PER_MODE[modeOf(e.sector)];
