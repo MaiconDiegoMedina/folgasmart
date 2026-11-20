@@ -71,6 +71,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
   const dragRef = useRef(null);
   const dropRef = useRef(null);
   const [manage, setManage] = useState(false);
+  const [edit, setEdit] = useState(null); // { o, start, bs, be, end, brk }: horário do dia aberto para editar no cartão
   const [helpId, setHelpId] = useState("");
   const [helpFrom, setHelpFrom] = useState("");
   const [helpTo, setHelpTo] = useState("");
@@ -123,21 +124,25 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
 
   const { rows, loose, staff, cover, helpers } = useMemo(() => {
     const dayAssign = assign[String(day)] || {};
+    // Período chamado pelo quadro "Chamar": ajuda de outro setor ou turno extra de quem é do caixa.
+    // id: o que identifica a entrada no caixa (o próprio funcionário; no turno extra, a chave "funcionário@setor")
+    const helpOp = (e, hk) => {
+      const s = shifts[String(day)][hk];
+      const own = isCaixa(e);
+      const from = e.sector || "outro setor";
+      return {
+        emp: e, id: own ? hk : e.id, shift: s, key: hk, help: true, extraTurn: own, lvl: "help",
+        note: own ? "Turno extra chamado depois do turno do dia" : `Ajuda vinda de ${from}`,
+        tag: own ? "Turno extra" : `Ajuda · ${from}`,
+        a: s ? toMin(s[0]) : null,
+        b: s ? toMin(s[s.length - 1]) : null,
+        brk: s && s.length === 4 ? [toMin(s[1]), toMin(s[2])] : null,
+        base: null,
+        daily: dayLabel(s, null),
+        contract: own ? "turno extra" : `ajuda · ${from}`,
+      };
+    };
     const op = (e) => {
-      const hk = !isCaixa(e) ? helpKeyOf(e.id) : null;
-      if (hk) {
-        const s = shifts[String(day)][hk];
-        return {
-          emp: e, shift: s, key: hk, help: true, lvl: "help",
-          note: `Ajuda vinda de ${e.sector || "outro setor"}`, tag: `Ajuda · ${e.sector || "outro setor"}`,
-          a: s ? toMin(s[0]) : null,
-          b: s ? toMin(s[s.length - 1]) : null,
-          brk: s && s.length === 4 ? [toMin(s[1]), toMin(s[2])] : null,
-          base: null,
-          daily: dayLabel(s, null),
-          contract: `ajuda · ${e.sector || "outro setor"}`,
-        };
-      }
       const s = shiftOf(e, day);
       const streak = (schedule.streak_alerts?.[e.id] || []).includes(day);
       const extra = has("extra_days", e.id, day);
@@ -146,7 +151,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
       // Sem horário: não dá para dizer que está na jornada
       const { lvl, note, tag } = !s && st.tag === "Na jornada" ? { ...st, lvl: "warn", tag: "Sem horário", note: "Sem horário no dia: clique em Definir horário" } : st;
       return {
-        emp: e, shift: s, key: e.id, lvl, note, tag,
+        emp: e, id: e.id, shift: s, key: e.id, lvl, note, tag,
         a: s ? toMin(s[0]) : null,
         b: s ? toMin(s[s.length - 1]) : null,
         brk: s && s.length === 4 ? [toMin(s[1]), toMin(s[2])] : null,
@@ -156,15 +161,20 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
       };
     };
     const onDay = employees.filter((e) => works(e, day));
+    // Quem é do caixa: turno do dia e, se chamado, o turno extra. De outro setor: só a janela da ajuda.
+    const entries = onDay.flatMap((e) => {
+      const hk = helpKeyOf(e.id);
+      if (isCaixa(e)) return hk ? [op(e), helpOp(e, hk)] : [op(e)];
+      return hk ? [helpOp(e, hk)] : [op(e)];
+    });
     const rows = checkouts.map((c) => ({
       ...c,
-      ops: onDay.filter((e) => dayAssign[e.id] === c.id).map(op).sort((x, y) => (x.a ?? 0) - (y.a ?? 0)),
+      ops: entries.filter((o) => dayAssign[o.id] === c.id).sort((x, y) => (x.a ?? 0) - (y.a ?? 0)),
     }));
-    const helping = onDay.filter((e) => !isCaixa(e) && helpKeyOf(e.id));
-    const loose = onDay.filter((e) => (isCaixa(e) ? !staffOf(e) : helpKeyOf(e.id)) && !dayAssign[e.id]).map(op);
-    const helpers = helping.map(op).sort((x, y) => (x.a ?? 9999) - (y.a ?? 9999));
+    const loose = entries.filter((o) => !dayAssign[o.id] && (o.help || (isCaixa(o.emp) && !staffOf(o.emp))));
+    const helpers = entries.filter((o) => o.help).sort((x, y) => (x.a ?? 9999) - (y.a ?? 9999));
     const staff = Object.fromEntries(
-      STAFF.map((g) => [g.id, onDay.filter((e) => dayAssign[e.id] === boardKey(g.id) || (staffOf(e) === g.id && !dayAssign[e.id])).map((e) => ({ ...op(e), cover: staffOf(e) !== g.id })).sort((x, y) => (x.a ?? 9999) - (y.a ?? 9999) || x.emp.name.localeCompare(y.emp.name, "pt-BR"))])
+      STAFF.map((g) => [g.id, entries.filter((o) => dayAssign[o.id] === boardKey(g.id) || (!o.help && staffOf(o.emp) === g.id && !dayAssign[o.id])).map((o) => ({ ...o, cover: o.help || staffOf(o.emp) !== g.id })).sort((x, y) => (x.a ?? 9999) - (y.a ?? 9999) || x.emp.name.localeCompare(y.emp.name, "pt-BR"))])
     );
     const cover = ALL_HOURS.map((h) => {
       const t = h * 60 + 30;
@@ -217,7 +227,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
 
   const isSelf = (c) => /self/i.test(c.name);
   const turnoOf = (o) => (o?.a == null ? null : o.a < 12 * 60 ? 0 : 1);
-  const opOf = (id) => rows.flatMap((r) => r.ops).concat(loose, ...Object.values(staff)).find((o) => o.emp.id === id);
+  const opOf = (id) => rows.flatMap((r) => r.ops).concat(loose, ...Object.values(staff)).find((o) => o.id === id);
   const caixaOf = (id) => (assign[String(day)] || {})[id] || null;
   const caixaName = (id) => STAFF.find((g) => boardKey(g.id) === id)?.name || checkouts.find((c) => c.id === id)?.name || "caixa";
   const firstName = (o) => o.emp.name.split(" ")[0];
@@ -308,9 +318,9 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
     }
     // Se já tem alguém no mesmo turno nesse caixa, as duas trocam de lugar em vez de empilhar
     const row = rows.find((r) => r.id === rest);
-    const same = row?.ops.find((p) => p.emp.id !== id && (t === null || turnoOf(p) === null || turnoOf(p) === t));
+    const same = row?.ops.find((p) => p.id !== id && (t === null || turnoOf(p) === null || turnoOf(p) === t));
     if (same) {
-      swapWith(id, same.emp.id);
+      swapWith(id, same.id);
       return;
     }
     await allocate(id, rest);
@@ -328,12 +338,12 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
     if (p.touch && navigator.vibrate) navigator.vibrate(15);
   };
   const dragProps = (o) => ({
-    "data-drag": o.emp.id,
+    "data-drag": o.id,
     onPointerDown: (e) => {
       if ((e.pointerType === "mouse" && e.button !== 0) || e.target.closest("button,select")) return;
       if (e.pointerType === "mouse") e.preventDefault(); // evita selecionar texto e o arrastar nativo do navegador
       if (dragRef.current?.timer) clearTimeout(dragRef.current.timer);
-      const p = { id: o.emp.id, name: o.emp.name, lvl: o.lvl, pid: e.pointerId, sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, touch: e.pointerType !== "mouse", live: false, timer: null };
+      const p = { id: o.id, name: o.emp.name, lvl: o.lvl, pid: e.pointerId, sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, touch: e.pointerType !== "mouse", live: false, timer: null };
       dragRef.current = p;
       if (p.touch) p.timer = setTimeout(() => dragRef.current === p && beginDrag(p), 280);
     },
@@ -405,7 +415,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
   // Soltar a barra: novo horário (s) e/ou outro caixa (row: id do caixa ou "none")
   const saveShift = async (o, s, row) => {
     if (s) await saveTimes(o, s);
-    if (row) await dropOn(o.emp.id, row === "none" ? "none" : `caixa:${row}`);
+    if (row) await dropOn(o.id, row === "none" ? "none" : `caixa:${row}`);
   };
   const saveTimes = async (o, s) => {
     const key = String(day);
@@ -424,6 +434,50 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
     loadShifts();
   };
   const { grab, preview, shiftFor, isSelected } = useShiftDrag({ span: SPAN, onCommit: saveShift });
+
+  // Editar o horário pelo cartão (Pacoteiros e Fiscal e Recepcionista não têm barra no gráfico)
+  const openEdit = (o) => {
+    const s = o.shift || STARTER_SHIFT;
+    const four = s.length === 4;
+    setEdit({ o, start: s[0], bs: four ? s[1] : "", be: four ? s[2] : "", end: s[s.length - 1], brk: four });
+  };
+  const editWork = edit ? (() => {
+    const [a, b] = [toMin(edit.start || "00:00"), toMin(edit.end || "00:00")];
+    const brk = edit.brk && edit.bs && edit.be ? toMin(edit.be) - toMin(edit.bs) : 0;
+    return { work: b - a - brk, brk };
+  })() : null;
+  const saveEdit = async () => {
+    const { o, start, bs, be, end, brk } = edit;
+    if (!start || !end || end <= start) return toast.error("A saída precisa ser depois da entrada.");
+    if (brk && !(bs && be && start < bs && bs < be && be < end)) return toast.error("O intervalo precisa ficar dentro do horário (entrada < saída do intervalo < volta < saída).");
+    const { work, brk: blen } = editWork;
+    if (work > 360 && blen < 60) return toast.error("Acima de 6h trabalhadas o intervalo precisa ser de pelo menos 1h.");
+    if (work > 240 && blen < 15) return toast.error("Acima de 4h trabalhadas o intervalo precisa ser de pelo menos 15 min.");
+    setEdit(null);
+    await saveTimes(o, brk ? [start, bs, be, end] : [start, end]);
+  };
+  const resetEdit = async () => {
+    const { o } = edit;
+    setEdit(null);
+    try {
+      await http.put("/shifts", { week, day, employee_id: o.key || o.emp.id });
+      toast.success(`${o.emp.name.split(" ")[0]} voltou ao horário da jornada`);
+    } catch (e) {
+      toast.error(errMsg(e));
+    }
+    loadShifts();
+  };
+  const timeBtn = (o, cls = "") => (
+    <button
+      type="button"
+      onClick={() => openEdit(o)}
+      title="Clique para alterar o horário deste dia"
+      className={`inline-flex items-center gap-1 rounded-md text-left text-[11px] font-medium text-[#5E5880] underline decoration-dotted underline-offset-2 hover:text-[#4B3DA8] ${cls}`}
+    >
+      {o.shift ? `${o.shift[0]} – ${o.shift[o.shift.length - 1]}` : "Definir horário"}
+      <svg aria-hidden="true" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+    </button>
+  );
   // Quem não tem horário (nem jornada) ganha um horário inicial, que depois é ajustado arrastando a barra
   const setShiftBtn = (o) =>
     !o.shift && (
@@ -453,10 +507,10 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
       />
     );
   };
-  // Chamar alguém de outro setor para ajudar no caixa por algumas horas
+  // Chamar alguém para o caixa por algumas horas: de outro setor (ajuda) ou do próprio caixa depois do turno (turno extra)
   const helpCandidates = employees
-    .filter((e) => !isCaixa(e) && works(e, day) && !helpKeyOf(e.id))
-    .sort((a, b) => (a.sector || "").localeCompare(b.sector || "", "pt-BR") || a.name.localeCompare(b.name, "pt-BR"));
+    .filter((e) => works(e, day) && !helpKeyOf(e.id))
+    .sort((a, b) => Number(isCaixa(b)) - Number(isCaixa(a)) || (a.sector || "").localeCompare(b.sector || "", "pt-BR") || a.name.localeCompare(b.name, "pt-BR"));
   const pad2 = (n) => String(n).padStart(2, "0");
   const hhmm = (m) => `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`;
   // Horário sugerido: o do pico (ou 11h–14h); se a pessoa já trabalha no dia, começa logo após o turno dela
@@ -474,11 +528,20 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
     const end = helpTo || defTo;
     if (!helpId) return toast.error("Escolha quem vai ajudar.");
     if (!start || !end || end <= start) return toast.error("Informe de que horas até que horas a pessoa ajuda.");
+    const e = employees.find((x) => x.id === helpId);
+    const ownTurn = e && isCaixa(e);
+    // Quem é do caixa entra de novo só depois de encerrar o turno do dia
+    if (ownTurn && helpOwn && start < helpOwn[helpOwn.length - 1]) {
+      return toast.error(`${e.name.split(" ")[0]} sai às ${helpOwn[helpOwn.length - 1]}; o turno extra precisa começar depois disso.`);
+    }
     setHelpSaving(true);
     try {
       await http.put("/shifts", { week, day, employee_id: `${helpId}@${caixaSector}`, start, end });
-      const e = employees.find((x) => x.id === helpId);
-      toast.success(`${e?.name.split(" ")[0] || "Pessoa"} vai ajudar na Frente de Caixa das ${start} às ${end}. Arraste para um caixa.`);
+      toast.success(
+        ownTurn
+          ? `${e.name.split(" ")[0]} volta para o caixa das ${start} às ${end} (turno extra). Arraste para um caixa.`
+          : `${e?.name.split(" ")[0] || "Pessoa"} vai ajudar na Frente de Caixa das ${start} às ${end}. Arraste para um caixa.`
+      );
       setHelpId("");
       setHelpFrom("");
       setHelpTo("");
@@ -491,7 +554,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
   };
   const dropHelp = async (o) => {
     try {
-      if (caixaOf(o.emp.id)) await put(o.emp.id, null);
+      if (caixaOf(o.id)) await put(o.id, null);
       await http.put("/shifts", { week, day, employee_id: o.key });
     } catch (err) {
       toast.error(errMsg(err));
@@ -547,7 +610,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
             <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#BFE6D1]" />Na jornada</span>
             <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#F7DC8A]" />Hora extra</span>
             <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#F4B4B4]" />Fora da jornada (folga ou +6 dias)</span>
-            {helpers.length > 0 && <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#E57373]" />Ajuda de outro setor</span>}
+            {helpers.length > 0 && <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded bg-[#E57373]" />Chamado (outro setor ou turno extra)</span>}
             <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded border-[1.5px] border-dashed border-[#B9B2DA]" />Sem caixa</span>
             <span className="inline-flex items-center gap-1.5"><i className="h-3.5 w-0.5 bg-[#6D5BD0]" />Agora</span>
           </div>
@@ -571,7 +634,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                   </div>
                   <div data-track className="relative h-[34px] rounded-xl" style={trackStyle}>
                     {nowMin !== null && nowMin > START && nowMin < END && <div className="absolute -top-1.5 -bottom-1.5 z-[2] w-0.5 rounded bg-[#6D5BD0]" style={{ left: pct(nowMin) }} />}
-                    {r.ops.map((o) => <Bar key={o.emp.id} o={o} where={r.name} />)}
+                    {r.ops.map((o) => <Bar key={o.id} o={o} where={r.name} />)}
                   </div>
                 </div>
               ))}
@@ -580,7 +643,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                   <div className="font-display text-[13px] font-semibold">Sem caixa<small className="block font-sans text-[11px] font-medium text-[#5E5880]">{loose.length} {loose.length === 1 ? "pessoa" : "pessoas"}</small></div>
                   <div className="flex flex-col gap-1">
                     {(lanes.length ? lanes : [[]]).map((l, i) => (
-                      <div key={i} data-track className="relative h-[34px] rounded-xl border border-dashed border-[#D6D0EE]">{l.map((o) => <Bar key={o.emp.id} o={o} where="sem caixa" />)}</div>
+                      <div key={i} data-track className="relative h-[34px] rounded-xl border border-dashed border-[#D6D0EE]">{l.map((o) => <Bar key={o.id} o={o} where="sem caixa" />)}</div>
                     ))}
                   </div>
                 </div>
@@ -641,21 +704,20 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                         ) : (
                           list.map((o) => (
                             <div
-                              key={o.emp.id}
+                              key={o.id}
                               {...dragProps(o)}
                               title={`${o.emp.name} · ${o.emp.role || g.name} · ${o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]}` : "sem horário"} · ${o.note}. Arraste para um caixa, para o outro quadro ou para "Trabalhando sem caixa".`}
-                              className={`flex cursor-grab select-none items-start gap-2 rounded-[14px] border-[1.5px] p-2 text-[13px] font-semibold text-[#1B1830] [-webkit-touch-callout:none] active:cursor-grabbing ${dragId === o.emp.id ? "opacity-40" : ""}`}
+                              className={`flex cursor-grab select-none items-start gap-2 rounded-[14px] border-[1.5px] p-2 text-[13px] font-semibold text-[#1B1830] [-webkit-touch-callout:none] active:cursor-grabbing ${dragId === o.id ? "opacity-40" : ""}`}
                               style={LVL[o.lvl].tile}
                             >
                               <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-[10px] font-bold" style={LVL[o.lvl].avatar}>{initials(o.emp.name)}</div>
                               <div className="min-w-0">
                                 <span className="block truncate">{o.emp.name}</span>
-                                <small className="block text-[11px] font-medium text-[#5E5880]">{o.shift ? `${o.shift[0]} – ${o.shift[o.shift.length - 1]}` : "sem horário"}</small>
+                                {timeBtn(o)}
                                 {o.cover ? (
-                                  <span className="block text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A85A3]">cobrindo · {o.emp.role || o.emp.sector}</span>
+                                  <span className="block text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A85A3]">{o.extraTurn ? "turno extra" : `cobrindo · ${o.emp.role || o.emp.sector}`}</span>
                                 ) : g.id === "desk" && <span className="block text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A85A3]">{/recep/i.test(o.emp.role || "") ? "recepcionista" : "fiscal"}</span>}
                                 <span className="mt-0.5 block text-[11px] font-bold" style={{ color: LVL[o.lvl].ink }}>{o.tag}</span>
-                                {setShiftBtn(o)}
                               </div>
                             </div>
                           ))
@@ -685,11 +747,11 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                   {slots.map((o, si) =>
                     o ? (
                       <div
-                        key={o.emp.id}
+                        key={o.id}
                         {...dragProps(o)}
-                        {...dropAt(`op:${o.emp.id}`)}
+                        {...dropAt(`op:${o.id}`)}
                         title={`${o.emp.name} · ${o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]}` : "sem horário"} · ${o.note}. Arraste para outro caixa ou solte sobre outra operadora para trocar as duas. No celular, segure o cartão um instante e arraste.`}
-                        className={`group relative flex cursor-grab select-none items-start gap-2.5 [-webkit-touch-callout:none] rounded-[14px] border-[1.5px] p-2 pr-6 text-[13px] font-semibold text-[#1B1830] transition active:cursor-grabbing ${dragId === o.emp.id ? "opacity-40" : ""} ${over === `op:${o.emp.id}` ? "ring-2 ring-[#6D5BD0]" : ""}`}
+                        className={`group relative flex cursor-grab select-none items-start gap-2.5 [-webkit-touch-callout:none] rounded-[14px] border-[1.5px] p-2 pr-6 text-[13px] font-semibold text-[#1B1830] transition active:cursor-grabbing ${dragId === o.id ? "opacity-40" : ""} ${over === `op:${o.id}` ? "ring-2 ring-[#6D5BD0]" : ""}`}
                         style={LVL[o.lvl].tile}
                       >
                         <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[11px] font-bold" style={LVL[o.lvl].avatar}>{initials(o.emp.name)}</div>
@@ -698,13 +760,13 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                           <small className="block text-xs font-medium text-[#5E5880]">{o.daily}{o.shift ? ` · ${o.shift[0]}` : ""}</small>
                           <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A85A3]">{o.contract}</span>
                           {setShiftBtn(o)}
-                          {moving === o.emp.id ? (
+                          {moving === o.id ? (
                             <select
                               autoFocus
                               aria-label={`Trocar o caixa de ${o.emp.name}`}
                               defaultValue={r.id}
                               onBlur={() => setMoving(null)}
-                              onChange={(e) => e.target.value !== r.id && allocate(o.emp.id, e.target.value)}
+                              onChange={(e) => e.target.value !== r.id && allocate(o.id, e.target.value)}
                               className="mt-1 h-7 w-full rounded-lg border border-[#E4E0F3] bg-white px-1 text-[11px]"
                             >
                               {checkouts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -713,12 +775,12 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                           ) : (
                             <span className="mt-1 flex items-center gap-2">
                               <span className="text-[11px] font-bold" style={{ color: LVL[o.lvl].ink }}>{o.tag}</span>
-                              <button onClick={() => setMoving(o.emp.id)} className="text-[11px] font-semibold text-[#5B4BC4] hover:underline">Trocar</button>
+                              <button onClick={() => setMoving(o.id)} className="text-[11px] font-semibold text-[#5B4BC4] hover:underline">Trocar</button>
                             </span>
                           )}
                         </div>
                         <button
-                          onClick={() => allocate(o.emp.id, null)}
+                          onClick={() => allocate(o.id, null)}
                           aria-label={`Tirar ${o.emp.name} do ${r.name}`}
                           title="Tirar do caixa"
                           className="absolute right-1 top-1 grid h-6 w-6 place-items-center rounded-full text-[#8A85A3] hover:bg-white hover:text-[#A12828]"
@@ -737,7 +799,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
                         className="min-h-[46px] rounded-[14px] border-[1.5px] border-[#6D5BD0] bg-white px-2 text-[13px] text-[#1B1830]"
                       >
                         <option value="" disabled>{si + 1}º turno: quem fica?</option>
-                        {loose.map((x) => <option key={x.emp.id} value={x.emp.id}>{x.emp.name}{x.shift ? ` · ${x.shift[0]}–${x.shift[x.shift.length - 1]}` : ""}</option>)}
+                        {loose.map((x) => <option key={x.id} value={x.id}>{x.emp.name}{x.shift ? ` · ${x.shift[0]}–${x.shift[x.shift.length - 1]}` : ""}</option>)}
                       </select>
                     ) : (
                       <button
@@ -799,21 +861,21 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
             ) : (
               <div className="flex flex-col gap-3">
                 {loose.map((o) => (
-                  <div key={o.emp.id} {...dragProps(o)} className={`flex cursor-grab select-none items-center gap-2.5 text-sm font-semibold active:cursor-grabbing [-webkit-touch-callout:none] ${dragId === o.emp.id ? "opacity-40" : ""}`}>
+                  <div key={o.id} {...dragProps(o)} className={`flex cursor-grab select-none items-center gap-2.5 text-sm font-semibold active:cursor-grabbing [-webkit-touch-callout:none] ${dragId === o.id ? "opacity-40" : ""}`}>
                     <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-bold ${o.help ? "" : "bg-[#E6E1FA] text-[#4B3DA8]"}`} style={o.help ? LVL.help.avatar : undefined} title={o.help ? o.note : undefined}>{initials(o.emp.name)}</div>
                     <div className="min-w-0 flex-1">
                       <span className="block truncate">{o.emp.name}</span>
                       <small className="block text-xs font-medium text-[#5E5880]">{o.shift ? `entra ${o.shift[0]}` : "sem horário"}</small>
                       {setShiftBtn(o)}
                     </div>
-                    {picking === o.emp.id ? (
-                      <select autoFocus aria-label={`Caixa de ${o.emp.name}`} defaultValue="" onBlur={() => setPicking(null)} onChange={(e) => e.target.value && allocate(o.emp.id, e.target.value)} className="h-[34px] rounded-[17px] border border-[#E4E0F3] bg-white px-2 text-xs">
+                    {picking === o.id ? (
+                      <select autoFocus aria-label={`Caixa de ${o.emp.name}`} defaultValue="" onBlur={() => setPicking(null)} onChange={(e) => e.target.value && allocate(o.id, e.target.value)} className="h-[34px] rounded-[17px] border border-[#E4E0F3] bg-white px-2 text-xs">
                         <option value="" disabled>Caixa…</option>
                         {checkouts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                         {STAFF.map((g) => <option key={g.id} value={boardKey(g.id)}>{g.name}</option>)}
                       </select>
                     ) : (
-                      <button onClick={() => setPicking(o.emp.id)} className="h-[34px] rounded-[17px] border border-[#E4E0F3] bg-white/80 px-3 text-xs font-semibold text-[#1B1830] hover:border-[#17142E] disabled:opacity-40">Alocar</button>
+                      <button onClick={() => setPicking(o.id)} className="h-[34px] rounded-[17px] border border-[#E4E0F3] bg-white/80 px-3 text-xs font-semibold text-[#1B1830] hover:border-[#17142E] disabled:opacity-40">Alocar</button>
                     )}
                   </div>
                 ))}
@@ -822,19 +884,19 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
           </div>
           <div className="glass rounded-[26px] p-[22px]">
             <h2 className="m-0 flex items-center gap-1.5 text-base font-bold text-[#4B3DA8]"><UserPlus className="h-4 w-4" /> Chamar alguém de outro setor</h2>
-            <p className="mb-3 mt-1 text-xs text-[#5E5880]">Quem trabalha neste dia em outro setor pode ajudar no caixa por algumas horas. Depois de chamar, arraste o cartão vermelho para um caixa (ou use "Trabalhando sem caixa").</p>
+            <p className="mb-3 mt-1 text-xs text-[#5E5880]">Quem trabalha neste dia em outro setor pode ajudar no caixa por algumas horas. Quem é do caixa pode ser chamado de novo depois de encerrar o turno (turno extra). Depois de chamar, arraste o cartão vermelho para um caixa (ou use "Trabalhando sem caixa").</p>
             {helpers.length > 0 && (
               <div className="mb-3 flex flex-col gap-2">
                 {helpers.map((o) => (
                   <div
-                    key={o.emp.id}
+                    key={o.id}
                     {...dragProps(o)}
                     title={`${o.emp.name} · ${o.note}. Arraste para um caixa, para Pacoteiros, para Fiscal e Recepcionista ou para "Trabalhando sem caixa". No celular, segure o cartão um instante e arraste.`}
-                    className={`flex cursor-grab select-none items-center gap-2.5 rounded-xl border border-[#E57373] bg-[#FDE2E2] px-2.5 py-2 text-[13px] font-semibold text-[#8A1F1F] [-webkit-touch-callout:none] active:cursor-grabbing ${dragId === o.emp.id ? "opacity-40" : ""}`}
+                    className={`flex cursor-grab select-none items-center gap-2.5 rounded-xl border border-[#E57373] bg-[#FDE2E2] px-2.5 py-2 text-[13px] font-semibold text-[#8A1F1F] [-webkit-touch-callout:none] active:cursor-grabbing ${dragId === o.id ? "opacity-40" : ""}`}
                   >
                     <span className="min-w-0 flex-1 truncate">
                       {o.emp.name}
-                      <small className="block text-[11px] font-medium text-[#5E5880]">vem de {o.emp.sector} · {o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]}` : "sem horário"}{caixaOf(o.emp.id) ? ` · ${caixaName(caixaOf(o.emp.id))}` : " · sem caixa"}</small>
+                      <small className="block text-[11px] font-medium text-[#5E5880]">{o.extraTurn ? "turno extra" : `vem de ${o.emp.sector}`} · {o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]}` : "sem horário"}{caixaOf(o.id) ? ` · ${caixaName(caixaOf(o.id))}` : " · sem caixa"}</small>
                     </span>
                     <button onClick={() => dropHelp(o)} aria-label={`Tirar ${o.emp.name} da ajuda`} title="Tirar da ajuda" className="grid h-7 w-7 place-items-center rounded-full text-[#8A85A3] hover:bg-white hover:text-[#A12828]">
                       <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
@@ -846,14 +908,14 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
             {closedDay ? (
               <p className="m-0 text-xs text-[#5E5880]">Loja fechada neste dia.</p>
             ) : helpCandidates.length === 0 ? (
-              <p className="m-0 text-xs text-[#5E5880]">Ninguém de outro setor trabalha neste dia para chamar.</p>
+              <p className="m-0 text-xs text-[#5E5880]">Ninguém trabalha neste dia para chamar.</p>
             ) : (
               <div className="flex flex-col gap-2">
                 <select aria-label="Quem vai ajudar" value={helpId} onChange={(e) => { setHelpId(e.target.value); setHelpFrom(""); setHelpTo(""); }} className="h-10 rounded-xl border border-[#C9BFFF] bg-white px-2 text-sm text-[#1B1830]">
                   <option value="">Quem vai ajudar?</option>
                   {helpCandidates.map((e) => {
                     const own = shiftOf(e, day);
-                    return <option key={e.id} value={e.id}>{e.sector || "Sem setor"} · {e.name}{own ? ` (${own[0]}–${own[own.length - 1]})` : ""}</option>;
+                    return <option key={e.id} value={e.id}>{isCaixa(e) ? "Caixa · turno extra" : e.sector || "Sem setor"} · {e.name}{own ? ` (${own[0]}–${own[own.length - 1]})` : ""}</option>;
                   })}
                 </select>
                 <div className="flex items-center gap-2 text-xs text-[#5E5880]">
@@ -904,6 +966,56 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
             <button onClick={() => setSwapAsk(null)} className="h-10 rounded-[20px] border border-[#E4E0F3] bg-white px-4 text-sm font-semibold text-[#1B1830]">Cancelar</button>
             <button onClick={swapHours} className="h-10 rounded-[20px] bg-[#17142E] px-4 text-sm font-semibold text-white">Trocar horários</button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!edit} onOpenChange={(v) => !v && setEdit(null)}>
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle>Horário de {edit?.o.emp.name.split(" ")[0]}</DialogTitle>
+            <DialogDescription>
+              {edit && `${DAYS[day]} ${dm}. Vale só para este dia${edit.o.base ? `; jornada de ${fmtDur(edit.o.base)}` : ""}.`}
+            </DialogDescription>
+          </DialogHeader>
+          {edit && (
+            <div className="flex flex-col gap-3 text-sm">
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-[#5E5880]">Entrada
+                  <input type="time" step={300} value={edit.start} onChange={(e) => setEdit({ ...edit, start: e.target.value })} className="h-10 rounded-lg border border-[#E4E0F3] bg-white px-2 text-sm font-normal text-[#1B1830]" />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-semibold text-[#5E5880]">Saída
+                  <input type="time" step={300} value={edit.end} onChange={(e) => setEdit({ ...edit, end: e.target.value })} className="h-10 rounded-lg border border-[#E4E0F3] bg-white px-2 text-sm font-normal text-[#1B1830]" />
+                </label>
+              </div>
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input type="checkbox" checked={edit.brk} onChange={(e) => setEdit({ ...edit, brk: e.target.checked })} className="h-4 w-4 accent-[#6D5BD0]" />
+                Tem intervalo
+              </label>
+              {edit.brk && (
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-[#5E5880]">Saída do intervalo
+                    <input type="time" step={300} value={edit.bs} onChange={(e) => setEdit({ ...edit, bs: e.target.value })} className="h-10 rounded-lg border border-[#E4E0F3] bg-white px-2 text-sm font-normal text-[#1B1830]" />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-[#5E5880]">Volta do intervalo
+                    <input type="time" step={300} value={edit.be} onChange={(e) => setEdit({ ...edit, be: e.target.value })} className="h-10 rounded-lg border border-[#E4E0F3] bg-white px-2 text-sm font-normal text-[#1B1830]" />
+                  </label>
+                </div>
+              )}
+              {editWork && editWork.work > 0 && (
+                <p className="m-0 rounded-xl bg-[#F3F1FA] px-3 py-2 text-xs text-[#4A4566]">
+                  {fmtDur(editWork.work)} trabalhadas{editWork.brk ? ` · intervalo de ${fmtDur(editWork.brk)}` : ""}
+                  {edit.o.base && editWork.work !== edit.o.base ? ` · ${editWork.work > edit.o.base ? "+" : "−"}${fmtDur(Math.abs(editWork.work - edit.o.base))} em relação à jornada` : ""}
+                </p>
+              )}
+              <div className="flex flex-wrap justify-end gap-2">
+                {!edit.o.help && (
+                  <button onClick={resetEdit} className="mr-auto h-10 rounded-[20px] px-3 text-sm font-semibold text-[#5B4BC4] hover:underline">Voltar à jornada</button>
+                )}
+                <button onClick={() => setEdit(null)} className="h-10 rounded-[20px] border border-[#E4E0F3] bg-white px-4 text-sm font-semibold text-[#1B1830]">Cancelar</button>
+                <button onClick={saveEdit} className="h-10 rounded-[20px] bg-[#17142E] px-4 text-sm font-semibold text-white">Salvar</button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
