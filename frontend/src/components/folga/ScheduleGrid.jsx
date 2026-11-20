@@ -205,7 +205,9 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
   const realOffs = offs;
   // Semana com férias: os dias de férias contam como descanso, sem alerta de folga
   const onVacation = emp.status === "ferias" || vacationDays.length > 0;
-  const wrong = !onVacation && realOffs.length < required;
+  // Dia de atestado conta como descanso da semana: não cobra folga em cima dele
+  const rested = realOffs.length + sickDays.filter((d) => !realOffs.includes(d)).length;
+  const wrong = !onVacation && rested < required;
 
   return (
     <tr data-testid="employee-row" className="rise border-t border-[#EEEBFB]" style={{ animationDelay: `${idx * 30}ms` }}>
@@ -275,7 +277,7 @@ const Row = ({ emp, offs, suspensions, absences, vacationDays = [], extras, peak
         ) : (
         <span data-testid={`row-summary-${emp.id}`} className={`inline-flex items-center gap-1 text-xs font-mono-data font-semibold ${wrong ? "text-[#C93C3C]" : "text-[#5E5880]"}`}>
           {wrong && <AlertTriangle className="h-3.5 w-3.5" />}
-          {emp.status === "ferias" || vacationDays.length === 7 ? "Férias" : `${realOffs.length}/${required}`}
+          {emp.status === "ferias" || vacationDays.length === 7 ? "Férias" : sickDays.length === 7 ? "Atestado" : `${Math.min(rested, required)}/${required}`}
         </span>
         )}
       </td>}
@@ -413,7 +415,9 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   const expected = (d) => visible.filter((e) => !isIntermittent(e) || acceptedOn(schedule, e.id, d)).length;
   const countTone = (c, n) => (!n ? "bg-[#F2F0F8] text-[#5E5880]" : c / n >= 0.75 ? "bg-[#E3F5EC] text-[#1D6B45]" : c / n >= 0.6 ? "bg-[#FFF4D1] text-[#7A5500]" : "bg-[#FDE2E2] text-[#A12828]");
   const pastNames = DAYS_SHORT.filter((_, d) => pastDay(d));
-  const withoutOff = visible.filter((e) => !isIntermittent(e) && e.status !== "ferias" && !vacationOf(e.id).length && offsOf(e.id).length < modeOffs(modeOf(e.sector))).length;
+  // Atestado conta como descanso: quem está de atestado não entra como "sem folga"
+  const restedOf = (id) => offsOf(id).length + sickOf(id).filter((d) => !offsOf(id).includes(d)).length;
+  const withoutOff = visible.filter((e) => !isIntermittent(e) && e.status !== "ferias" && !vacationOf(e.id).length && restedOf(e.id) < modeOffs(modeOf(e.sector))).length;
   const notGenerated = !schedule.generated_at && employees.length > 0;
   const fmtShort = () => {
     const a = dates[0], b = dates[6];

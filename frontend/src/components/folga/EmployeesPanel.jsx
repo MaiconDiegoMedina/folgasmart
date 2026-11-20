@@ -121,7 +121,9 @@ export const EmployeesPanel = ({ sectorList = [], employees, workloads = [], vac
   const modeOf = (s) => weekModeOf(schedule, sectorModes, s);
   const offsOf = (e) => (schedule.off_days?.[e.id] || []).filter((d) => !(schedule.extra_days?.[e.id] || []).includes(d));
   const weekVacation = (e) => (schedule.vacation_days?.[e.id] || []).length > 0;
-  const noOff = (e) => e.status !== "inativo" && !isIntermittent(e) && !away(e) && !weekVacation(e) && !!schedule.generated_at && offsOf(e).length < modeOffs(modeOf(e.sector));
+  // Dia de atestado conta como descanso da semana
+  const rested = (e) => offsOf(e).length + (schedule.sick_days?.[e.id] || []).filter((d) => !offsOf(e).includes(d)).length;
+  const noOff = (e) => e.status !== "inativo" && !isIntermittent(e) && !away(e) && !weekVacation(e) && !!schedule.generated_at && rested(e) < modeOffs(modeOf(e.sector));
   const streakDays = (e) => schedule.streak_alerts?.[e.id] || [];
   const active = employees.filter((e) => e.status !== "inativo");
 
