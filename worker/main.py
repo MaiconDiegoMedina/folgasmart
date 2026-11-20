@@ -147,7 +147,7 @@ async def require_auth(request: Request) -> str:
 
 
 _SCHEMA_READY = False
-SCHEMA_VERSION = "2026-11-20.5"  # mude ao alterar SCHEMA_STATEMENTS, NEW_COLUMNS ou a migração
+SCHEMA_VERSION = "2026-11-20.6"  # mude ao alterar SCHEMA_STATEMENTS, NEW_COLUMNS ou a migração
 SCHEMA_STATEMENTS = [
     """CREATE TABLE IF NOT EXISTS hourly_movement (day INTEGER PRIMARY KEY, label TEXT NOT NULL DEFAULT '',
     hours TEXT NOT NULL, updated_at TEXT)""",
@@ -180,7 +180,8 @@ DEFAULT_WORKLOADS = [
 NEW_COLUMNS = [("employees", "gender"), ("employees", "workload"), ("schedule", "sector_modes"),
                ("schedule", "absence_days"), ("employees", "contract"), ("schedule", "convocations"),
                ("workloads", "times"), ("workloads", "times_5x2"),
-               ("vacations", "kind"), ("movement", "source"), ("sectors", "icon"), ("employees", "phone")]
+               ("vacations", "kind"), ("movement", "source"), ("sectors", "icon"), ("employees", "phone"),
+               ("holidays", "close_time")]
 
 
 async def ensure_schema(request: Request) -> None:
@@ -605,19 +606,20 @@ async def holidays_between(request: Request, first: date, last: date) -> List[Di
     for year in range(first.year, last.year + 1):
         for iso, name in national_holidays(year).items():
             if first.isoformat() <= iso <= last.isoformat():
-                found[iso] = {"date": iso, "name": name, "kind": "nacional", "closed": False}
+                found[iso] = {"date": iso, "name": name, "kind": "nacional", "closed": False, "close_time": None}
     rows = (await db(request).prepare(
-        "SELECT date, name, kind, closed FROM holidays WHERE date >= ? AND date <= ?"
+        "SELECT date, name, kind, closed, close_time FROM holidays WHERE date >= ? AND date <= ?"
     ).bind(first.isoformat(), last.isoformat()).all()).results
     for r in rows:
-        found[r["date"]] = {"date": r["date"], "name": r["name"], "kind": r["kind"], "closed": bool(r["closed"])}
+        found[r["date"]] = {"date": r["date"], "name": r["name"], "kind": r["kind"], "closed": bool(r["closed"]),
+                            "close_time": None if r["closed"] else (r["close_time"] or None)}
     return sorted(found.values(), key=lambda h: h["date"])
 
 
 async def week_holidays(request: Request, week: str) -> Dict[str, Dict[str, Any]]:
     start = date.fromisoformat(week)
     items = await holidays_between(request, start, start + timedelta(days=6))
-    return {str((date.fromisoformat(h["date"]) - start).days): {k: h[k] for k in ("name", "kind", "closed")} for h in items}
+    return {str((date.fromisoformat(h["date"]) - start).days): {k: h[k] for k in ("name", "kind", "closed", "close_time")} for h in items}
 
 
 async def get_schedule(request: Request, week: str) -> Schedule:
@@ -1663,6 +1665,8 @@ class HolidayIn(BaseModel):
     name: Text
     kind: Literal["nacional", "estadual", "municipal"] = "municipal"
     closed: bool = False
+    # Loja aberta no feriado: hora em que fecha ao público (a convocação vai até 1h depois)
+    close_time: HHMM | None = None
 
 
 @api.get("/holidays")
@@ -1682,10 +1686,12 @@ async def set_holiday(data: HolidayIn, request: Request):
     national = national_holidays(day.year).get(day.isoformat())
     kind, name = ("nacional", national) if national else (data.kind, data.name.strip())
     await db(request).prepare(
-        """INSERT INTO holidays (date, name, kind, closed) VALUES (?, ?, ?, ?)
-        ON CONFLICT(date) DO UPDATE SET name=excluded.name, kind=excluded.kind, closed=excluded.closed"""
-    ).bind(day.isoformat(), name, kind, 1 if data.closed else 0).run()
-    return {"date": day.isoformat(), "name": name, "kind": kind, "closed": data.closed}
+        """INSERT INTO holidays (date, name, kind, closed, close_time) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(date) DO UPDATE SET name=excluded.name, kind=excluded.kind, closed=excluded.closed,
+        close_time=excluded.close_time"""
+    ).bind(day.isoformat(), name, kind, 1 if data.closed else 0, None if data.closed else data.close_time).run()
+    return {"date": day.isoformat(), "name": name, "kind": kind, "closed": data.closed,
+            "close_time": None if data.closed else data.close_time}
 
 
 @api.delete("/holidays/{holiday_date}")
@@ -1784,11 +1790,33 @@ async def set_checkout_assign(data: CheckoutAssignIn, request: Request) -> Dict[
 # Cada dia guarda: status, at (data do envio), start/end, break_start/break_end, sent_at, due (prazo),
 # nonce (troca a cada envio e invalida links antigos), token, answered_at, answered_by, expired
 # ---------------------------------------------------------------------------
+MAX_DAY_MINUTES = 10 * 60  # 8h normais + 2h extras (CLT art. 59)
+MIN_REST_MINUTES = 11 * 60  # descanso entre um dia de trabalho e o seguinte (CLT art. 66)
 DAY_NAMES = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
 
 
 def _minutes(t: str) -> int:
     return int(t[:2]) * 60 + int(t[3:5])
+
+
+LANCHE_MINUTES = 15  # CCT SINDECAM cl. 30: o lanche de 15 min conta como tempo de serviço
+
+
+def convocation_worked(span: int, brk: int) -> int:
+    """Minutos trabalhados. Intervalo curto (menos de 1h) é lanche: até 15 min dele contam como trabalho."""
+    return span - brk + (min(brk, LANCHE_MINUTES) if brk < 60 else 0)
+
+
+def convocation_closing(day_date: date, holiday: Dict[str, Any] | None) -> str:
+    """Saída máxima pela CCT (cl. 28): fecha ao público às 22h (domingo 18h; 24 e 31/12 19h) + 1h de trabalho interno.
+    Feriado com a hora de fechamento informada: essa hora + 1h."""
+    if holiday and holiday.get("close_time"):
+        return min(f"{_minutes(holiday['close_time']) // 60 + 1:02d}:{holiday['close_time'][3:]}", "23:59")
+    if (day_date.month, day_date.day) in ((12, 24), (12, 31)):
+        return "20:00"
+    if day_date.weekday() == 6 and not holiday:
+        return "19:00"
+    return "23:00"
 
 
 def convocation_break_error(start: str, end: str, break_start: str | None, break_end: str | None) -> str | None:
@@ -1802,9 +1830,12 @@ def convocation_break_error(start: str, end: str, break_start: str | None, break
         if not _minutes(start) < _minutes(break_start) < _minutes(break_end) < _minutes(end):
             return "O intervalo precisa ficar dentro do horário, depois da entrada e antes da saída."
         brk = _minutes(break_end) - _minutes(break_start)
-    worked = _minutes(end) - _minutes(start) - brk
+    worked = convocation_worked(_minutes(end) - _minutes(start), brk)
+    if worked > MAX_DAY_MINUTES:
+        return "Máximo de 10h trabalhadas no dia (8h normais + 2h extras, CLT art. 59)."
     if worked > 360 and not 60 <= brk <= 120:
-        return "Para mais de 6h trabalhadas, o intervalo precisa ter de 1h a 2h."
+        return "Para mais de 6h trabalhadas, o intervalo precisa ter de 1h a 2h." + (
+            " O lanche de 15 min conta como trabalho (CCT cl. 30)." if 0 < brk < 60 else "")
     if 240 < worked <= 360 and brk < 15:
         return "Para mais de 4h até 6h trabalhadas, o intervalo mínimo é de 15 minutos."
     return None
@@ -1906,6 +1937,32 @@ class ConvocationIn(BaseModel):
     break_end: HHMM | None = None
 
 
+async def convocation_rest_error(request: Request, sched: Schedule, data: "ConvocationIn") -> str | None:
+    """Descanso de 11h até a convocação do dia anterior e do dia seguinte (pendentes ou aceitas)."""
+    async def neighbor(offset: int):
+        day = data.day + offset
+        target = sched
+        if not 0 <= day <= 6:
+            target = await load_schedule(request, (date.fromisoformat(sched.week) + timedelta(days=7 * offset)).isoformat())
+            expire_convocations(target)
+            day %= 7
+        conv = target.convocations.get(data.employee_id, {}).get(str(day))
+        return conv if conv and conv.get("status") in ("pending", "accepted") and conv.get("start") else None
+
+    prev, nxt = await neighbor(-1), await neighbor(1)
+    if prev:
+        rest = _minutes(data.start) + 1440 - _minutes(prev["end"])
+        if rest < MIN_REST_MINUTES:
+            return (f"Descanso de só {rest // 60}h{rest % 60:02d} desde a saída do dia anterior ({prev['end']}). "
+                    "O mínimo entre um dia e outro é de 11h (CLT art. 66).")
+    if nxt:
+        rest = _minutes(nxt["start"]) + 1440 - _minutes(data.end)
+        if rest < MIN_REST_MINUTES:
+            return (f"Descanso de só {rest // 60}h{rest % 60:02d} até a entrada do dia seguinte ({nxt['start']}). "
+                    "O mínimo entre um dia e outro é de 11h (CLT art. 66).")
+    return None
+
+
 class ConvocationStatusIn(BaseModel):
     employee_id: str
     week: str
@@ -1927,6 +1984,13 @@ async def convoke(data: ConvocationIn, request: Request):
         raise HTTPException(400, "Feriado com a loja fechada: ninguém trabalha nesse dia.")
     if data.day in sched.vacation_days.get(data.employee_id, []) or data.day in sched.sick_days.get(data.employee_id, []):
         raise HTTPException(400, "Funcionário de férias ou de atestado nesse dia.")
+    closing = convocation_closing(date.fromisoformat(week) + timedelta(days=data.day), sched.holidays.get(str(data.day)))
+    if data.end > closing:
+        raise HTTPException(400, f"Saída depois das {closing}: pela CCT (cl. 28) a loja fecha ao público e "
+                                 "o trabalho interno vai no máximo 1h depois.")
+    rest_error = await convocation_rest_error(request, sched, data)
+    if rest_error:
+        raise HTTPException(400, rest_error)
     sent = datetime.now(timezone.utc)
     nonce = uuid.uuid4().hex[:12]
     conv = {"status": "pending", "at": today_br().isoformat(), "sent_at": sent.isoformat(),

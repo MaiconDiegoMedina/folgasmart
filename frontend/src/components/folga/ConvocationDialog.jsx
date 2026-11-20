@@ -4,11 +4,12 @@ import { Check, Copy, Loader2, Send, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { http, errMsg } from "@/lib/api";
-import { STARTER_SHIFT } from "@/lib/workloadTimes";
 import { convocationSummary, convocationLink, convocationLabel, fmtDuration, fmtDue, whatsappUrl, shortNotice, MIN_NOTICE_DAYS } from "@/lib/convocation";
 
 // Convocação do intermitente: horário com intervalo, envio pelo WhatsApp e resposta (pelo link ou marcada aqui)
 
+// Sem jornada: 6h com lanche de 15 min, que conta como trabalho (CCT cl. 30)
+const STARTER = ["08:00", "11:00", "11:15", "14:00"];
 const fromTimes = (t) => ({
   start: t?.[0] || "", end: t?.[t.length - 1] || "",
   breakStart: t?.length === 4 ? t[1] : "", breakEnd: t?.length === 4 ? t[2] : "",
@@ -25,17 +26,17 @@ const STATUS_TONE = {
 const field = "h-10 w-full rounded-lg border border-[#E4E0F3] bg-white px-2.5 font-mono-data text-sm outline-none focus:border-[#17142E]";
 
 export const ConvocationDialog = ({ target, week, onClose, onSchedule }) => {
-  const { emp, day, date, conv, defaultShift } = target || {};
+  const { emp, day, date, conv, defaultShift, neighbors } = target || {};
   const [form, setForm] = useState(fromTimes(null));
   const [busy, setBusy] = useState(null);
 
   useEffect(() => {
-    if (target) setForm(fromTimes(timesOfConv(conv) || defaultShift || STARTER_SHIFT));
+    if (target) setForm(fromTimes(timesOfConv(conv) || defaultShift || STARTER));
   }, [target]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!target) return null;
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
-  const summary = convocationSummary(form);
+  const summary = convocationSummary(form, neighbors);
   const status = conv?.status;
   const sameTimes = conv && JSON.stringify(fromTimes(timesOfConv(conv))) === JSON.stringify(form);
   const dayLabel = date.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" });
@@ -115,10 +116,15 @@ export const ConvocationDialog = ({ target, week, onClose, onSchedule }) => {
             </label>
           </div>
           <div data-testid="conv-summary" className={`rounded-lg px-3 py-2 text-xs ${summary.error ? "bg-[#FDE2E2] text-[#A12828]" : "bg-[#E3F5EC] text-[#1D6B45]"}`}>
-            {summary.worked != null && <b>{fmtDuration(summary.worked)} trabalhadas · intervalo {summary.brk ? `${summary.brk} min` : "nenhum"}. </b>}
+            {summary.worked != null && <b>{fmtDuration(summary.worked)} trabalhadas · intervalo {summary.brk ? `${summary.brk} min${summary.brk < 60 ? " de lanche (conta como trabalho, CCT cl. 30)" : ""}` : "nenhum"}. </b>}
             {summary.error || "Intervalo dentro da regra."}
             {summary.rule && <span className="block opacity-80">Regra: {summary.rule}.</span>}
           </div>
+          {!summary.error && summary.overtime > 0 && (
+            <p data-testid="conv-overtime" className="rounded-lg bg-[#FFF4D1] px-3 py-2 text-xs text-[#7A5500]">
+              <b>{fmtDuration(summary.overtime)} de hora extra</b> (passa de 8h no dia). Adicional da CCT (cl. 9): 60% até 20h extras no mês, 80% de 20h a 40h, 100% acima disso.
+            </p>
+          )}
           {!emp.phone && (
             <p className="text-xs text-[#7A5500]">Sem celular no cadastro: o WhatsApp vai pedir para você escolher o contato. Cadastre o celular em Funcionários.</p>
           )}

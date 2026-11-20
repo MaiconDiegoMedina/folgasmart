@@ -10,7 +10,7 @@ import { modeLabel, offsOf as modeOffs } from "@/lib/scaleModels";
 import { DAYS_SHORT, weekDates, fmtDayMonth, isoDate, http, addDays, parseIso, mondayOf } from "@/lib/api";
 import { defaultShiftOf } from "@/lib/workloadTimes";
 import { GenerateDialog } from "@/components/folga/GenerateDialog";
-import { isIntermittent, convocationOf, acceptedOn, shortNotice, convocationLabel, MIN_NOTICE_DAYS } from "@/lib/convocation";
+import { isIntermittent, convocationOf, acceptedOn, shortNotice, convocationLabel, closingOf, MIN_NOTICE_DAYS } from "@/lib/convocation";
 import { ConvocationDialog } from "@/components/folga/ConvocationDialog";
 import { weekModeOf, streakLimitOf } from "@/lib/weekMode";
 
@@ -381,9 +381,16 @@ export const ScheduleGrid = ({ employees, movement, schedule, week, onWeekChange
   useEffect(() => { loadShifts(); }, [week]); // eslint-disable-line react-hooks/exhaustive-deps
   // Convocação aberta: {emp, day, date, conv, defaultShift}
   const [convFor, setConvFor] = useState(null);
+  const liveConv = (c) => (c && ["pending", "accepted"].includes(c.status) ? c : null);
   const openConvocation = (emp, d) => setConvFor({
     emp, day: d, date: dates[d], conv: convocationOf(schedule, emp.id, d),
     defaultShift: defaultShiftOf(workloads.find((w) => w.id === emp.workload), modeOf(emp.sector), d),
+    // Convocações vizinhas na semana, para o descanso de 11h (a virada de semana o servidor confere)
+    neighbors: {
+      prevEnd: liveConv(convocationOf(schedule, emp.id, d - 1))?.end,
+      nextStart: liveConv(convocationOf(schedule, emp.id, d + 1))?.start,
+      closing: closingOf(dates[d], holidayOn(d)),
+    },
   });
   // Caixa de cada operadora por dia
   const [weekCheckouts, setWeekCheckouts] = useState({});

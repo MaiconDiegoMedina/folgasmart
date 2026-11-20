@@ -74,7 +74,8 @@ export const HolidaysPanel = ({ onChange }) => {
   const [cal, setCal] = useState({ y: now.getFullYear(), m: now.getMonth() });
   const year = cal.y;
   const [items, setItems] = useState([]);
-  const [form, setForm] = useState({ date: "", name: "", kind: "municipal", closed: false });
+  const EMPTY_FORM = { date: "", name: "", kind: "municipal", closed: false, close_time: "" };
+  const [form, setForm] = useState(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
   const [all, setAll] = useState(false);
   const today = isoDate(now);
@@ -89,7 +90,7 @@ export const HolidaysPanel = ({ onChange }) => {
 
   const save = async (h, patch, msg) => {
     try {
-      await http.put("/holidays", { date: h.date, name: h.name, kind: h.kind, closed: h.closed, ...patch });
+      await http.put("/holidays", { date: h.date, name: h.name, kind: h.kind, closed: h.closed, close_time: h.close_time || null, ...patch });
       if (msg) toast.success(msg);
       load();
       onChange?.();
@@ -119,7 +120,7 @@ export const HolidaysPanel = ({ onChange }) => {
     if (ok) {
       const d = parseIso(form.date);
       setCal({ y: d.getFullYear(), m: d.getMonth() });
-      setForm({ date: "", name: "", kind: "municipal", closed: false });
+      setForm(EMPTY_FORM);
     }
     setBusy(false);
   };
@@ -176,6 +177,21 @@ export const HolidaysPanel = ({ onChange }) => {
                     </p>
                     <p className="mt-0.5 text-[13px] text-[#5E5880]">{DAYS[wdIdx(h.date)].split("-")[0]} · {KIND[h.kind]}</p>
                   </div>
+                  {!h.closed && (
+                    // Hora em que a loja fecha ao público no feriado; a convocação vai até 1h depois (CCT cl. 28)
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-[#5E5880]" title="A convocação de intermitente nesse dia vai no máximo até 1h depois do fechamento">
+                      Fecha às
+                      <input
+                        key={`${h.date}-${h.close_time || ""}`}
+                        type="time"
+                        aria-label={`Hora de fechamento em ${fmt(h.date)}`}
+                        defaultValue={h.close_time || ""}
+                        onBlur={(e) => e.target.value !== (h.close_time || "") &&
+                          save(h, { close_time: e.target.value || null }, e.target.value ? `Fechamento às ${e.target.value} em ${fmt(h.date)}` : `Fechamento padrão em ${fmt(h.date)}`)}
+                        className="h-8 rounded-[10px] border border-[#E4E0F3] bg-white px-2 font-mono-data text-xs text-[#1B1830]"
+                      />
+                    </label>
+                  )}
                   <div className="flex items-center gap-1.5">
                     <div className="inline-flex rounded-2xl bg-[#F2F0F8] p-[3px]" role="group" aria-label={`Loja em ${fmt(h.date)}`}>
                       <button
@@ -224,6 +240,12 @@ export const HolidaysPanel = ({ onChange }) => {
                   <option value="fechada">Fechada</option>
                 </select>
               </label>
+              {!form.closed && (
+                <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-[#3A3555]">
+                  Fecha às <span className="-mt-1 text-[11px] font-medium text-[#8A84A6]">opcional · convocação vai até 1h depois</span>
+                  <input type="time" value={form.close_time} onChange={(e) => setForm({ ...form, close_time: e.target.value })} className={field} />
+                </label>
+              )}
               <button type="submit" disabled={busy} className="inline-flex h-11 items-center justify-center gap-2 rounded-[22px] bg-[#6D5BD0] px-[18px] text-sm font-semibold text-white hover:bg-[#5B4BC4] disabled:opacity-60">
                 {busy && <Loader2 className="h-4 w-4 animate-spin" />} Salvar feriado
               </button>
