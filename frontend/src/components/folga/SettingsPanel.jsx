@@ -5,6 +5,7 @@ import { PageTitle } from "@/components/folga/Header";
 import { useUnlock, openUnlock } from "@/components/folga/UnlockDialog";
 import { http, errMsg, isoDate, mondayOf, addDays, parseIso } from "@/lib/api";
 import { modeLabel, modelDesc, setScaleModels, fmtHours } from "@/lib/scaleModels";
+import { SECTOR_ICONS, iconFor, iconNameFor, isCaixaSector } from "@/lib/sectorIcons";
 
 export const SETTINGS_SECTIONS = [
   { id: "setores", label: "Setores", icon: Layers },
@@ -39,6 +40,7 @@ const SectorsSection = ({ sectors, onChange }) => {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [picking, setPicking] = useState(null); // setor com a escolha de ícone aberta
 
   const run = async (fn, ok) => {
     setBusy(true);
@@ -59,6 +61,9 @@ const SectorsSection = ({ sectors, onChange }) => {
     if (!name.trim()) return;
     if (await run(() => http.post("/sectors", { name: name.trim() }), `Setor ${name.trim()} cadastrado`)) setName("");
   };
+  const pickIcon = async (s, icon) => {
+    if (await run(() => http.put(`/sectors/${s.id}`, { name: s.name, icon }), `Ícone de ${s.name} alterado`)) setPicking(null);
+  };
   const rename = async () => {
     if (!editing.name.trim()) return;
     if (await run(() => http.put(`/sectors/${editing.id}`, { name: editing.name.trim() }), "Setor renomeado. Os funcionários dele foram atualizados.")) setEditing(null);
@@ -73,9 +78,27 @@ const SectorsSection = ({ sectors, onChange }) => {
           <button data-testid="btn-add-sector" disabled={busy || !name.trim()} className={BTN}><Plus className="h-4 w-4" /> Adicionar setor</button>
         </form>
         {!sectors.length && <p className="text-sm text-[#5E5880]">Nenhum setor cadastrado.</p>}
+        <p className="mb-2 text-xs text-[#5E5880]">
+          Cada setor ganha uma aba com ícone na barra lateral (os de caixa ficam na aba Caixas). Clique no ícone para trocar.
+        </p>
         <ul className="divide-y divide-[#ECE9F6]">
-          {sectors.map((s) => (
-            <li key={s.id} data-testid={`sector-row-${s.name}`} className="flex items-center gap-3 py-2.5">
+          {sectors.map((s) => {
+            const Icon = iconFor(s);
+            return (
+            <li key={s.id} data-testid={`sector-row-${s.name}`} className="py-2.5">
+              <div className="flex items-center gap-3">
+              {isCaixaSector(s.name) ? (
+                <span title="Fica na aba Caixas" className="grid h-9 w-9 place-items-center rounded-xl bg-[#F2F0F8] text-[#5E5880]"><Icon className="h-[18px] w-[18px]" /></span>
+              ) : (
+                <button
+                  aria-label={`Trocar o ícone de ${s.name}`}
+                  title="Trocar o ícone"
+                  onClick={() => setPicking(picking === s.id ? null : s.id)}
+                  className={`grid h-9 w-9 place-items-center rounded-xl ${picking === s.id ? "bg-[#7C6AE0] text-white" : "bg-[#17142E] text-white hover:bg-[#2A2550]"}`}
+                >
+                  <Icon className="h-[18px] w-[18px]" />
+                </button>
+              )}
               {editing?.id === s.id ? (
                 <>
                   <input autoFocus className={`${INPUT} flex-1`} value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })}
@@ -93,8 +116,28 @@ const SectorsSection = ({ sectors, onChange }) => {
                     className={`${ICON_BTN} disabled:opacity-40`}><Trash2 className="h-4 w-4" /></button>
                 </>
               )}
+              </div>
+              {picking === s.id && (
+                <div className="mt-2 grid grid-cols-8 gap-1.5 rounded-2xl border border-[#E4E0F3] bg-white p-2.5 sm:grid-cols-10" role="listbox" aria-label={`Ícones para ${s.name}`}>
+                  {Object.entries(SECTOR_ICONS).map(([name, I]) => (
+                    <button
+                      key={name}
+                      role="option"
+                      aria-selected={iconNameFor(s) === name}
+                      aria-label={name}
+                      title={name}
+                      disabled={busy}
+                      onClick={() => pickIcon(s, name)}
+                      className={`grid h-9 w-full place-items-center rounded-xl ${iconNameFor(s) === name ? "bg-[#7C6AE0] text-white" : "text-[#3A3555] hover:bg-[#F2F0F8]"}`}
+                    >
+                      <I className="h-[18px] w-[18px]" />
+                    </button>
+                  ))}
+                </div>
+              )}
             </li>
-          ))}
+            );
+          })}
         </ul>
       </div>
     </>

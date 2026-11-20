@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Beef, Croissant, Apple, PackageOpen, UserPlus } from "lucide-react";
+import { UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { DAYS, weekDates, isoDate, http, errMsg } from "@/lib/api";
 import { peakHours } from "@/lib/hourlyReport";
@@ -11,13 +11,6 @@ import { ShiftBar, dayLabel, dayStatus } from "@/components/folga/ShiftBar";
 import { useShiftDrag, shiftPayload } from "@/lib/useShiftDrag";
 import { weekModeOf } from "@/lib/weekMode";
 
-// Abas de setor: o setor do funcionário é reconhecido pelo nome (ex.: "Açougue", "Hortifruti", "FLV")
-export const SECTOR_TABS = [
-  { id: "acougue", label: "Açougue", match: /a[çc]oug/i, icon: Beef, hint: "Açougue", title: ["no", "açougue"] },
-  { id: "padaria", label: "Padaria", match: /padaria|panifica|confeita/i, icon: Croissant, hint: "Padaria", title: ["na", "padaria"] },
-  { id: "flv", label: "Hortifruti (FLV)", short: "FLV", match: /horti|flv|frut|verdur|legum/i, icon: Apple, hint: "Hortifruti", title: ["no", "hortifrúti"] },
-  { id: "reposicao", label: "Reposição", match: /reposi|repositor|estoque/i, icon: PackageOpen, hint: "Reposição", title: ["na", "reposição"] },
-];
 
 const ALL_HOURS = Array.from({ length: 18 }, (_, i) => 6 + i); // 6h..23h
 const TURNOS = [
@@ -46,8 +39,8 @@ const PILL = "h-[38px] rounded-[19px] border px-4 text-sm font-medium";
 const pillStyle = (on) => (on ? "border-[#17142E] bg-[#17142E] text-white" : "border-[#E4E0F3] bg-white/75 text-[#3A3555] hover:border-[#17142E]");
 
 // Equipe de um setor no dia: horários, presença por hora, cobertura por turno e quem está fora
-export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads, sectorModes = {} }) => {
-  const conf = SECTOR_TABS.find((t) => t.id === tab) || SECTOR_TABS[0];
+// Aba de um setor cadastrado; conf vem de sectorTabsOf (lib/sectorIcons)
+export const SectorBoard = ({ conf, employees, schedule, week, onWeek, workloads, sectorModes = {} }) => {
   const dates = weekDates(week);
   const todayIdx = dates.findIndex((d) => isoDate(d) === isoDate(new Date()));
   const [day, setDay] = useState(todayIdx >= 0 ? todayIdx : 0);
@@ -124,7 +117,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
     const cover = ALL_HOURS.map((h) => team.filter((o) => presentAt(o, h * 60 + 30)).length);
     return { team, away, cover };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [employees, schedule, shifts, day, tab, workloads, sectorModes]);
+  }, [employees, schedule, shifts, day, conf.id, workloads, sectorModes]);
 
   const win = TURNOS.find((t) => t.id === turno);
   const START = win.a * 60;
@@ -248,8 +241,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
       {members.length === 0 ? (
         <div className="glass rounded-[26px] p-[22px] text-sm text-[#4A4566]">
           <h2 className="m-0 mb-1.5 text-lg font-bold text-[#1B1830]">Ninguém cadastrado em {conf.label}</h2>
-          Na aba Funcionários, coloque o setor <strong>{conf.hint}</strong> em quem trabalha aqui. A aba reconhece o setor pelo nome
-          {conf.id === "flv" ? " (Hortifruti, Hortifrúti, FLV ou Frutas)" : conf.id === "reposicao" ? " (Reposição, Repositor ou Estoque)" : conf.id === "padaria" ? " (Padaria, Panificação ou Confeitaria)" : ""}.
+          Na aba Funcionários, escolha o setor <strong>{conf.hint}</strong> para quem trabalha aqui.
         </div>
       ) : (
         <>

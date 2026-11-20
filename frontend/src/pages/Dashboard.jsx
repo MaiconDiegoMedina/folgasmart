@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { http, errMsg, isoDate, mondayOf, addDays, parseIso } from "@/lib/api";
 import { isIntermittent } from "@/lib/convocation";
@@ -6,7 +6,8 @@ import { PageTitle } from "@/components/folga/Header";
 import { AppRail, TABS } from "@/components/folga/AppRail";
 import { HomePanel } from "@/components/folga/HomePanel";
 import { CheckoutsBoard } from "@/components/folga/CheckoutsBoard";
-import { SectorBoard, SECTOR_TABS } from "@/components/folga/SectorBoard";
+import { SectorBoard } from "@/components/folga/SectorBoard";
+import { sectorTabsOf } from "@/lib/sectorIcons";
 import { WeekNav } from "@/components/folga/WeekNav";
 import { MovementPanel } from "@/components/folga/MovementPanel";
 import { EmployeesPanel } from "@/components/folga/EmployeesPanel";
@@ -26,7 +27,7 @@ const readTab = () => {
   try {
     localStorage.removeItem(TAB_KEY); // versões antigas guardavam a aba para sempre
     const t = sessionStorage.getItem(TAB_KEY);
-    return TABS.some((x) => x.id === t) ? t : "inicio";
+    return TABS.some((x) => x.id === t) || t?.startsWith("setor:") ? t : "inicio";
   } catch {
     return "inicio";
   }
@@ -71,8 +72,9 @@ export default function Dashboard() {
   const [settingsSection, setSettingsSection] = useState("setores");
   // "configuracoes:feriados" abre direto uma seção das Configurações
   const setTab = (target) => {
-    const [t, section] = target.split(":");
-    if (section) setSettingsSection(section);
+    const [first, section] = target.split(":");
+    const t = first === "configuracoes" ? first : target; // "setor:açougue" é o id da aba do setor
+    if (first === "configuracoes" && section) setSettingsSection(section);
     setTabState(t);
     try { sessionStorage.setItem(TAB_KEY, t); } catch { /* sem armazenamento: só não lembra a aba */ }
     window.scrollTo({ top: 0 });
@@ -89,6 +91,12 @@ export default function Dashboard() {
   const [models, setModels] = useState([]);
   const [sectorList, setSectorList] = useState([]);
   const [sector, setSector] = useState("all");
+  const sectorTabs = useMemo(() => sectorTabsOf(sectorList), [sectorList]);
+  const sectorConf = sectorTabs.find((t) => t.id === tab);
+  // Aba de um setor que foi excluído ou renomeado: volta ao Início
+  useEffect(() => {
+    if (sectorList.length && tab.startsWith("setor:") && !sectorConf) setTabState("inicio");
+  }, [sectorList, tab, sectorConf]);
   // Inativos ficam fora da escala, da geração e da exportação
   const scheduled = employees.filter((e) => e.status !== "inativo");
   const activeSector = scheduled.some((e) => e.sector === sector) ? sector : null;
@@ -187,7 +195,7 @@ export default function Dashboard() {
       <div className="blob no-print" style={{ width: 520, height: 520, background: "#C9BFFF", top: -200, left: "38%" }} />
       <div className="blob no-print" style={{ width: 420, height: 420, background: "#FFD9E8", bottom: -160, right: -120 }} />
       <div className="relative z-10 flex gap-6 p-3.5 pb-28 sm:p-6 md:pb-6">
-        <AppRail tab={tab} onTab={setTab} onLogout={logout} />
+        <AppRail tab={tab} onTab={setTab} onLogout={logout} sectorTabs={sectorTabs} />
         <main className="min-w-0 flex-1 space-y-6">
           <UnlockDialog />
           <ModeChangeNotice models={models} />
@@ -223,8 +231,8 @@ export default function Dashboard() {
               <CheckoutsBoard employees={scheduled} schedule={schedule} week={week} onWeek={setWeek} workloads={workloads} sectorModes={sectorModes} checkouts={checkouts} onChange={load} />
             </>
           )}
-          {SECTOR_TABS.some((t) => t.id === tab) && (
-            <SectorBoard key={tab} tab={tab} employees={scheduled} schedule={schedule} week={week} onWeek={setWeek} workloads={workloads} sectorModes={sectorModes} />
+          {sectorConf && (
+            <SectorBoard key={tab} conf={sectorConf} employees={scheduled} schedule={schedule} week={week} onWeek={setWeek} workloads={workloads} sectorModes={sectorModes} />
           )}
         </main>
       </div>

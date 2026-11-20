@@ -46,3 +46,9 @@ body, .App { font-family: Inter, system-ui, sans-serif; background: #F3F1FA; col
   .blob { display: none; }
   .glass { background: #fff !important; backdrop-filter: none !important; box-shadow: none !important; }
 }
+
+/* Barra lateral: rolagem fina dos setores */
+.rail-scroll { scrollbar-width: thin; scrollbar-color: rgba(183, 177, 214, 0.45) transparent; }
+.rail-scroll::-webkit-scrollbar { width: 4px; }
+.rail-scroll::-webkit-scrollbar-thumb { background: rgba(183, 177, 214, 0.45); border-radius: 4px; }
+.rail-scroll::-webkit-scrollbar-track { background: transparent; }
