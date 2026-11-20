@@ -105,6 +105,7 @@ const shiftWith = (orig, mode, delta, lim) => {
  */
 export const useShiftDrag = ({ span, onCommit }) => {
   const [preview, setPreview] = useState(null); // { key, shift, mode, dy, row, capped }
+  const [selected, setSelected] = useState(null); // barra clicada por último: fica na frente das outras
   const ref = useRef(null);
   const commitRef = useRef(onCommit);
   commitRef.current = onCommit;
@@ -113,6 +114,7 @@ export const useShiftDrag = ({ span, onCommit }) => {
     onPointerDown: (e) => {
       if (!o.shift || (e.pointerType === "mouse" && e.button !== 0)) return;
       e.stopPropagation();
+      setSelected(o.key || o.emp.id);
       const track = e.currentTarget.closest("[data-track]");
       if (!track) return;
       if (e.pointerType === "mouse") e.preventDefault();
@@ -182,6 +184,13 @@ export const useShiftDrag = ({ span, onCommit }) => {
     const block = (e) => {
       if (ref.current?.live) e.preventDefault();
     };
+    // Clicar fora de uma barra (ou Esc) tira a seleção
+    const unselect = (e) => {
+      if (!e.target.closest?.("[data-shiftbar]")) setSelected(null);
+    };
+    const esc = (e) => e.key === "Escape" && setSelected(null);
+    window.addEventListener("pointerdown", unselect);
+    window.addEventListener("keydown", esc);
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", end);
@@ -191,12 +200,15 @@ export const useShiftDrag = ({ span, onCommit }) => {
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", end);
       window.removeEventListener("touchmove", block);
+      window.removeEventListener("pointerdown", unselect);
+      window.removeEventListener("keydown", esc);
     };
   }, []);
 
   // Horário a mostrar (o do arrasto, se for essa barra)
   const shiftFor = (o) => (preview && preview.key === (o.key || o.emp.id) ? preview.shift : o.shift);
-  return { grab, preview, shiftFor };
+  const isSelected = (o) => selected !== null && selected === (o.key || o.emp.id);
+  return { grab, preview, shiftFor, isSelected };
 };
 
 // Corpo do pedido PUT /shifts

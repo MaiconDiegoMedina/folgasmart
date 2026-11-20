@@ -152,7 +152,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
     }
     loadShifts();
   };
-  const { grab, preview, shiftFor } = useShiftDrag({ span: SPAN, onCommit: saveShift });
+  const { grab, preview, shiftFor, isSelected } = useShiftDrag({ span: SPAN, onCommit: saveShift });
   const nowMin = todayIdx === day ? new Date().getHours() * 60 + new Date().getMinutes() : null;
   const idxOf = (h) => ALL_HOURS.indexOf(h);
   const maxCover = Math.max(1, ...cover);
@@ -312,6 +312,7 @@ export const SectorBoard = ({ tab, employees, schedule, week, onWeek, workloads,
                           title={`${o.emp.name} · ${o.note}.`}
                           grab={grab}
                           drag={preview?.key === o.key ? preview : null}
+                          selected={isSelected(o)}
                           extra={o.base && shiftFor(o) ? dayMinutes(shiftFor(o)) - o.base : 0}
                         />
                       </div>

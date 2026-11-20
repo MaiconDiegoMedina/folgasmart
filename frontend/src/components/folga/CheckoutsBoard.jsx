@@ -423,7 +423,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
     }
     loadShifts();
   };
-  const { grab, preview, shiftFor } = useShiftDrag({ span: SPAN, onCommit: saveShift });
+  const { grab, preview, shiftFor, isSelected } = useShiftDrag({ span: SPAN, onCommit: saveShift });
   // Quem não tem horário (nem jornada) ganha um horário inicial, que depois é ajustado arrastando a barra
   const setShiftBtn = (o) =>
     !o.shift && (
@@ -448,6 +448,7 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
         title={`${o.emp.name} · ${where} · ${o.note}.`}
         grab={grab}
         drag={preview?.key === (o.key || o.emp.id) ? preview : null}
+        selected={isSelected(o)}
         extra={o.base && s ? dayMinutes(s) - o.base : 0}
       />
     );
@@ -821,11 +822,16 @@ export const CheckoutsBoard = ({ employees, schedule, week, onWeek, workloads, s
           </div>
           <div className="glass rounded-[26px] p-[22px]">
             <h2 className="m-0 flex items-center gap-1.5 text-base font-bold text-[#4B3DA8]"><UserPlus className="h-4 w-4" /> Chamar alguém de outro setor</h2>
-            <p className="mb-3 mt-1 text-xs text-[#5E5880]">Quem trabalha neste dia em outro setor pode ajudar no caixa por algumas horas. Depois de chamar, a pessoa aparece em "Trabalhando sem caixa" para você arrastar para um caixa.</p>
+            <p className="mb-3 mt-1 text-xs text-[#5E5880]">Quem trabalha neste dia em outro setor pode ajudar no caixa por algumas horas. Depois de chamar, arraste o cartão vermelho para um caixa (ou use "Trabalhando sem caixa").</p>
             {helpers.length > 0 && (
               <div className="mb-3 flex flex-col gap-2">
                 {helpers.map((o) => (
-                  <div key={o.emp.id} className="flex items-center gap-2.5 rounded-xl border border-[#E57373] bg-[#FDE2E2] px-2.5 py-2 text-[13px] font-semibold text-[#8A1F1F]">
+                  <div
+                    key={o.emp.id}
+                    {...dragProps(o)}
+                    title={`${o.emp.name} · ${o.note}. Arraste para um caixa, para Pacoteiros, para Fiscal e Recepcionista ou para "Trabalhando sem caixa". No celular, segure o cartão um instante e arraste.`}
+                    className={`flex cursor-grab select-none items-center gap-2.5 rounded-xl border border-[#E57373] bg-[#FDE2E2] px-2.5 py-2 text-[13px] font-semibold text-[#8A1F1F] [-webkit-touch-callout:none] active:cursor-grabbing ${dragId === o.emp.id ? "opacity-40" : ""}`}
+                  >
                     <span className="min-w-0 flex-1 truncate">
                       {o.emp.name}
                       <small className="block text-[11px] font-medium text-[#5E5880]">vem de {o.emp.sector} · {o.shift ? `${o.shift[0]} às ${o.shift[o.shift.length - 1]}` : "sem horário"}{caixaOf(o.emp.id) ? ` · ${caixaName(caixaOf(o.emp.id))}` : " · sem caixa"}</small>

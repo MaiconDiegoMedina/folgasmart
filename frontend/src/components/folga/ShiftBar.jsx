@@ -9,7 +9,7 @@ const STRIPES = "repeating-linear-gradient(135deg,rgba(255,255,255,.9) 0 3px,rgb
  * shift: horário a mostrar (o do arrasto, enquanto arrasta); extra: minutos acima (+) ou abaixo (−) da jornada.
  * drag: estado do arrasto desta barra ({ dy, capped, mode }) ou null.
  */
-export const ShiftBar = ({ o, shift, win, colors, title, grab, drag, extra = 0 }) => {
+export const ShiftBar = ({ o, shift, win, colors, title, grab, drag, extra = 0, selected = false }) => {
   if (!shift) return null;
   const { START, END, SPAN } = win;
   const a = toMin(shift[0]);
@@ -31,8 +31,9 @@ export const ShiftBar = ({ o, shift, win, colors, title, grab, drag, extra = 0 }
     <>
       <div
         {...grab(o, "move")}
-        title={`${title} Arraste para mudar o horário ou para outra linha; puxe as pontas para mudar só a entrada ou a saída.`}
-        className={`absolute top-[3px] bottom-[3px] flex cursor-grab select-none items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-[10px] px-2.5 text-xs font-semibold [-webkit-touch-callout:none] active:cursor-grabbing ${colors.dashed ? "border-[1.5px] border-dashed border-[#B9B2DA] bg-white/60 text-[#4B3DA8]" : ""} ${dragging ? "pointer-events-none z-[6] shadow-[0_8px_20px_-8px_rgba(40,30,110,0.55)] ring-2 ring-[#6D5BD0]" : ""}`}
+        data-shiftbar
+        title={`${title} Clique para trazer para frente. Arraste para mudar o horário ou para outra linha; puxe as pontas para mudar só a entrada ou a saída.`}
+        className={`absolute top-[3px] bottom-[3px] flex cursor-grab select-none items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-[10px] px-2.5 text-xs font-semibold [-webkit-touch-callout:none] active:cursor-grabbing ${colors.dashed ? "border-[1.5px] border-dashed border-[#B9B2DA] bg-white/60 text-[#4B3DA8]" : ""} ${dragging ? "pointer-events-none z-[8] shadow-[0_8px_20px_-8px_rgba(40,30,110,0.55)] ring-2 ring-[#6D5BD0]" : selected ? "z-[8] shadow-[0_8px_20px_-8px_rgba(40,30,110,0.55)] ring-2 ring-[#17142E]" : ""}`}
         style={{ left: pct(from), width: `calc(${width(from, to)} - 2px)`, ...(colors.dashed ? {} : { background: colors.bg, color: colors.ink }), ...lift }}
       >
         {a >= START && <span {...grab(o, "start")} className={`${handle} left-0`} aria-hidden="true" />}
@@ -50,8 +51,9 @@ export const ShiftBar = ({ o, shift, win, colors, title, grab, drag, extra = 0 }
       {brk && brk[1] > START && brk[0] < END && (
         <div
           {...grab(o, "break")}
+          data-shiftbar
           title={`Intervalo de ${first} · ${shift[1]}–${shift[2]} (${fmtDur(brk[1] - brk[0])}). Arraste para mudar o horário do intervalo${brkFree ? `; puxe as pontas para durar ${brkHint}` : ""}.`}
-          className={`absolute top-[3px] bottom-[3px] z-[7] cursor-grab select-none active:cursor-grabbing ${dragging ? "pointer-events-none" : ""}`}
+          className={`absolute top-[3px] bottom-[3px] ${selected || dragging ? "z-[9]" : "z-[7]"} cursor-grab select-none active:cursor-grabbing ${dragging ? "pointer-events-none" : ""}`}
           style={{ left: pct(Math.max(brk[0], START)), width: width(Math.max(brk[0], START), Math.min(brk[1], END)), background: STRIPES, ...lift }}
         >
           {brkFree && brk[0] >= START && <span {...grab(o, "brkStart")} className="absolute -left-1 top-0 bottom-0 w-2 cursor-ew-resize touch-none" aria-hidden="true" />}
